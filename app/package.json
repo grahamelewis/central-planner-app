@@ -11,6 +11,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test test/*.test.mjs",
+    "test:fast": "node --test $(ls test/*.test.mjs | grep -v '/ui\\.')",
+    "test:ui": "node --test test/ui.*.test.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

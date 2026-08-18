@@ -1,18 +1,32 @@
-# Central Planner CI — app suite + typecheck + desktop suite on macOS.
+# Central Planner CI — a fast required gate, plus the browser UI suites beside it.
 #
-# Billing safety: CP_NO_BILLED=1 is exported at the job level as belt-and-braces
-# (the test sandbox already sets it server-side), and no ANTHROPIC_API_KEY —
-# or any other secret — is configured anywhere in this workflow, so CI is
-# structurally incapable of billed Claude dispatch.
+# Why it is split (measured 2026-08-18): of 110 app test files, the 55 browser
+# `ui.*` suites were 94% of the wall clock (961 s of 1026 s locally; ~15.5 of
+# 16.5 minutes on a macOS runner) and every CI failure came from them — a
+# different subset each run, i.e. mount/timing flake on a shared runner rather
+# than regression. The other 55 files run 700 tests in ~15 s. Splitting them
+# gives a gate that is fast enough to trust and keeps the UI coverage visible
+# without letting its flake block a push.
 #
-# Chrome: the UI harness (app/test/uiHarness.mjs) resolves the browser path
-# from CP_CHROME and exports it; every UI suite's skip guard imports that
-# resolved path, so a CP_CHROME pointing at nothing skips the UI suites
-# gracefully and a path that exists but fails to launch errors fast (the
-# harness closes its sandbox before rethrowing — no hung job). macOS runners
-# ship Google Chrome at the same /Applications path used on dev machines, so
-# the variable could stay unset — it is set explicitly anyway so the seam is
-# exercised and the intent is visible.
+# Why Ubuntu: nothing in either suite needs macOS. The UI suites already branch
+# on platform for the modifier key (`process.platform === 'darwin' ? 'Meta' :
+# 'Control'`), the Chrome path comes from CP_CHROME, and the desktop suite
+# injects fakes for launchctl and never launches Electron. The genuinely
+# mac-only checks — codesign, packaged notifications, launchd — are the manual
+# smoke matrix in desktop/CONTRACT.md and were never in CI. macOS minutes bill
+# at 10x Linux, so the old single job cost ~169 Linux-equivalent minutes a push.
+# FSEvents-specific watcher behaviour is the one real macOS gap; the scheduled
+# watchers-macos job below covers it.
+#
+# Billing safety: CP_NO_BILLED=1 is exported at the workflow level as
+# belt-and-braces (the test sandbox already sets it server-side), and no
+# ANTHROPIC_API_KEY — or any other secret — is configured anywhere here, so CI
+# is structurally incapable of billed Claude dispatch.
+#
+# Chrome: the UI harness (app/test/uiHarness.mjs) resolves the browser from
+# CP_CHROME and SKIPS its suites when that path is missing. A silent skip reads
+# as a pass, so every job that needs Chrome asserts the binary first and fails
+# loudly instead.
 #
 # Known gap (documented in the phase-2 audit, tests deliberately not edited):
 # static.test.mjs syntax-checks a fixed file list that omits the 14 public
@@ -24,18 +38,26 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    # Mondays 09:17 UTC — the macOS watcher job only.
+    - cron: '17 9 * * 1'
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CP_NO_BILLED: "1"
+  CP_CHROME: /usr/bin/google-chrome
+
 jobs:
-  test:
-    runs-on: macos-latest
-    timeout-minutes: 20
-    env:
-      CP_NO_BILLED: "1"
-      CP_CHROME: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  # The gate. Everything except the browser UI suites: ~700 tests in seconds.
+  fast:
+    name: Fast suite
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -43,22 +65,83 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            app/package-lock.json
-            desktop/package-lock.json
+          cache-dependency-path: app/package-lock.json
+
+      # latex.monarch.test.mjs is not a ui.* file but does drive a browser.
+      - name: Assert Chrome is present
+        run: |
+          test -x "$CP_CHROME" || {
+            echo "::error::No Chrome at $CP_CHROME — latex.monarch would skip silently"; exit 1; }
 
       - name: Install app dependencies
         working-directory: app
         run: npm ci
 
-      - name: App test suite
+      - name: App suite (no browser UI suites)
         working-directory: app
-        run: npm test
+        run: npm run test:fast
 
       - name: Typecheck
         working-directory: app
         run: npm run typecheck
 
+      # No npm ci: lifecycle.test.mjs imports only node: builtins and
+      # serverlink.js, which imports only node: builtins. Installing would
+      # download Electron (~325 MB of node_modules) to load none of it — and
+      # setup-node's cache does not cover the Electron binary anyway.
       - name: Desktop suite
         working-directory: desktop
-        run: npm ci && npm test
+        run: npm test
+
+  # Beside the gate, not in it. Flip continue-on-error to false once the
+  # mount/timing flake is fixed and this becomes trustworthy as a blocker.
+  ui:
+    name: Browser UI suites
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Assert Chrome is present
+        run: |
+          test -x "$CP_CHROME" || {
+            echo "::error::No Chrome at $CP_CHROME — the UI suites would skip and report success"; exit 1; }
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: UI suites
+        working-directory: app
+        run: npm run test:ui
+
+  # The one thing Ubuntu cannot cover: FSEvents. Weekly and on demand.
+  watchers-macos:
+    name: fs watchers on macOS
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Watcher suites
+        working-directory: app
+        run: node --test test/watchers.*.test.mjs
