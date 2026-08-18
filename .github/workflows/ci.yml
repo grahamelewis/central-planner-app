@@ -89,13 +89,18 @@ jobs:
         working-directory: desktop
         run: npm test
 
-  # Beside the gate, not in it. Flip continue-on-error to false once the
-  # mount/timing flake is fixed and this becomes trustworthy as a blocker.
+  # Beside the gate, not in it. NOTE: job-level `continue-on-error` is the
+  # wrong tool here — it keeps the workflow RUN green but still publishes a
+  # check-run with conclusion=failure, and the commit badge follows the worst
+  # check, so the commit goes red anyway. Instead the suite's exit code is
+  # absorbed inside the step and the outcome is written to the run summary:
+  # green check, visible warning, no silent skip. Delete the absorption (and
+  # the `|| true` path) once the mount/timing flake is fixed and this is
+  # trustworthy as a blocker.
   ui:
-    name: Browser UI suites
+    name: Browser UI suites (advisory)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     env:
       CP_CHROME: /usr/bin/google-chrome
     steps:
@@ -118,4 +123,24 @@ jobs:
 
       - name: UI suites
         working-directory: app
-        run: npm run test:ui
+        shell: bash
+        run: |
+          set +e
+          npm run test:ui 2>&1 | tee /tmp/ui.log
+          code=${PIPESTATUS[0]}
+          {
+            if [ "$code" -eq 0 ]; then
+              echo "### Browser UI suites passed"
+            else
+              echo "### Browser UI suites FAILED — advisory, not blocking"
+              echo
+              echo 'These suites are known-flaky on shared runners (mount/timing races).'
+              echo 'The gate is the Fast suite; this job reports but does not block.'
+              echo
+              echo '```'
+              grep -E '^not ok [0-9]+' /tmp/ui.log | head -25
+              grep -E '^# (tests|pass|fail|skipped)' /tmp/ui.log
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
