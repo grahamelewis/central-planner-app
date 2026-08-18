@@ -2,21 +2,21 @@
 #
 # Why it is split (measured 2026-08-18): of 110 app test files, the 55 browser
 # `ui.*` suites were 94% of the wall clock (961 s of 1026 s locally; ~15.5 of
-# 16.5 minutes on a macOS runner) and every CI failure came from them — a
-# different subset each run, i.e. mount/timing flake on a shared runner rather
-# than regression. The other 55 files run 700 tests in ~15 s. Splitting them
-# gives a gate that is fast enough to trust and keeps the UI coverage visible
-# without letting its flake block a push.
+# the 16.5 minutes the old single job took) and every CI failure came from
+# them — a different subset each run, i.e. mount/timing flake on a shared
+# runner rather than regression. The other 55 files run ~700 tests in ~15 s.
+# Splitting them gives a gate fast enough to trust and keeps the UI coverage
+# visible without letting its flake block a push.
 #
-# Why Ubuntu: nothing in either suite needs macOS. The UI suites already branch
-# on platform for the modifier key (`process.platform === 'darwin' ? 'Meta' :
-# 'Control'`), the Chrome path comes from CP_CHROME, and the desktop suite
-# injects fakes for launchctl and never launches Electron. The genuinely
-# mac-only checks — codesign, packaged notifications, launchd — are the manual
-# smoke matrix in desktop/CONTRACT.md and were never in CI. macOS minutes bill
-# at 10x Linux, so the old single job cost ~169 Linux-equivalent minutes a push.
-# FSEvents-specific watcher behaviour is the one real macOS gap; the scheduled
-# watchers-macos job below covers it.
+# Why the gate stays on macOS and only the UI job moved to Ubuntu: macOS
+# minutes bill at 10x, and the UI suites are where the time is — they run in
+# ~4.5 min on Ubuntu against ~16 min on macOS, so moving them is where the
+# saving lives. The gate is ~1 min either way, and it exercises the process
+# table (`jobs.*`) and native fs watchers (`watchers.*`), which are genuinely
+# platform-shaped: two detached-job discovery tests fail under procps `ps`
+# even after the -ax/-A fix in lib/jobs.js. Running the gate on the platform
+# the product actually targets is worth ~1 macOS minute a push, and keeps
+# product code from being contorted to suit a runner it never runs on.
 #
 # Billing safety: CP_NO_BILLED=1 is exported at the workflow level as
 # belt-and-braces (the test sandbox already sets it server-side), and no
@@ -25,8 +25,7 @@
 #
 # Chrome: the UI harness (app/test/uiHarness.mjs) resolves the browser from
 # CP_CHROME and SKIPS its suites when that path is missing. A silent skip reads
-# as a pass, so every job that needs Chrome asserts the binary first and fails
-# loudly instead.
+# as a pass, so both jobs assert the binary first and fail loudly instead.
 #
 # Known gap (documented in the phase-2 audit, tests deliberately not edited):
 # static.test.mjs syntax-checks a fixed file list that omits the 14 public
@@ -39,9 +38,6 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  schedule:
-    # Mondays 09:17 UTC — the macOS watcher job only.
-    - cron: '17 9 * * 1'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -49,15 +45,15 @@ concurrency:
 
 env:
   CP_NO_BILLED: "1"
-  CP_CHROME: /usr/bin/google-chrome
 
 jobs:
   # The gate. Everything except the browser UI suites: ~700 tests in seconds.
   fast:
     name: Fast suite
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      CP_CHROME: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
     steps:
       - uses: actions/checkout@v4
 
@@ -97,10 +93,11 @@ jobs:
   # mount/timing flake is fixed and this becomes trustworthy as a blocker.
   ui:
     name: Browser UI suites
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
+    env:
+      CP_CHROME: /usr/bin/google-chrome
     steps:
       - uses: actions/checkout@v4
 
@@ -122,26 +119,3 @@ jobs:
       - name: UI suites
         working-directory: app
         run: npm run test:ui
-
-  # The one thing Ubuntu cannot cover: FSEvents. Weekly and on demand.
-  watchers-macos:
-    name: fs watchers on macOS
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: macos-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-
-      - name: Install app dependencies
-        working-directory: app
-        run: npm ci
-
-      - name: Watcher suites
-        working-directory: app
-        run: node --test test/watchers.*.test.mjs
