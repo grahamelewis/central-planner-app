@@ -1,0 +1,30 @@
+% Synthetic corpus: nested environments, math env containing matrix, lists in figures.
+\begin{figure}[htbp]
+  \centering
+  \begin{minipage}{0.45\textwidth}
+    \begin{itemize}
+      \item First item with math $x > 0$.
+      \item Second item.
+      \begin{enumerate}
+        \item Inner enumerated item.
+      \end{enumerate}
+    \end{itemize}
+  \end{minipage}
+  \caption{A nested figure caption with $\sigma$.}
+\end{figure}
+\begin{equation}
+  M = \begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix},
+  \qquad
+  v = \begin{bmatrix} a \\ b \end{bmatrix}
+\end{equation}
+\begin{table}
+  \begin{tabular}{lcr}
+    left & center & right \\
+    $\alpha$ & $\beta$ & $\gamma$ \\
+  \end{tabular}
+\end{table}
+\begin{split}
+  a &= b \\
+    &= c
+\end{split}
+Plain closing line.

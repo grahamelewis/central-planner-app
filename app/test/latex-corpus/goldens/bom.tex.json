@@ -1,0 +1,149 @@
+{
+ "mode": "full",
+ "ext": "tex",
+ "lines": [
+  {
+   "t": [
+    [
+     "",
+     "﻿"
+    ],
+    [
+     "cm",
+     "% bom.tex — this file begins with a UTF-8 byte-order mark before this comment."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "cm",
+     "% Part of the Central Planner latex-corpus. All content is synthetic (A13)."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\documentclass"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "",
+     "article"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\begin"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "document"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "BOM at byte zero; otherwise ordinary prose with "
+    ],
+    [
+     "md",
+     "$"
+    ],
+    [
+     "mv",
+     "b"
+    ],
+    [
+     "mo",
+     "_"
+    ],
+    [
+     "nm",
+     "0"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "mo",
+     "="
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "nm",
+     "1"
+    ],
+    [
+     "md",
+     "$"
+    ],
+    [
+     "",
+     " inline."
+    ]
+   ],
+   "z": [
+    [
+     48,
+     57
+    ]
+   ]
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "document"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [],
+   "z": []
+  }
+ ]
+}

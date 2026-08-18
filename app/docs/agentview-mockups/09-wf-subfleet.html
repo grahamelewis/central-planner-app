@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>⑨ workflow sub-fleet</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .wfCard{ border:1px solid rgb(from var(--purple) r g b / 30%); border-radius:10px;
+    background:rgb(from var(--purple) r g b / 5%); padding:9px 12px; margin:8px 0; }
+  .phase{ font-size:9.5px; color:var(--dim); font-weight:800; letter-spacing:.08em; margin:7px 0 3px; }
+  .fleet{ display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:7px; }
+  .acard{ background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:5px 9px; min-width:0; }
+  .acard .d{ font-size:10px; color:var(--ink-soft); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .acard .a{ font-size:9.5px; color:var(--purple); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .lg{ font-size:9.5px; color:var(--mut); margin-top:6px; }
+  .lg .t{ color:var(--faint); font-size:9px; margin-right:7px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="index.html">← agentview mockups</a></div>
+  <h1>⑨ Sub-fleet (the full treatment)</h1>
+  <div class="sub">the fleet board nested inside a workflow container — census AND story</div>
+  <div class="console">
+    <div class="tl"><span class="tool">[tool: Workflow]</span> lit-audit-gl-draft — 18 clusters audited in parallel, each finding…</div>
+    <div class="wfCard">
+      <div style="display:flex;gap:8px;align-items:baseline;"><b style="color:var(--purple);">⧉ lit-audit-gl-draft</b>
+        <span class="small" id="meta"></span></div>
+      <div id="body"></div>
+      <div class="lg" id="lastlog"></div>
+    </div>
+    <div class="cog">Percolating…</div>
+  </div>
+  <div class="note"><b>Data it needs: everything — per-agent telemetry + phases + narrator.</b>
+    The fleet board (shipped today) rendered inside a workflow container: phase headers with
+    settled counts, live cards for running agents, the latest narrator line as the footer. This
+    is ⑦ + ⑧ + the existing board — one display grammar for BOTH direct subagents and
+    workflow fleets, which is the end-state I'd design toward. Same plumbing gap as ⑦, plus
+    per-agent usage if we want tok/clock on the inner cards.</div>
+</main>
+<script src="data.js"></script>
+<script>
+  document.getElementById('meta').textContent = `18 agents · ${WF.tools} tools · ${WF.tok} tok · ${WF.t}`;
+  document.getElementById('body').innerHTML = WF.phases.map(p => {
+    const cards = p.name === 'Verify'
+      ? `<div class="fleet">${WF.agents.map(a => `
+          <div class="acard"><div class="d">◆ #${a.n} ${a.desc}</div>
+          <div class="a"><span class="spin"></span>${a.act} · ${a.t}</div></div>`).join('')}</div>`
+      : '';
+    return `<div class="phase">${p.name} — ${p.done}/${p.total}${p.failed ? ` <span class="bad">✗${p.failed}</span>` : ''}${p.done === p.total ? ' ✓' : ''}</div>${cards}`;
+  }).join('');
+  document.getElementById('lastlog').innerHTML = `<span class="t">${WF.log.at(-1).t}</span>${WF.log.at(-1).txt}`;
+</script>
+</body>
+</html>

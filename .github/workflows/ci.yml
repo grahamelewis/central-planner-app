@@ -1,0 +1,64 @@
+# Central Planner CI — app suite + typecheck + desktop suite on macOS.
+#
+# Billing safety: CP_NO_BILLED=1 is exported at the job level as belt-and-braces
+# (the test sandbox already sets it server-side), and no ANTHROPIC_API_KEY —
+# or any other secret — is configured anywhere in this workflow, so CI is
+# structurally incapable of billed Claude dispatch.
+#
+# Chrome: the UI harness (app/test/uiHarness.mjs) resolves the browser path
+# from CP_CHROME and exports it; every UI suite's skip guard imports that
+# resolved path, so a CP_CHROME pointing at nothing skips the UI suites
+# gracefully and a path that exists but fails to launch errors fast (the
+# harness closes its sandbox before rethrowing — no hung job). macOS runners
+# ship Google Chrome at the same /Applications path used on dev machines, so
+# the variable could stay unset — it is set explicitly anyway so the seam is
+# exercised and the intent is visible.
+#
+# Known gap (documented in the phase-2 audit, tests deliberately not edited):
+# static.test.mjs syntax-checks a fixed file list that omits the 14 public
+# modules added by the phase-2 decomposition — a module-load regression there
+# surfaces as mass UI-test failure rather than a pointed syntax error.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      CP_NO_BILLED: "1"
+      CP_CHROME: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            desktop/package-lock.json
+
+      - name: Install app dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: App test suite
+        working-directory: app
+        run: npm test
+
+      - name: Typecheck
+        working-directory: app
+        run: npm run typecheck
+
+      - name: Desktop suite
+        working-directory: desktop
+        run: npm ci && npm test

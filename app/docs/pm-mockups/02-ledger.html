@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>② the ledger</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  /* ordinal model-tier ramp (validated --ordinal, both modes): one hue, capable→light */
+  :root{ --m1:#104281; --m2:#1c5cab; --m3:#3987e5; --m4:#86b6ef; }
+  @media (prefers-color-scheme: dark){
+    :root{ --m1:#86b6ef; --m2:#5598e7; --m3:#2a78d6; --m4:#184f95; }
+  }
+  .pareto .hrow{ grid-template-columns:minmax(150px,230px) 1fr 64px; }
+  .callout{ font-size:11px; color:var(--mut); margin:8px 0 0; }
+  .callout b{ color:var(--ink); }
+  .cols{ display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  @media (max-width:760px){ .cols{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="index.html">← pm mockups</a></div>
+  <h1>② The ledger</h1>
+  <div class="sub">where the tokens went — the unit economics of a research month, straight out of <span class="mono">ledger.jsonl</span></div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="sec">cost per task — july <small>bars carry project identity; the tail is cheap, the head is the story</small></div>
+  <div id="plegend"></div>
+  <div class="pareto" id="pareto"></div>
+  <div class="callout" id="pcall"></div>
+  <details class="tbl"><summary>▦ data as table</summary><div id="ptbl"></div></details>
+
+  <div class="cols">
+    <div>
+      <div class="sec">cost by category <small>all time</small></div>
+      <div id="clegend"></div>
+      <div id="cats"></div>
+    </div>
+    <div>
+      <div class="sec">token mix by model tier <small>ordered Fable → Haiku; one hue, stepped</small></div>
+      <div id="mlegend"></div>
+      <div id="mix"></div>
+      <div class="callout">per-model rows have landed in the ledger since the audit push —
+        mixed-fleet turns attribute honestly.</div>
+    </div>
+  </div>
+
+  <div class="note"><b>Idea.</b> Research already has a time ledger; this gives it a <b>cost
+    accounting</b> view. The Pareto is the honest chart: most tasks cost cents, a few eat the month —
+    seeing <b>which</b> ones changes how you scope the next task ("counterfactuals are $40 tasks;
+    letters are $12 ones"). All derivable from ledger.jsonl (per-model rows included) + task session
+    counters. <b>Open question:</b> is $/task the right unit, or $/handoff-accepted — cost per thing
+    that actually advanced the paper?</div>
+</main>
+<script src="data.js"></script>
+<script>
+(() => {
+  const done = TASKS.filter(t => t.cost);
+  const julSpend = WEEKS.slice(4).reduce((a, w) => a + Object.values(w.c).reduce((x, y) => x + y, 0), 0);
+  const closedAll = TASKS.filter(t => t.status === 'done');
+  const perClose = closedAll.reduce((a, t) => a + t.cost, 0) / closedAll.length;
+  const nums = TASKS.flatMap(t => t.handoff?.numbers || []);
+  const numCost = TASKS.filter(t => t.handoff?.numbers).reduce((a, t) => a + t.cost, 0) / nums.length;
+  const julTok = TASKS.reduce((a, t) => a + (t.tokIn || 0) + (t.tokOut || 0), 0);
+
+  document.getElementById('kpis').innerHTML = [
+    { l: 'spend · last 4 weeks', v: usd(julSpend), d: 'no cap configured', c: '' },
+    { l: 'per closed task', v: usd(perClose), d: `${closedAll.length} closed all-time`, c: '' },
+    { l: 'per canonical number', v: usd(numCost), d: `${nums.length} numbers in handoffs`, c: '' },
+    { l: 'tokens · all tasks', v: tok(julTok), d: 'in + out, whole tree', c: '' },
+  ].map(k => `<div class="tile"><div class="l">${k.l}</div><div class="v">${k.v}</div>
+    <div class="d ${k.c}">${k.d}</div></div>`).join('');
+
+  const leg = legendHtml(Object.values(PROJECTS).map(p => ({ name: p.name, v: p.v })));
+  document.getElementById('plegend').innerHTML = leg;
+  document.getElementById('clegend').innerHTML = leg;
+
+  // ── pareto ──
+  const sorted = [...done].sort((a, b) => b.cost - a.cost);
+  const maxC = sorted[0].cost, total = sorted.reduce((a, t) => a + t.cost, 0);
+  document.getElementById('pareto').innerHTML = sorted.slice(0, 10).map(t => `
+    <div class="hrow" data-id="${t.id}" tabindex="0">
+      <span class="hl"><span class="chip">${t.id}</span> ${t.title}</span>
+      <span class="track lone"><span class="seg" style="background:var(${PROJECTS[t.p].v});
+        width:${(t.cost / maxC) * 100}%"></span></span>
+      <span class="hv">${usd(t.cost)}</span>
+    </div>`).join('');
+  const top3 = sorted.slice(0, 3).reduce((a, t) => a + t.cost, 0);
+  document.getElementById('pcall').innerHTML =
+    `<b>${sorted[0].id}</b> alone is <b>${Math.round((sorted[0].cost / total) * 100)}%</b> of tracked spend;
+     the top three are <b>${Math.round((top3 / total) * 100)}%</b>. The other ${sorted.length - 3} tasks
+     average ${usd((total - top3) / (sorted.length - 3))}.`;
+  document.querySelectorAll('.pareto .hrow').forEach(n => wireTip(n, () => {
+    const t = byId[n.dataset.id];
+    return { title: `${t.id} · ${t.title}`, rows: [
+      { k: PROJECTS[t.p].name, v: '', sw: sv(PROJECTS[t.p].v) },
+      { k: 'tokens', v: `${tok(t.tokIn)} in · ${tok(t.tokOut)} out` },
+      { k: 'turns', v: String(t.turns) }, { k: 'cost', v: usd(t.cost) },
+      { k: 'share of spend', v: Math.round((t.cost / total) * 100) + '%' } ] };
+  }));
+  document.getElementById('ptbl').innerHTML = `<table class="data"><tr><th>task</th><th>project</th>
+    <th>tok in</th><th>tok out</th><th>turns</th><th>cost</th></tr>${sorted.map(t =>
+    `<tr><td>${t.id}</td><td>${PROJECTS[t.p].name}</td><td>${tok(t.tokIn)}</td>
+     <td>${tok(t.tokOut)}</td><td>${t.turns}</td><td>${usd(t.cost)}</td></tr>`).join('')}</table>`;
+
+  // ── by category, stacked by project ──
+  const cats = {};
+  done.forEach(t => { (cats[t.cat] ??= { wedge: 0, repkit: 0, survey: 0 })[t.p] += t.cost; });
+  const catRows = Object.entries(cats).map(([c, v]) => ({ c, v, sum: v.wedge + v.repkit + v.survey }))
+    .sort((a, b) => b.sum - a.sum);
+  const maxCat = catRows[0].sum;
+  document.getElementById('cats').innerHTML = catRows.map(r => `
+    <div class="hrow" data-cat="${r.c}" tabindex="0">
+      <span class="hl">${r.c}</span>
+      <span class="track">${Object.entries(r.v).filter(([, x]) => x > 0).map(([p, x]) =>
+        `<span class="seg" style="background:var(${PROJECTS[p].v}); width:${(x / maxCat) * 100}%"></span>`).join('')}</span>
+      <span class="hv">${usd(r.sum)}</span>
+    </div>`).join('');
+  document.querySelectorAll('#cats .hrow').forEach(n => wireTip(n, () => {
+    const r = catRows.find(x => x.c === n.dataset.cat);
+    return { title: r.c, rows: Object.entries(r.v).filter(([, x]) => x > 0)
+      .map(([p, x]) => ({ k: PROJECTS[p].name, v: usd(x), sw: sv(PROJECTS[p].v) })) };
+  }));
+
+  // ── model mix (ordinal ramp) ──
+  const MV = ['--m1', '--m2', '--m3', '--m4'];
+  document.getElementById('mlegend').innerHTML = legendHtml(MODELS.map((m, i) => ({ name: m, v: MV[i] })));
+  const maxMix = Math.max(...Object.values(MODELMIX).map(a => a.reduce((x, y) => x + y, 0)));
+  document.getElementById('mix').innerHTML = Object.entries(MODELMIX).map(([p, a]) => `
+    <div class="hrow" data-p="${p}" tabindex="0">
+      <span class="hl"><i class="ldot" style="background:var(${PROJECTS[p].v})"></i>${PROJECTS[p].name}</span>
+      <span class="track">${a.map((x, i) =>
+        `<span class="seg" style="background:var(${MV[i]}); width:${(x / maxMix) * 100}%"></span>`).join('')}</span>
+      <span class="hv">${tok(a.reduce((x, y) => x + y, 0))}</span>
+    </div>`).join('');
+  document.querySelectorAll('#mix .hrow').forEach(n => wireTip(n, () => {
+    const a = MODELMIX[n.dataset.p];
+    return { title: PROJECTS[n.dataset.p].name, rows: a.map((x, i) =>
+      ({ k: MODELS[i], v: tok(x), sw: sv(MV[i]) })) };
+  }));
+})();
+</script>
+</body>
+</html>

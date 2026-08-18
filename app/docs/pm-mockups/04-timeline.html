@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>④ the journal</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .gouter{ padding-left:186px; }
+  .gchart{ position:relative; }
+  .gline{ position:absolute; top:18px; bottom:0; width:1px; background:var(--line); }
+  .gtoday{ position:absolute; top:0; bottom:0; width:1px; background:var(--ink); opacity:.55; }
+  .gdl{ position:absolute; top:0; bottom:0; width:1px; background:var(--red); }
+  .gdl i{ position:absolute; left:3px; font-style:normal; font-size:9px; color:var(--red);
+    white-space:nowrap; background:var(--bg); padding:0 4px 0 2px; border-radius:3px; }
+  .gticks{ height:18px; position:relative; font-size:9px; color:var(--faint); }
+  .gticks span{ position:absolute; transform:translateX(-50%); }
+  .glanehd{ position:relative; height:26px; }
+  .glanehd .in{ position:absolute; left:-186px; display:flex; gap:7px; align-items:center;
+    font-size:11.5px; font-weight:600; padding-top:6px; }
+  .grow{ position:relative; height:23px; }
+  .glab{ position:absolute; left:-186px; width:176px; font:10px ui-monospace, Menlo, monospace;
+    color:var(--mut); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-top:3px; }
+  .gbar{ position:absolute; top:5px; height:12px; display:flex; border-radius:0 4px 4px 0; overflow:hidden; }
+  .gbar .solid{ height:100%; }
+  .gbar .stall{ height:100%; flex:1; opacity:.85;
+    background:repeating-linear-gradient(45deg, transparent 0 3px, currentColor 3px 5px); }
+  .gbar.q{ border:1px solid var(--faint); background:transparent !important; border-radius:4px; }
+  .gm{ position:absolute; top:-2px; transform:translateX(-50%); font-size:9px; cursor:default; }
+  .gm.art{ color:var(--blue); } .gm.dec{ color:var(--purple); } .gm.qq{ color:var(--yellow); }
+  .gkey{ font-size:10.5px; color:var(--dim); margin-top:10px; }
+  .gkey b{ font-weight:600; }
+  /* heatmap */
+  .hmwrap{ display:flex; gap:10px; align-items:flex-start; }
+  .hmdays{ display:grid; grid-template-rows:repeat(7, 15px); font-size:8.5px; color:var(--faint);
+    text-align:right; padding-top:16px; }
+  .hm{ display:grid; grid-auto-flow:column; grid-template-rows:16px repeat(7, 15px); gap:2px; }
+  .hm .wk{ font-size:8.5px; color:var(--faint); white-space:nowrap; }
+  .hm .c{ width:13px; height:13px; border-radius:3px; }
+  .hm .c.future{ border:1px dashed var(--line); }
+  .ramp{ display:flex; gap:2px; align-items:center; font-size:9.5px; color:var(--faint); margin-top:8px; }
+  .ramp i{ width:13px; height:13px; border-radius:3px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="index.html">← pm mockups</a></div>
+  <h1>④ The journal</h1>
+  <div class="sub">the season on one page — every task as a lifespan, every artifact ✦ and decision ◇ stamped where it happened, deadlines waiting on the right</div>
+
+  <div class="gouter"><div class="gchart" id="g"></div></div>
+  <div class="gkey"><span class="gm art" style="position:static">✦</span> artifact ·
+    <span class="gm dec" style="position:static">◇</span> decision ·
+    <span class="gm qq" style="position:static">⏸</span> stall start (striped = waiting on you) ·
+    hollow = queued · <b style="color:var(--red)">│</b> deadline · <b>│</b> today</div>
+
+  <div class="sec">focused hours <small>heartbeat ledger, daily</small></div>
+  <div class="hmwrap">
+    <div class="hmdays"><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span>Sun</span></div>
+    <div class="hm" id="hm"></div>
+  </div>
+  <div class="ramp" id="ramp"></div>
+
+  <div class="note"><b>Idea.</b> A research journal that writes itself: task lifespans + handoff
+    stamps + the heartbeat heatmap reconstruct "what actually happened in July" better than memory
+    does. The striped tails make <b>waiting-on-you time</b> visible as a shape — sur-005's stall is
+    two days, wed-005's is four and growing. All from existing task dates, handoffs, and
+    ledger heartbeats. <b>Cost:</b> vertical space — at ~40 tasks this needs collapsing done rows
+    or a quarter view. Pairs naturally with ⑥ (click a ◇ → its registry entry).</div>
+</main>
+<script src="data.js"></script>
+<script>
+(() => {
+  const T0 = D('2026-06-08'), T1 = D('2026-09-07');
+  const pct = (d) => ((d - T0) / (T1 - T0)) * 100;
+  const today = pct(TODAY);
+  let h = '';
+
+  // week gridlines + tick labels (every 2 weeks)
+  h += '<div class="gticks">';
+  for (let w = 0; w < 14; w += 2) {
+    const d = new Date(T0.getTime() + w * 7 * 864e5);
+    h += `<span style="left:${pct(d)}%">${MON[d.getMonth()]} ${d.getDate()}</span>`;
+  }
+  h += '</div>';
+  for (let w = 0; w <= 13; w++) h += `<div class="gline" style="left:${pct(new Date(T0.getTime() + w * 7 * 864e5))}%"></div>`;
+  h += `<div class="gtoday" style="left:${today}%"></div>`;
+  Object.values(PROJECTS).forEach((p, i) =>
+    h += `<div class="gdl" style="left:${pct(D(p.due.date))}%"><i style="top:${16 + i * 13}px">◆ ${p.due.label}</i></div>`);
+
+  for (const [k, p] of Object.entries(PROJECTS)) {
+    h += `<div class="glanehd"><div class="in"><i class="ldot" style="background:var(${p.v}); margin:0"></i>${p.name}</div></div>`;
+    for (const t of tasksOf(k)) {
+      const x0 = pct(D(t.created));
+      const x1 = t.closed ? pct(D(t.closed)) : today;
+      const w = Math.max(x1 - x0, 0.6);
+      let bar;
+      if (t.status === 'queued') {
+        bar = `<div class="gbar q" data-id="${t.id}" tabindex="0" style="left:${x0}%; width:${w}%"></div>`;
+      } else if (t.status === 'waiting') {
+        const xs = pct(D(t.waitingSince));
+        const solidW = ((xs - x0) / (x1 - x0)) * 100;
+        bar = `<div class="gbar" data-id="${t.id}" tabindex="0" style="left:${x0}%; width:${w}%; color:var(${p.v})">
+          <span class="solid" style="background:var(${p.v}); width:${solidW}%"></span><span class="stall"></span></div>`;
+      } else {
+        bar = `<div class="gbar" data-id="${t.id}" tabindex="0" style="left:${x0}%; width:${w}%">
+          <span class="solid" style="background:var(${p.v}); width:100%; opacity:${t.status === 'done' ? .8 : 1}"></span></div>`;
+      }
+      let marks = '';
+      if (t.handoff?.artifacts) marks += `<span class="gm art" data-id="${t.id}" data-kind="artifacts" tabindex="0"
+        style="left:${x1}%">${'✦'.repeat(Math.min(t.handoff.artifacts.length, 3))}</span>`;
+      if (t.handoff?.decisions) marks += `<span class="gm dec" data-id="${t.id}" data-kind="decisions" tabindex="0"
+        style="left:${x1 - 1.2}%">◇</span>`;
+      if (t.status === 'waiting') marks += `<span class="gm qq" data-id="${t.id}" data-kind="question" tabindex="0"
+        style="left:${pct(D(t.waitingSince))}%">⏸</span>`;
+      h += `<div class="grow"><span class="glab">${t.id} · ${t.title}</span>${bar}${marks}</div>`;
+    }
+  }
+  document.getElementById('g').innerHTML = h;
+
+  document.querySelectorAll('.gbar').forEach(n => wireTip(n, () => {
+    const t = byId[n.dataset.id];
+    return { title: `${t.id} · ${t.title}`, rows: [
+      { k: 'span', v: `${dstr(t.created)} → ${t.closed ? dstr(t.closed) : 'now'}`, sw: sv(PROJECTS[t.p].v) },
+      { k: 'status', v: ST[t.status].label },
+      ...(t.status === 'waiting' ? [{ k: 'stalled', v: `${daysAgo(t.waitingSince)}d` }] : []),
+      ...(t.cost ? [{ k: 'cost', v: usd(t.cost) }] : []) ] };
+  }));
+  document.querySelectorAll('.gm').forEach(n => wireTip(n, () => {
+    const t = byId[n.dataset.id], kind = n.dataset.kind;
+    if (kind === 'question') return { title: `${t.id} — waiting since ${dstr(t.waitingSince)}`,
+      rows: [{ k: 'Q', v: t.question.slice(0, 60) + '…' }] };
+    const items = t.handoff[kind] || [];
+    return { title: `${t.id} — ${kind}`, rows: items.map(a => ({ k: kind === 'artifacts' ? '✦' : '◇', v: String(a).slice(0, 52) })) };
+  }));
+
+  // ── heatmap (sequential: one hue, light→dark) ──
+  const STEPS = [8, 26, 46, 70, 95];
+  const cell = (v) => v == null ? '<span class="c future"></span>' :
+    `<span class="c" style="background:color-mix(in srgb, var(--seq) ${STEPS[v]}%, var(--well))"></span>`;
+  let hm = '';
+  DAYS.forEach((wkRow, w) => {
+    const monDate = new Date(D('2026-06-08').getTime() + w * 7 * 864e5);
+    hm += `<span class="wk">${w % 2 === 0 ? MON[monDate.getMonth()] + ' ' + monDate.getDate() : ''}</span>`;
+    wkRow.forEach((v, d) => { hm += cell(v); });
+  });
+  document.getElementById('hm').innerHTML = hm;
+  const cells = [...document.querySelectorAll('.hm .c')];
+  DAYS.flat().forEach((v, i) => {
+    const day = new Date(D('2026-06-08').getTime() + (Math.floor(i / 7) * 7 + (i % 7)) * 864e5);
+    wireTip(cells[i], () => ({ title: `${MON[day.getMonth()]} ${day.getDate()}`,
+      rows: [{ k: 'focused', v: v == null ? '—' : `≈ ${(v * 1.5).toFixed(1)}h` }] }));
+  });
+  document.getElementById('ramp').innerHTML = 'less ' +
+    STEPS.map(s => `<i style="background:color-mix(in srgb, var(--seq) ${s}%, var(--well))"></i>`).join('') + ' more';
+})();
+</script>
+</body>
+</html>

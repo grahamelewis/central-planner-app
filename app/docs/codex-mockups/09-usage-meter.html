@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Codex mockup 09 — usage meter</title><link rel="stylesheet" href="mock.css">
+</head>
+<body>
+  <header class="mockHead"><span class="crumb"><a href="index.html">← Codex mockups</a> · 09 of 09</span>
+    <h1>Usage stays visible at the bottom <small>real percentages for every connected provider</small></h1>
+    <p>Codex exposes its quota windows, used percentage, and reset timestamps through app-server. The collapsed bar keeps both short-window percentages glanceable; the open panel shows every returned window. Click the bottom meter to close and reopen it.</p></header>
+  <div id="mockNavSlot"></div>
+  <div class="frameWrap"><div class="shot" id="mockApp"></div></div>
+  <section class="notes">
+    <div class="nrow"><span class="nb">1</span><div class="nt"><b>Both providers stay glanceable.</b> Claude and Codex keep separate percentages because their windows and reset schedules are unrelated. The active task’s provider is brighter.</div></div>
+    <div class="nrow"><span class="nb">2</span><div class="nt"><b>The percentage means “used,” consistently.</b> Tracks fill toward the limit, turn yellow at 70%, and red at 90%, matching the dashboard’s existing Claude convention.</div></div>
+    <div class="nrow"><span class="nb">3</span><div class="nt"><b>Reset labels are derived, not assumed.</b> Codex returns <code>windowDurationMins</code> and <code>resetsAt</code>; the UI converts those into labels and live countdowns.</div></div>
+    <div class="nrow"><span class="nb">4</span><div class="nt"><b>Authentication matters.</b> ChatGPT-backed Codex logins expose plan windows. API-key-only usage should show API spend/rate-limit data instead of pretending it has a ChatGPT-plan percentage.</div></div>
+  </section>
+  <script>window.MOCKUP={services:{claude:'connected',codex:'connected'},current:{provider:'codex',model:'gpt-5.6-terra',effort:'high'},usageOpen:true,hasThread:true,pins:[{n:1,style:'right:260px;bottom:7px'},{n:2,style:'right:118px;bottom:7px'},{n:3,style:'right:188px;bottom:163px'},{n:4,style:'right:34px;bottom:47px'}]};</script>
+  <script src="mock.js"></script>
+</body>
+</html>

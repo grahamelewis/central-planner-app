@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tex run mockup 03 — one merged run + status pill</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .rcol{ position:relative; display:flex; flex-direction:column; }
+  .rcol .vslot{ position:relative; flex:0 0 62%; }
+  .rcol .sslot{ position:relative; flex:1; }
+</style>
+</head>
+<body>
+
+<div class="mockHead">
+  <span class="crumb"><a href="index.html">← tex run mockups</a> · 03 of 05</span>
+  <h1>Toolbar · merged pill <small>the verdict chip grows an action side — one control, two fixed slots</small></h1>
+  <p>Instead of adding a second control to the bar, the <b>verdict chip absorbs the run button</b>. One pill in
+     the verdict's right-anchor spot, two slots that never resize: a <b>26px action slot</b> (▶, or ⊘ while
+     compiling) and a <b>9-character status slot</b> (<code>compile</code> → <code>⟳ pass 2</code> →
+     <code>✓ 2.3s</code> / <code>✗ 0.8s</code>). Click the left half to compile or stop, the right half to jump
+     to the ▶ output pane — exactly the verdict's click-through today. Minimum chrome: the toolbar gains zero
+     new elements. <b>Live: click the pill's two halves; click the editor</b> to dirty the draft.</p>
+</div>
+<div class="mockNav">
+  <a href="index.html">index</a>
+  <a href="01-today.html">01 today</a>
+  <a href="02-toolbar-left.html">02 toolbar · left</a>
+  <a class="on" href="03-toolbar-merged.html">03 toolbar · merged pill</a>
+  <a href="04-toolbar-cockpit.html">04 toolbar · cockpit</a>
+  <a href="05-foot-fixed.html">05 foot · fixed geometry</a>
+</div>
+
+<div class="frameWrap"><div class="shot">
+  <span class="pin" style="right:18.5%; top:140px;">1</span>
+  <span class="tryMe" style="right:3%; top:112px;">click ▶ · click the status</span>
+
+  <nav id="nav">
+    <span class="brand">Alex <span style="color:var(--dim);font-weight:400;">/ planner</span></span>
+    <div class="tab">⌂ Overview</div>
+    <div class="tab on"><span class="dot run"></span>ShockPersistence</div>
+    <div class="tab"><span class="dot off"></span>TaxNotches</div>
+    <div class="tab"><span class="dot off"></span>Referee-QJE</div>
+    <div class="right">
+      <button class="addBtn">＋ ADD TASK</button>
+      <div class="tab">git</div>
+      <div class="tab">⧉ Calendar</div>
+      <span class="chip">wk <b>$4.12</b> · 9h</span>
+    </div>
+  </nav>
+
+  <div class="wb">
+    <div class="side">
+      <div class="abstract">Idiosyncratic shock persistence and the wealth distribution in an
+        Aiyagari economy. <span class="bet">Bet: the tighter grid moves the Gini.</span></div>
+      <div class="sh">PINNED FILES</div>
+      <div class="scRow on"><span class="nm">paper.tex</span><span class="lang">TEX</span></div>
+      <div class="scRow"><span class="nm">slides.tex</span><span class="lang">TEX</span></div>
+      <div class="scRow"><span class="nm">estimation.jl</span><span class="lang">JL</span></div>
+      <div class="scRow"><span class="nm">shock_grid.jl</span><span class="lang">JL</span></div>
+      <div class="scRow"><span class="nm">results.md</span><span class="lang">MD</span></div>
+    </div>
+    <div class="sdivider"></div>
+
+    <div class="pane">
+      <div class="ptabs">
+        <div class="ptab on"><span class="tdot q"></span>Referee reply pass</div>
+        <div class="ptab"><span class="tdot run"></span>Re-estimate SMM · tighter grid</div>
+        <div class="ptab plus">＋</div>
+      </div>
+      <div class="pbody">
+        <div class="codeHalf">
+          <div class="ctabs">
+            <div class="ctab on">paper.tex</div>
+            <div class="ctab">shock_grid.jl</div>
+            <div class="ctab console">≋ console</div>
+          </div>
+          <div class="edMock" id="edClick" title="click to simulate typing (unsaved draft)">
+            <div class="gut">41<br>42<br>43<br>44<br>45<br>46<br>47<br>48<br>49<br>50<br>51<br>52</div>
+            <pre><span class="k">\section</span>{Calibration}
+We discipline <span class="m">$\rho_z$</span> and <span class="m">$\sigma_z$</span> jointly from the
+simulated moments in Table~<span class="k">\ref</span>{tab:moments}. The
+persistence estimate is <span class="m">$\hat\rho_z = 0.96$</span>, tighter
+than the baseline grid suggests.<span class="cursor" id="edCaret" style="display:none"></span>
+<span class="c">% TODO: referee 2 wants the finer shock grid here</span>
+<span class="k">\begin</span>{table}[t]
+  <span class="k">\centering</span>
+  <span class="k">\caption</span>{Targeted moments, tighter grid}
+  <span class="k">\label</span>{tab:moments}
+  <span class="k">\input</span>{tables/moments_tight.tex}
+<span class="k">\end</span>{table}</pre>
+          </div>
+          <div class="cfoot">
+            <span>paper.tex</span>
+            <button class="texBtn">§ outline</button>
+            <button class="texBtn">◎ pdf</button>
+            <span class="saveChip" id="saveChip"><i></i><span id="saveTxt">saved · ⌘S</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="vdivider"></div>
+
+    <div class="pane rcol">
+      <div class="ptabs">
+        <div class="ptab on">Show</div>
+      </div>
+      <div class="pbody vslot">
+        <div class="viewerTop">
+          <div class="vtabs">
+            <div class="vtab on">◫ draft.pdf</div>
+            <div class="vtab">◫ slides.pdf</div>
+            <div class="vtab plus">＋</div>
+          </div>
+          <div class="pdfBox">
+            <div class="pdfBuildBar off" id="bar"><div class="fill"></div></div>
+            <div class="pdfToolbar">
+              <span class="pzBtn">−</span><span class="pzPct">fit</span><span class="pzBtn">＋</span>
+              <span class="runPill" id="pill">
+                <span class="act" id="act" title="save + compile draft.tex">▶</span>
+                <span class="st ok" id="st" title="open ▶ output">✓ 2.3s</span>
+                <span class="dotB"></span>
+              </span>
+              <span class="pdfPageNo" style="margin-left:10px">p 3 / 12</span>
+            </div>
+            <div class="pdfScrollM"><div class="sheet">
+              <h2>Idiosyncratic Shock Persistence<br>and the Wealth Distribution</h2>
+              <div class="au">Alex Rivera · July 2026</div>
+              <div class="absH">Abstract</div>
+              <div class="ab">We estimate the persistence of idiosyncratic earnings risk in a heterogeneous-agent
+                economy and show the implied wealth distribution is sensitive to the shock grid.</div>
+              <div class="secH">1&nbsp;&nbsp;Introduction</div>
+              <div class="fl w92"></div><div class="fl"></div><div class="fl w80"></div>
+              <div class="eq">a′ = (1+r)a + wz − c,&nbsp;&nbsp;log z′ = ρ<sub>z</sub> log z + ε</div>
+              <div class="fl"></div><div class="fl w60"></div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+      <div class="pbody sslot">
+        <div class="sessHalf">
+          <div class="sessTabs">
+            <div class="stab">⌘ session</div>
+            <div class="stab on" id="outTab">▶ output</div>
+            <div class="stab">Δ 4</div>
+          </div>
+          <div class="outLog" id="log">
+            <b>latexmk -pdf draft.tex</b><br>
+            Output written on draft.pdf (12 pages).<br>
+            <span class="ok">✓ built in 2.3s</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<div class="stateStrip">
+  <div class="inner">
+    <div class="stCase">
+      <div class="lbl">never compiled</div>
+      <div class="demo"><span class="runPill"><span class="act">▶</span><span class="st idle">compile</span></span></div>
+      <div class="w">pill <b class="mw">—</b></div>
+    </div>
+    <div class="stCase">
+      <div class="lbl">compiling · ⊘ stops</div>
+      <div class="demo"><span class="runPill running"><span class="act">⊘</span><span class="st bld"><span class="vspin">⟳</span> pass 2</span></span></div>
+      <div class="w">pill <b class="mw">—</b></div>
+    </div>
+    <div class="stCase">
+      <div class="lbl">built</div>
+      <div class="demo"><span class="runPill"><span class="act">▶</span><span class="st ok">✓ 2.3s</span></span></div>
+      <div class="w">pill <b class="mw">—</b></div>
+    </div>
+    <div class="stCase">
+      <div class="lbl">failed · status clicks to output</div>
+      <div class="demo"><span class="runPill"><span class="act">▶</span><span class="st no">✗ 0.8s</span></span></div>
+      <div class="w">pill <b class="mw">—</b></div>
+    </div>
+    <div class="stCase">
+      <div class="lbl">unsaved · corner dot</div>
+      <div class="demo"><span class="runPill dirty"><span class="act">▶</span><span class="st ok">✓ 2.3s</span><span class="dotB" style="opacity:1"></span></span></div>
+      <div class="w">pill <b class="mw">—</b></div>
+    </div>
+  </div>
+  <div class="cap">Measured live — five states, one width. The status slot reserves 9 characters
+    (tabular numerals), so “compile”, “⟳ pass 2” and “✓ 2.3s” all center in the same box.</div>
+</div>
+
+<div class="notes">
+  <div class="nrow"><span class="nb">1</span><span class="nt"><b>Zero new chrome.</b> The bar has the same element
+    count as today — the verdict chip just gained a left half. Action and answer share one border, which reads as
+    “this button made this result”. The right-anchor handoff to the page № is untouched.</span></div>
+  <div class="nrow"><span class="nb">·</span><span class="nt"><b>Click map.</b> Left half: compile (or stop while
+    building). Right half: today's verdict click — open the ▶ output pane. During a build the left half is ⊘, so
+    stop and “show me the log” are adjacent but distinct targets.</span></div>
+  <div class="nrow"><span class="nb">·</span><span class="nt"><b>Trade-off vs 02.</b> Tighter and more legible as a
+    status, but the action hides on the right side of the bar where buttons are usually passive (page №). If
+    muscle memory wants “compile where Overleaf puts it”, 02's leading ▶ wins; if the bar should stay minimal,
+    this does.</span></div>
+</div>
+
+<script>
+  const pill = document.getElementById('pill'), act = document.getElementById('act'), st = document.getElementById('st');
+  const bar = document.getElementById('bar'), fill = bar.querySelector('.fill');
+  const chip = document.getElementById('saveChip'), saveTxt = document.getElementById('saveTxt');
+  const log = document.getElementById('log');
+  let running = false, timers = [];
+  function idle(fail) {
+    running = false; timers.forEach(clearTimeout); timers = [];
+    pill.classList.remove('running'); act.textContent = '▶';
+    st.className = 'st ' + (fail ? 'no' : 'ok'); st.textContent = fail ? '✗ 0.8s' : '✓ 2.3s';
+    bar.classList.add('off');
+    log.innerHTML = fail
+      ? '<b>latexmk -pdf draft.tex</b><br>! Undefined control sequence. l.44<br><span class="err">✗ failed in 0.8s</span>'
+      : '<b>latexmk -pdf draft.tex</b><br>Output written on draft.pdf (12 pages).<br><span class="ok">✓ built in 2.3s</span>';
+  }
+  act.addEventListener('click', () => {
+    if (running) { idle(false); return; }
+    running = true;
+    pill.classList.add('running'); pill.classList.remove('dirty'); act.textContent = '⊘';
+    chip.classList.remove('dirty'); saveTxt.textContent = 'saved · ⌘S';
+    document.getElementById('edCaret').style.display = 'none';
+    st.className = 'st bld'; st.innerHTML = '<span class="vspin">⟳</span> pass 1';
+    bar.classList.remove('off'); fill.style.transition = 'none'; fill.style.setProperty('--p', '0.02');
+    void fill.offsetWidth; fill.style.transition = 'transform 2.4s cubic-bezier(.08,.82,.17,1)';
+    fill.style.setProperty('--p', '0.7');
+    log.innerHTML = '<b>latexmk -pdf draft.tex</b><br>Latexmk: applying rule \'pdflatex\'...';
+    timers.push(setTimeout(() => { if (running) st.innerHTML = '<span class="vspin">⟳</span> pass 2'; }, 1200));
+    timers.push(setTimeout(() => { if (running) fill.style.setProperty('--p', '1'); }, 2200));
+    timers.push(setTimeout(() => { if (running) idle(false); }, 2700));
+  });
+  st.addEventListener('click', () => {   // verdict click-through: flash the output tab
+    const t = document.getElementById('outTab');
+    t.style.boxShadow = 'inset 0 -2px 0 var(--yellow)';
+    setTimeout(() => { t.style.boxShadow = ''; }, 900);
+  });
+  document.getElementById('edClick').addEventListener('click', () => {
+    const d = !chip.classList.contains('dirty');
+    chip.classList.toggle('dirty', d); pill.classList.toggle('dirty', d);
+    saveTxt.textContent = d ? 'unsaved · ⌘S' : 'saved · ⌘S';
+    document.getElementById('edCaret').style.display = d ? 'inline-block' : 'none';
+  });
+  document.querySelectorAll('.stateStrip .stCase').forEach(c => {
+    c.querySelector('.mw').textContent = Math.round(c.querySelector('.runPill').getBoundingClientRect().width) + 'px';
+  });
+</script>
+</body>
+</html>

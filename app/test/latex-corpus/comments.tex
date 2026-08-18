@@ -1,0 +1,14 @@
+% Synthetic corpus: comments in every position.
+% A full-line comment with $math-looking$ content and \commands inside.
+Text before a comment % trailing comment with \alpha and $x$
+An escaped percent 100\% is not a comment, but this is % real comment
+$a + b$ % comment after inline math closes
+$c + d % comment inside an open inline zone — legacy behavior frozen
+\begin{equation}
+  x = 1 % comment inside a math environment
+\end{equation}
+%% double-percent comment
+%
+Empty comment above; indented comment below.
+   % indented comment
+Final line.

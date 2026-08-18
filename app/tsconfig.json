@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": false,
+    "noImplicitThis": true,
+    "strictBindCallApply": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": false,
+    "skipLibCheck": true
+  },
+  "include": ["public/*.js", "public/latex/*.js", "types/*.d.ts"],
+  "exclude": ["public/m", "public/pdfPane.js", "public/texEditor.js"]
+}

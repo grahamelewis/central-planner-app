@@ -1,0 +1,53 @@
+# User-specific configuration and generated profile
+config.json
+profile.json
+
+# Local credentials and machine-specific environment files
+.env
+.env.*
+!.env.example
+.npmrc
+.codex/
+*.pem
+*.key
+*.p12
+
+# Dependencies and packaged builds
+node_modules/
+app/node_modules/
+desktop/node_modules/
+desktop/dist/
+
+# OS and editor files
+.DS_Store
+
+# Local Claude settings/auth; retain the distributable setup command
+.claude/*
+!.claude/commands/
+
+# Private runtime state
+/tasks/
+/ledger/
+/snapshots/
+/transcripts/
+/abstracts/
+/decisions/
+/categories.json
+/jobhist.json
+/.kaimon-daemon.json
+/plan/
+/.cache/
+
+# Private app design notes
+/app/docs/private/
+/app/docs/*diagnosis.txt
+
+# Early local board/mockup files contain personal labels and project names
+/dashboard_hybrid.html
+/dashboard_templates.html
+/mockups/
+
+# R session artifacts
+.Rhistory
+.RData
+.Rproj.user/

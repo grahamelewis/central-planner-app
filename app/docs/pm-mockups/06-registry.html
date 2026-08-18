@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>⑥ the registry</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .reg{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:4px 16px; }
+  .nrow{ display:grid; grid-template-columns:110px 1fr auto; gap:16px; align-items:baseline;
+    padding:9px 0; border-bottom:1px solid var(--line); }
+  .nrow:last-child{ border-bottom:none; }
+  .nval{ font:600 15px ui-monospace, Menlo, monospace; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .nrow.dead .nval, .nrow.dead .nname{ text-decoration:line-through; color:var(--faint); }
+  .nname{ font-size:12px; color:var(--mut); }
+  .nsup{ font-size:10px; color:var(--yellow); margin-top:1px; }
+  .nprov{ font:9.5px ui-monospace, Menlo, monospace; color:var(--dim); text-align:right; white-space:nowrap; }
+  .nprov .chip{ margin-left:6px; }
+  .cols{ display:grid; grid-template-columns:3fr 2fr; gap:24px; }
+  @media (max-width:820px){ .cols{ grid-template-columns:1fr; } }
+  .drow{ display:grid; grid-template-columns:52px 10px 1fr; gap:10px; padding:8px 0;
+    border-bottom:1px solid var(--line); font-size:12px; color:var(--mut); align-items:start; }
+  .drow:last-child{ border-bottom:none; }
+  .drow .dd{ font:9.5px ui-monospace, Menlo, monospace; color:var(--faint); padding-top:2px; }
+  .drow .pd{ width:8px; height:8px; border-radius:2px; margin-top:5px; }
+  .drow .chip{ margin-left:7px; }
+  .drow.dead{ color:var(--faint); text-decoration:line-through; }
+  .shelf{ display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 14px; }
+  .shelf .chip{ padding:3px 9px; font-size:10px; }
+  .shelf .chip i{ font-style:normal; margin-right:5px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="index.html">← pm mockups</a></div>
+  <h1>⑥ The registry</h1>
+  <div class="sub">every handoff deposits numbers, decisions, artifacts — collected, they're the project's <b>institutional memory</b>: each fact carries its birth certificate</div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="cols">
+    <div>
+      <div class="sec">canonical numbers <small>value · where it was born · what it cost</small></div>
+      <div class="reg" id="nums"></div>
+    </div>
+    <div>
+      <div class="sec">decision log <small>reverse-chron</small></div>
+      <div class="reg" id="decs"></div>
+      <div class="sec">artifact shelf</div>
+      <div id="shelf"></div>
+    </div>
+  </div>
+
+  <div class="note"><b>Idea.</b> The question this answers is the one you actually ask in week 6:
+    <i>"wait — which N are we using, and where did it come from?"</i> Handoffs already carry
+    numbers/decisions/artifacts; nobody re-reads old handoffs. Collected with provenance (task, date,
+    cost) they become a lab notebook the sessions could ALSO read — the context packet's living
+    abstract, generated instead of hand-written. The strikethrough is the one new bit of schema:
+    a <span class="mono">supersedes</span> link when a later handoff re-states a number
+    (auto-suggestable by name match). <b>This is the page most unlike a dashboard — and maybe the
+    most valuable.</b></div>
+</main>
+<script src="data.js"></script>
+<script>
+(() => {
+  // supersede links (the proposed new field, mocked here)
+  const SUP = { 'wed-002:0': 'wed-003', 'dec:wed-002': 'wed-003' };
+
+  const nums = [];
+  TASKS.forEach(t => (t.handoff?.numbers || []).forEach(([k, v], i) =>
+    nums.push({ k, v, t, dead: SUP[`${t.id}:${i}`] })));
+  const decs = [];
+  TASKS.forEach(t => (t.handoff?.decisions || []).forEach(d =>
+    decs.push({ d, t, dead: SUP[`dec:${t.id}`] })));
+  decs.sort((a, b) => D(b.t.closed) - D(a.t.closed));
+  const arts = [];
+  TASKS.forEach(t => (t.handoff?.artifacts || []).forEach(a => arts.push({ a, t })));
+
+  const live = nums.filter(n => !n.dead);
+  const factCost = nums.reduce((a, n) => a + n.t.cost, 0) / nums.length;
+  document.getElementById('kpis').innerHTML = [
+    { l: 'canonical numbers', v: live.length, d: `+ ${nums.length - live.length} superseded` },
+    { l: 'decisions on record', v: decs.length, d: 'each links its task' },
+    { l: 'artifacts shelved', v: arts.length, d: 'from handoffs' },
+    { l: 'avg cost per fact', v: usd(factCost), d: 'birth task’s spend' },
+  ].map(k => `<div class="tile"><div class="l">${k.l}</div><div class="v">${k.v}</div>
+    <div class="d">${k.d}</div></div>`).join('');
+
+  document.getElementById('nums').innerHTML = nums.map((n, i) => `
+    <div class="nrow ${n.dead ? 'dead' : ''}" tabindex="0" data-i="${i}">
+      <span class="nval">${n.v}</span>
+      <span><span class="nname">${n.k}</span>
+        ${n.dead ? `<div class="nsup">↳ superseded by ${n.dead}</div>` : ''}</span>
+      <span class="nprov">${dstr(n.t.closed)} · ${usd(n.t.cost)}
+        <span class="chip" style="border-left:2px solid var(${PROJECTS[n.t.p].v})">${n.t.id}</span></span>
+    </div>`).join('');
+  document.querySelectorAll('.nrow').forEach(el => wireTip(el, () => {
+    const n = nums[+el.dataset.i];
+    return { title: `${n.k} = ${n.v}`, rows: [
+      { k: PROJECTS[n.t.p].name, v: n.t.id, sw: sv(PROJECTS[n.t.p].v) },
+      { k: 'born', v: dstr(n.t.closed) },
+      { k: 'birth task cost', v: usd(n.t.cost) },
+      ...(n.dead ? [{ k: 'status', v: `superseded by ${n.dead}` }] : [{ k: 'status', v: 'canonical' }]) ] };
+  }));
+
+  document.getElementById('decs').innerHTML = decs.map(x => `
+    <div class="drow ${x.dead ? 'dead' : ''}">
+      <span class="dd">${dstr(x.t.closed)}</span>
+      <i class="pd" style="background:var(${PROJECTS[x.t.p].v})"></i>
+      <span>${x.d}<span class="chip">${x.t.id}</span>
+        ${x.dead ? `<span class="nsup" style="text-decoration:none; display:inline; margin-left:6px">↳ ${x.dead}</span>` : ''}</span>
+    </div>`).join('');
+
+  document.getElementById('shelf').innerHTML = Object.entries(PROJECTS).map(([k, p]) => {
+    const mine = arts.filter(x => x.t.p === k);
+    return mine.length ? `<div class="shelf">${mine.map(x =>
+      `<span class="chip" title="${x.t.id}"><i style="color:var(${p.v})">✦</i>${x.a}</span>`).join('')}</div>` : '';
+  }).join('');
+})();
+</script>
+</body>
+</html>

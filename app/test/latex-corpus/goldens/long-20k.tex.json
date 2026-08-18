@@ -1,0 +1,25 @@
+{
+ "mode": "digest",
+ "ext": "tex",
+ "sha256": "367ec10efe8d44a3b09d2ca665c87289c16164d90ff9062a659d0cfd607c41a9",
+ "stats": {
+  "lineCount": 20339,
+  "tokenCount": 179511,
+  "zoneCount": 13561,
+  "charCount": 808070,
+  "classCounts": {
+   "cl": 2836,
+   "cm": 1831,
+   "kw": 15262,
+   "md": 21606,
+   "mo": 14427,
+   "ms": 13290,
+   "mv": 13174,
+   "nm": 17019,
+   "plain": 47344,
+   "pt": 31118,
+   "st": 522,
+   "wn": 1082
+  }
+ }
+}

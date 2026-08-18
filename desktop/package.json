@@ -1,0 +1,20 @@
+{
+  "name": "central-planner-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Central Planner desktop shell — attach-only Electron client of the one local server",
+  "type": "module",
+  "main": "main.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "electron .",
+    "pack": "node pack.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.2.0",
+    "electron": "43.3.0"
+  }
+}

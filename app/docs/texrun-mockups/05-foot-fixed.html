@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tex run mockup 05 — the foot stays, the geometry locks</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .rcol{ position:relative; display:flex; flex-direction:column; }
+  .rcol .vslot{ position:relative; flex:0 0 62%; }
+  .rcol .sslot{ position:relative; flex:1; }
+</style>
+</head>
+<body>
+
+<div class="mockHead">
+  <span class="crumb"><a href="index.html">← tex run mockups</a> · 05 of 05</span>
+  <h1>Foot · fixed geometry <small>no relocation — just stop the squirming</small></h1>
+  <p>The conservative option: ▶ stays in the editor foot, but both shape-shifters are pinned down.
+     The run button becomes a <b>fixed 56px box</b> whose label swaps between the equal-length
+     <code>▶ run</code> and <code>⊘ stop</code> (color flips green→red, the box never moves). The save note
+     becomes the <b>fixed save chip</b>: a constant <code>saved · ⌘S</code> box whose dot turns amber on a dirty
+     draft — the popping <code>save</code> button is gone (⌘S, or ▶ which saves first, covers it).
+     <b>This matters beyond tex</b>: .jl/.py/.R/.sql files run from this same foot and have no PDF toolbar to
+     move to — whichever toolbar variant wins for tex, this fix should ship for the rest.
+     <b>Live: click ▶, click the editor.</b></p>
+</div>
+<div class="mockNav">
+  <a href="index.html">index</a>
+  <a href="01-today.html">01 today</a>
+  <a href="02-toolbar-left.html">02 toolbar · left</a>
+  <a href="03-toolbar-merged.html">03 toolbar · merged pill</a>
+  <a href="04-toolbar-cockpit.html">04 toolbar · cockpit</a>
+  <a class="on" href="05-foot-fixed.html">05 foot · fixed geometry</a>
+</div>
+
+<div class="frameWrap"><div class="shot">
+  <span class="pin" style="left:24.6%; bottom:22px;">1</span>
+  <span class="tryMe" style="left:36%; bottom:52px;">click ▶ and the editor ↑ — nothing shifts</span>
+
+  <nav id="nav">
+    <span class="brand">Alex <span style="color:var(--dim);font-weight:400;">/ planner</span></span>
+    <div class="tab">⌂ Overview</div>
+    <div class="tab on"><span class="dot run"></span>ShockPersistence</div>
+    <div class="tab"><span class="dot off"></span>TaxNotches</div>
+    <div class="tab"><span class="dot off"></span>Referee-QJE</div>
+    <div class="right">
+      <button class="addBtn">＋ ADD TASK</button>
+      <div class="tab">git</div>
+      <div class="tab">⧉ Calendar</div>
+      <span class="chip">wk <b>$4.12</b> · 9h</span>
+    </div>
+  </nav>
+
+  <div class="wb">
+    <div class="side">
+      <div class="abstract">Idiosyncratic shock persistence and the wealth distribution in an
+        Aiyagari economy. <span class="bet">Bet: the tighter grid moves the Gini.</span></div>
+      <div class="sh">PINNED FILES</div>
+      <div class="scRow on"><span class="nm">paper.tex</span><span class="lang">TEX</span></div>
+      <div class="scRow"><span class="nm">slides.tex</span><span class="lang">TEX</span></div>
+      <div class="scRow"><span class="nm">estimation.jl</span><span class="lang">JL</span></div>
+      <div class="scRow"><span class="nm">shock_grid.jl</span><span class="lang">JL</span></div>
+      <div class="scRow"><span class="nm">results.md</span><span class="lang">MD</span></div>
+    </div>
+    <div class="sdivider"></div>
+
+    <div class="pane">
+      <div class="ptabs">
+        <div class="ptab on"><span class="tdot q"></span>Referee reply pass</div>
+        <div class="ptab"><span class="tdot run"></span>Re-estimate SMM · tighter grid</div>
+        <div class="ptab plus">＋</div>
+      </div>
+      <div class="pbody">
+        <div class="codeHalf">
+          <div class="ctabs">
+            <div class="ctab on">paper.tex</div>
+            <div class="ctab">shock_grid.jl</div>
+            <div class="ctab console">≋ console</div>
+          </div>
+          <div class="edMock" id="edClick" title="click to simulate typing (unsaved draft)">
+            <div class="gut">41<br>42<br>43<br>44<br>45<br>46<br>47<br>48<br>49<br>50<br>51<br>52</div>
+            <pre><span class="k">\section</span>{Calibration}
+We discipline <span class="m">$\rho_z$</span> and <span class="m">$\sigma_z$</span> jointly from the
+simulated moments in Table~<span class="k">\ref</span>{tab:moments}. The
+persistence estimate is <span class="m">$\hat\rho_z = 0.96$</span>, tighter
+than the baseline grid suggests.<span class="cursor" id="edCaret" style="display:none"></span>
+<span class="c">% TODO: referee 2 wants the finer shock grid here</span>
+<span class="k">\begin</span>{table}[t]
+  <span class="k">\centering</span>
+  <span class="k">\caption</span>{Targeted moments, tighter grid}
+  <span class="k">\label</span>{tab:moments}
+  <span class="k">\input</span>{tables/moments_tight.tex}
+<span class="k">\end</span>{table}</pre>
+          </div>
+          <div class="cfoot">
+            <span>paper.tex</span>
+            <button class="runBtn runFixed" id="run">▶ run</button>
+            <button class="texBtn">§ outline</button>
+            <button class="texBtn">◎ pdf</button>
+            <span class="saveChip" id="saveChip"><i></i><span id="saveTxt">saved · ⌘S</span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="vdivider"></div>
+
+    <div class="pane rcol">
+      <div class="ptabs">
+        <div class="ptab on">Show</div>
+      </div>
+      <div class="pbody vslot">
+        <div class="viewerTop">
+          <div class="vtabs">
+            <div class="vtab on">◫ draft.pdf</div>
+            <div class="vtab">◫ slides.pdf</div>
+            <div class="vtab plus">＋</div>
+          </div>
+          <div class="pdfBox">
+            <div class="pdfBuildBar off" id="bar"><div class="fill"></div></div>
+            <div class="pdfToolbar">
+              <span class="pzBtn">−</span><span class="pzPct">fit</span><span class="pzBtn">＋</span>
+              <span class="pdfVerdict ok" id="verdict">✓ 2.3s</span>
+              <span class="pdfPageNo">p 3 / 12</span>
+            </div>
+            <div class="pdfScrollM"><div class="sheet">
+              <h2>Idiosyncratic Shock Persistence<br>and the Wealth Distribution</h2>
+              <div class="au">Alex Rivera · July 2026</div>
+              <div class="absH">Abstract</div>
+              <div class="ab">We estimate the persistence of idiosyncratic earnings risk in a heterogeneous-agent
+                economy and show the implied wealth distribution is sensitive to the shock grid.</div>
+              <div class="secH">1&nbsp;&nbsp;Introduction</div>
+              <div class="fl w92"></div><div class="fl"></div><div class="fl w80"></div>
+              <div class="eq">a′ = (1+r)a + wz − c,&nbsp;&nbsp;log z′ = ρ<sub>z</sub> log z + ε</div>
+              <div class="fl"></div><div class="fl w60"></div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+      <div class="pbody sslot">
+        <div class="sessHalf">
+          <div class="sessTabs">
+            <div class="stab">⌘ session</div>
+            <div class="stab on">▶ output</div>
+            <div class="stab">Δ 4</div>
+          </div>
+          <div class="outLog" id="log">
+            <b>latexmk -pdf draft.tex</b><br>
+            Output written on draft.pdf (12 pages).<br>
+            <span class="ok">✓ built in 2.3s</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<div class="stateStrip">
+  <div class="inner" id="strip">
+    <div class="stCase">
+      <div class="lbl">idle · saved</div>
+      <div class="demo"><span>paper.tex</span><button class="runBtn runFixed">▶ run</button><span class="saveChip"><i></i>saved · ⌘S</span></div>
+      <div class="w">run button <b class="mw">—</b> · save chip <b class="mt">—</b></div>
+    </div>
+    <div class="stCase">
+      <div class="lbl">running — same box, new color</div>
+      <div class="demo"><span>paper.tex</span><button class="stopBtn runFixed">⊘ stop</button><span class="saveChip"><i></i>saved · ⌘S</span></div>
+      <div class="w">run button <b class="mw">—</b> · save chip <b class="mt">—</b></div>
+    </div>
+    <div class="stCase">
+      <div class="lbl">unsaved — the dot ambers, that's all</div>
+      <div class="demo"><span>paper.tex</span><button class="runBtn runFixed">▶ run</button><span class="saveChip dirty"><i></i>unsaved · ⌘S</span></div>
+      <div class="w">run button <b class="mw">—</b> · save chip <b class="mt">—</b></div>
+    </div>
+  </div>
+  <div class="cap">Measured live — compare 01's strip: the same three states, now one geometry.
+    <code>▶ run</code> and <code>⊘ stop</code> are both 6 glyphs; “saved”/“unsaved” both fit the chip's
+    reserved width.</div>
+</div>
+
+<div class="notes">
+  <div class="nrow"><span class="nb">1</span><span class="nt"><b>Smallest possible change.</b> Two CSS boxes and
+    one label rename (<code>⊘ stop run</code> → <code>⊘ stop</code>). No markup moves between panes, no new
+    click targets to learn, and every runnable extension benefits — .jl, .py, .R, .sql runs get the same stable
+    foot for free.</span></div>
+  <div class="nrow"><span class="nb">·</span><span class="nt"><b>What it doesn't fix.</b> ▶ is still a pane away
+    from the PDF and the verdict it feeds — 02/03/04 exist because placement, not just geometry, is the
+    complaint. This page is the floor, not the ceiling: adopt it regardless, then pick a toolbar
+    variant for tex on top.</span></div>
+</div>
+
+<script>
+  const run = document.getElementById('run');
+  const chip = document.getElementById('saveChip'), saveTxt = document.getElementById('saveTxt');
+  let running = false;
+  run.addEventListener('click', () => {
+    running = !running;
+    run.className = (running ? 'stopBtn' : 'runBtn') + ' runFixed';
+    run.textContent = running ? '⊘ stop' : '▶ run';
+  });
+  document.getElementById('edClick').addEventListener('click', () => {
+    const d = !chip.classList.contains('dirty');
+    chip.classList.toggle('dirty', d);
+    saveTxt.textContent = d ? 'unsaved · ⌘S' : 'saved · ⌘S';
+    document.getElementById('edCaret').style.display = d ? 'inline-block' : 'none';
+  });
+  document.querySelectorAll('#strip .stCase').forEach(c => {
+    c.querySelector('.mw').textContent = Math.round(c.querySelector('.runFixed').getBoundingClientRect().width) + 'px';
+    c.querySelector('.mt').textContent = Math.round(c.querySelector('.saveChip').getBoundingClientRect().width) + 'px';
+  });
+</script>
+</body>
+</html>

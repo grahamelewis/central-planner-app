@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Central Planner — Logo Directions</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #abc3b1;
+    --panel: #dbe8dd;
+    --panel-2: #c8d9cc;
+    --art: #bdd1c2;
+    --ink: #223129;
+    --muted: #506359;
+    --dim: #708579;
+    --title-dim: #6e8175;
+    --accent-ink: #17694d;
+    --line: rgba(30,48,38,.13);
+    --line-hot: rgba(30,48,38,.27);
+    --mint: #7ef5c2;
+    --blue: #7eb8f5;
+    --purple: #c77ef5;
+    --pink: #ff6f9d;
+    --yellow: #f5d57e;
+    --tile-1: #f4f5ec;
+    --tile-2: #d4e2d7;
+    --tile-border: rgba(30,31,44,.12);
+    --core: #252735;
+    --mono: #272936;
+    --shadow: 0 24px 70px rgba(35,60,43,.16);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--ink);
+    font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background:
+      radial-gradient(900px 540px at 5% -12%, rgba(238,217,144,.27), transparent 64%),
+      radial-gradient(760px 520px at 100% 5%, rgba(104,160,131,.30), transparent 67%),
+      var(--bg);
+  }
+
+  button { font: inherit; }
+  .wrap { width: min(1420px, calc(100% - 48px)); margin: 0 auto; }
+
+  header {
+    padding: 72px 0 38px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 42px;
+    align-items: end;
+  }
+  .eyebrow {
+    color: var(--accent-ink);
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 800;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    margin-bottom: 18px;
+  }
+  h1 {
+    margin: 0;
+    max-width: 820px;
+    font-family: "Iowan Old Style", "Baskerville", "Times New Roman", serif;
+    font-size: clamp(46px, 6.7vw, 92px);
+    line-height: .93;
+    letter-spacing: -.052em;
+    font-weight: 500;
+  }
+  h1 span { color: var(--title-dim); font-style: italic; font-weight: 400; }
+  .intro {
+    margin: 24px 0 0;
+    max-width: 690px;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1.65;
+  }
+  .header-note {
+    width: 260px;
+    padding: 18px 19px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--panel) 90%, transparent);
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .header-note b { color: var(--ink); font-weight: 650; }
+
+  .controls {
+    position: sticky;
+    top: 14px;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--panel) 88%, transparent);
+    box-shadow: 0 16px 45px color-mix(in srgb, var(--ink) 12%, transparent);
+    backdrop-filter: blur(20px) saturate(130%);
+  }
+  .controls .label {
+    padding: 0 8px;
+    color: var(--dim);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+  }
+  .controls button {
+    border: 1px solid transparent;
+    border-radius: 9px;
+    padding: 7px 12px;
+    color: var(--muted);
+    background: transparent;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 650;
+  }
+  .controls button:hover { color: var(--ink); background: rgba(32,33,43,.045); }
+  .controls button.on { color: var(--panel); background: var(--ink); }
+  .mode::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 7px;
+    border-radius: 50%;
+    border: 1px solid rgba(0,0,0,.10);
+    vertical-align: 1px;
+  }
+  .mode[data-mode="sage"]::before { background: #78a287; }
+  .mode[data-mode="lake"]::before { background: #70a5c2; }
+  .mode[data-mode="saffron"]::before { background: #d2a83f; }
+  .mode[data-mode="clay"]::before { background: #be765b; }
+  .mode[data-mode="lavender"]::before { background: #987db0; }
+  .controls .rule { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
+  .short-count {
+    margin-left: auto;
+    color: var(--dim);
+    font-size: 11px;
+    padding-right: 8px;
+  }
+  .short-count b { color: var(--accent-ink); }
+
+  .dock-section { margin-top: 26px; }
+  .section-label {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 13px;
+    color: var(--dim);
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+  }
+  .section-label::after { content: ""; height: 1px; flex: 1; background: var(--line); }
+  .dock {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 10px;
+    padding: 20px;
+    border-radius: 24px;
+    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) 78%, transparent);
+    box-shadow: var(--shadow);
+  }
+  .dock-item {
+    min-width: 0;
+    padding: 9px 6px 7px;
+    border-radius: 14px;
+    text-align: center;
+    cursor: pointer;
+  }
+  .dock-item:hover { background: rgba(32,33,43,.035); }
+  .dock-item svg { display: block; width: min(92px, 100%); margin: auto; filter: drop-shadow(0 9px 12px rgba(0,0,0,.25)); }
+  .dock-item span { display: block; margin-top: 5px; color: var(--dim); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    margin: 18px 0 80px;
+  }
+  .concept {
+    position: relative;
+    min-height: 390px;
+    display: grid;
+    grid-template-columns: 44% 56%;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    background: color-mix(in srgb, var(--panel) 82%, transparent);
+    box-shadow: 0 14px 50px rgba(55,48,40,.07);
+    transition: border-color .18s ease, transform .18s ease;
+  }
+  .concept:hover { border-color: var(--line-hot); transform: translateY(-2px); }
+  .concept.shortlisted { border-color: var(--accent-ink); }
+  .concept.shortlisted::after {
+    content: "SHORTLISTED";
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    color: var(--panel);
+    background: var(--ink);
+    font-size: 8px;
+    font-weight: 900;
+    letter-spacing: .1em;
+  }
+  .artboard {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 390px;
+    background:
+      radial-gradient(circle at 50% 35%, rgba(255,255,255,.80), transparent 45%),
+      var(--art);
+    border-right: 1px solid var(--line);
+  }
+  .artboard::before {
+    content: "";
+    position: absolute;
+    inset: 16px;
+    border: 1px solid rgba(32,33,43,.045);
+    border-radius: 17px;
+    pointer-events: none;
+  }
+  .hero-icon {
+    width: var(--hero-size, 176px);
+    max-width: 76%;
+    filter: drop-shadow(0 25px 28px rgba(0,0,0,.34));
+    transition: width .22s ease;
+  }
+  .content { padding: 28px 27px 24px; display: flex; flex-direction: column; }
+  .number { color: var(--dim); font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
+  .concept h2 { margin: 16px 0 5px; font-size: 25px; line-height: 1; letter-spacing: -.035em; }
+  .stance { color: var(--accent-ink); font-size: 11px; font-weight: 750; }
+  .description { margin: 17px 0 18px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .traits { display: flex; gap: 6px; flex-wrap: wrap; }
+  .traits span {
+    padding: 5px 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--dim);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .lockup {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: auto;
+    padding-top: 19px;
+    border-top: 1px solid var(--line);
+  }
+  .lockup svg { width: 30px; flex: 0 0 30px; }
+  .wordmark { font-size: 13px; font-weight: 750; letter-spacing: -.02em; }
+  .micro { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .micro svg:nth-child(1) { width: 20px; }
+  .micro svg:nth-child(2) { width: 12px; }
+  .pick {
+    align-self: flex-start;
+    margin-top: 16px;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--muted);
+    background: rgba(255,255,255,.025);
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 750;
+  }
+  .pick:hover { color: var(--ink); border-color: var(--line-hot); }
+  .shortlisted .pick { color: var(--accent-ink); }
+
+  /* Five full-canvas color studies: every surface is retinted with the ground. */
+  body.lake {
+    --bg: #9dbbd0; --panel: #d8e6ed; --panel-2: #c3d7e2; --art: #b7cddb;
+    --ink: #203544; --muted: #4f6675; --dim: #718895; --title-dim: #667f90;
+    --accent-ink: #205f86; --line: rgba(28,51,66,.13); --line-hot: rgba(28,51,66,.27);
+    --tile-1: #f3f5f0; --tile-2: #d2e1e8; --shadow: 0 24px 70px rgba(28,55,74,.17);
+    background: radial-gradient(900px 540px at 5% -12%, rgba(245,213,126,.24), transparent 64%), radial-gradient(760px 520px at 100% 5%, rgba(92,145,183,.30), transparent 67%), var(--bg);
+  }
+  body.saffron {
+    --bg: #d5b568; --panel: #ebd8a8; --panel-2: #e1c682; --art: #dfc47e;
+    --ink: #3c3019; --muted: #6b5b38; --dim: #8b7748; --title-dim: #897448;
+    --accent-ink: #79500d; --line: rgba(60,48,25,.14); --line-hot: rgba(60,48,25,.29);
+    --tile-1: #fff4d8; --tile-2: #ead29b; --shadow: 0 24px 70px rgba(79,57,17,.17);
+    background: radial-gradient(900px 540px at 5% -12%, rgba(255,239,184,.38), transparent 64%), radial-gradient(760px 520px at 100% 5%, rgba(190,111,67,.21), transparent 67%), var(--bg);
+  }
+  body.clay {
+    --bg: #c88f76; --panel: #e8c9b9; --panel-2: #dbad97; --art: #d8aa94;
+    --ink: #402a25; --muted: #6f5149; --dim: #8e695f; --title-dim: #89665e;
+    --accent-ink: #843f34; --line: rgba(64,42,37,.14); --line-hot: rgba(64,42,37,.29);
+    --tile-1: #faeee3; --tile-2: #e8c1ae; --shadow: 0 24px 70px rgba(82,43,34,.18);
+    background: radial-gradient(900px 540px at 5% -12%, rgba(245,213,126,.28), transparent 64%), radial-gradient(760px 520px at 100% 5%, rgba(163,81,88,.22), transparent 67%), var(--bg);
+  }
+  body.lavender {
+    --bg: #b7a4c7; --panel: #ded3e5; --panel-2: #cdbed8; --art: #c9b9d3;
+    --ink: #352a3e; --muted: #62536c; --dim: #806f8a; --title-dim: #796b82;
+    --accent-ink: #674182; --line: rgba(53,42,62,.13); --line-hot: rgba(53,42,62,.28);
+    --tile-1: #f6f0f2; --tile-2: #ddd0e4; --shadow: 0 24px 70px rgba(57,38,69,.17);
+    background: radial-gradient(900px 540px at 5% -12%, rgba(245,213,126,.21), transparent 64%), radial-gradient(760px 520px at 100% 5%, rgba(119,87,151,.26), transparent 67%), var(--bg);
+  }
+
+  footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 30px;
+    margin: -38px 0 55px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    color: var(--dim);
+    font-size: 11px;
+    line-height: 1.6;
+  }
+  footer b { color: var(--muted); }
+
+  @media (max-width: 1000px) {
+    header { grid-template-columns: 1fr; }
+    .header-note { width: auto; }
+    .dock { grid-template-columns: repeat(4, 1fr); }
+    .grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 650px) {
+    .wrap { width: min(100% - 24px, 1420px); }
+    header { padding-top: 44px; }
+    .controls .label, .short-count, .controls .rule { display: none; }
+    .controls { overflow-x: auto; }
+    .dock { grid-template-columns: repeat(4, 1fr); padding: 10px; }
+    .concept { grid-template-columns: 1fr; }
+    .artboard { min-height: 270px; border-right: 0; border-bottom: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">Central Planner · Identity Study 01</div>
+      <h1>Twelve ideas in motion.<br><span>Structure meets orbit.</span></h1>
+      <p class="intro">A new geometric set leads the study: open cubes, independent points, tilted rings, and satellites. The product is still the same research mission-control system, but these marks explore a more spatial and iconic personality.</p>
+    </div>
+    <aside class="header-note"><b>How to judge these</b><br>Look at the dock strip first. A strong app mark should be identifiable there without reading its name. Then try several canvas colors and scales. Click any card to build a shortlist.</aside>
+  </header>
+
+  <div class="controls" aria-label="Preview controls">
+    <span class="label">Canvas</span>
+    <button class="mode on" data-mode="sage">Sage</button>
+    <button class="mode" data-mode="lake">Lake</button>
+    <button class="mode" data-mode="saffron">Saffron</button>
+    <button class="mode" data-mode="clay">Clay</button>
+    <button class="mode" data-mode="lavender">Lavender</button>
+    <span class="rule"></span>
+    <span class="label">Scale</span>
+    <button class="scale" data-size="126px">Small</button>
+    <button class="scale on" data-size="176px">Actual</button>
+    <button class="scale" data-size="220px">Large</button>
+    <span class="short-count"><b>0</b> shortlisted</span>
+  </div>
+
+  <section class="dock-section">
+    <div class="section-label">Dock test · all directions at a glance</div>
+    <div class="dock" id="dock"></div>
+  </section>
+
+  <main class="grid" id="concepts"></main>
+
+  <footer>
+    <div><b>No production assets were changed.</b><br>This is a direction-finding sheet; the selected route should be redrawn and optically tuned before export.</div>
+    <div>Palette sampled from the current Central Planner UI<br>#7EF5C2 · #7EB8F5 · #C77EF5 · #FF6F9D · #F5D57E</div>
+  </footer>
+</div>
+
+<script>
+const concepts = [
+  {
+    id: 'cube-point', name: 'Cube + Point', stance: 'The exact spatial mark',
+    description: 'A clean wireframe cube with one independent point beside it. The cube is the organized system; the dot is the active task, agent, or idea waiting to enter it.',
+    traits: ['New direction', 'Minimal', 'Scalable'],
+    art: `
+      <path d="M34 61L69 41L104 61V101L69 121L34 101Z M34 61L69 81L104 61 M69 81V121" fill="none" stroke="var(--core)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" class="logo-core"/>
+      <circle cx="125" cy="82" r="11" fill="#ff6f9d" class="logo-pink"/>`
+  },
+  {
+    id: 'tilted-planet', name: 'Tilted Planet', stance: 'The orbital mark',
+    description: 'A compact planet with its ring on a confident diagonal. It suggests a whole world of projects held in one orbit, while feeling friendlier and more alive than a diagram.',
+    traits: ['New direction', 'Iconic', 'Warm'],
+    art: `
+      <ellipse cx="80" cy="80" rx="53" ry="19" transform="rotate(-24 80 80)" fill="none" stroke="#f5d57e" stroke-width="8" class="logo-yellow"/>
+      <circle cx="80" cy="80" r="31" fill="#7eb8f5" class="logo-blue"/>
+      <path d="M34 99C56 112 100 97 126 62" fill="none" stroke="#f5d57e" stroke-width="8" stroke-linecap="round" class="logo-yellow"/>
+      <path d="M63 60C69 53 81 49 92 52C83 61 78 70 78 82C67 80 60 71 63 60Z" fill="#7ef5c2" class="logo-accent"/>`
+  },
+  {
+    id: 'orbital-cube', name: 'Orbital Cube', stance: 'The system-in-motion mark',
+    description: 'The planner becomes a stable spatial object while one bright satellite moves around it. This combines the clarity of the cube with the energy of the planet idea.',
+    traits: ['New direction', 'Technical', 'Dynamic'],
+    art: `
+      <ellipse cx="80" cy="80" rx="56" ry="25" transform="rotate(18 80 80)" fill="none" stroke="#7eb8f5" stroke-width="6" stroke-linecap="round" class="logo-blue"/>
+      <path d="M53 64L80 49L107 64V95L80 111L53 95Z M53 64L80 80L107 64 M80 80V111" fill="var(--tile-1)" stroke="var(--core)" stroke-width="6" stroke-linejoin="round" class="logo-core"/>
+      <circle cx="128" cy="102" r="10" fill="#ff6f9d" class="logo-pink"/>`
+  },
+  {
+    id: 'open-axis', name: 'Open Axis', stance: 'The precise experimental mark',
+    description: 'Three cube edges define a center without enclosing it; a displaced point creates tension and direction. It is the most architectural and premium of the new studies.',
+    traits: ['New direction', 'Elegant', 'Abstract'],
+    art: `
+      <path d="M79 78L45 58V100L79 120" fill="none" stroke="#7ef5c2" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" class="logo-accent"/>
+      <path d="M79 78L113 58V100L79 120" fill="none" stroke="#7eb8f5" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" class="logo-blue"/>
+      <path d="M45 58L79 39L113 58" fill="none" stroke="#f5d57e" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" class="logo-yellow"/>
+      <circle cx="126" cy="42" r="10" fill="#c77ef5" class="logo-purple"/>`
+  },
+  {
+    id: 'convergence', name: 'Convergence', stance: 'The orchestration mark',
+    description: 'Independent workstreams bend toward one calm decision point. It says “many moving parts, one center” without using a literal calendar or checklist.',
+    traits: ['Distinctive', 'Systemic', 'Best overall'],
+    art: `
+      <path d="M43 44C62 44 66 68 80 80" fill="none" stroke="#7eb8f5" stroke-width="11" stroke-linecap="round" class="logo-blue"/>
+      <path d="M117 44C98 44 94 68 80 80" fill="none" stroke="#c77ef5" stroke-width="11" stroke-linecap="round" class="logo-purple"/>
+      <path d="M43 116C62 116 66 92 80 80" fill="none" stroke="#f5d57e" stroke-width="11" stroke-linecap="round" class="logo-yellow"/>
+      <path d="M117 116C98 116 94 92 80 80" fill="none" stroke="#7ef5c2" stroke-width="11" stroke-linecap="round" class="logo-accent"/>
+      <circle cx="80" cy="80" r="10" fill="var(--core)" class="logo-core"/>`
+  },
+  {
+    id: 'waypoint', name: 'Waypoint', stance: 'The navigation mark',
+    description: 'A broken compass ring surrounds a precise center. It feels directional and deliberate—a planner that always knows where the work is headed.',
+    traits: ['Confident', 'Navigational', 'C-shaped'],
+    art: `
+      <path d="M116 54A46 46 0 1 0 116 106" fill="none" stroke="#7ef5c2" stroke-width="12" stroke-linecap="round" class="logo-accent"/>
+      <path d="M109 42L128 48L122 67Z" fill="#7eb8f5" class="logo-blue"/>
+      <circle cx="80" cy="80" r="9" fill="var(--core)" class="logo-core"/>
+      <path d="M80 62V44M80 116V98" stroke="#69708c" stroke-width="4" stroke-linecap="round" class="logo-dim"/>`
+  },
+  {
+    id: 'threads', name: 'Threadline', stance: 'The continuity mark',
+    description: 'A single route travels through three milestones and resolves at the center. It is warmer and more human: progress as a continuous thread, not a pile of boxes.',
+    traits: ['Human', 'Memorable', 'Progressive'],
+    art: `
+      <path d="M40 106C40 83 57 83 57 62C57 47 69 40 82 40C102 40 118 56 118 78C118 103 101 120 78 120C61 120 50 112 40 106Z" fill="none" stroke="#7ef5c2" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" class="logo-accent"/>
+      <circle cx="40" cy="106" r="8" fill="#ff6f9d" class="logo-pink"/>
+      <circle cx="57" cy="62" r="7" fill="#7eb8f5" class="logo-blue"/>
+      <circle cx="82" cy="40" r="7" fill="#c77ef5" class="logo-purple"/>
+      <circle cx="79" cy="80" r="10" fill="var(--core)" class="logo-core"/>`
+  },
+  {
+    id: 'index', name: 'Index', stance: 'The dashboard mark',
+    description: 'Four working surfaces orbit a small open center. It borrows the bento logic of the product itself and feels architectural, ordered, and native to the interface.',
+    traits: ['Product-linked', 'Modular', 'Quiet'],
+    art: `
+      <rect x="37" y="37" width="38" height="48" rx="12" fill="#7ef5c2" class="logo-accent"/>
+      <rect x="85" y="37" width="38" height="30" rx="12" fill="#7eb8f5" class="logo-blue"/>
+      <rect x="37" y="95" width="38" height="28" rx="12" fill="#c77ef5" class="logo-purple"/>
+      <rect x="85" y="77" width="38" height="46" rx="12" fill="#f5d57e" class="logo-yellow"/>
+      <circle cx="80" cy="80" r="7" fill="var(--core)" class="logo-core"/>`
+  },
+  {
+    id: 'bracket', name: 'In Focus', stance: 'The clarity mark',
+    description: 'Two asymmetric brackets hold a live central signal. It frames the app as the place where scattered work comes into focus, with a subtle C in negative space.',
+    traits: ['Minimal', 'Technical', 'Scalable'],
+    art: `
+      <path d="M70 40H52C43 40 39 45 39 54V106C39 115 43 120 52 120H70" fill="none" stroke="#7ef5c2" stroke-width="11" stroke-linecap="round" class="logo-accent"/>
+      <path d="M90 40H108C117 40 121 45 121 54V68M121 92V106C121 115 117 120 108 120H90" fill="none" stroke="#7eb8f5" stroke-width="11" stroke-linecap="round" class="logo-blue"/>
+      <circle cx="80" cy="80" r="12" fill="#ff6f9d" class="logo-pink"/>
+      <circle cx="80" cy="80" r="5" fill="var(--core)" class="logo-core"/>`
+  },
+  {
+    id: 'fleet', name: 'Fleet', stance: 'The agent mark',
+    description: 'Three collaborators move in formation around a shared nucleus. This direction foregrounds the agent fleet and the idea that work can proceed in parallel under supervision.',
+    traits: ['Energetic', 'Agent-first', 'Friendly'],
+    art: `
+      <path d="M80 80L50 47M80 80L118 61M80 80L99 119" stroke="#626a88" stroke-width="6" stroke-linecap="round" class="logo-dim"/>
+      <circle cx="50" cy="47" r="15" fill="#7eb8f5" class="logo-blue"/>
+      <circle cx="118" cy="61" r="15" fill="#c77ef5" class="logo-purple"/>
+      <circle cx="99" cy="119" r="15" fill="#f5d57e" class="logo-yellow"/>
+      <circle cx="80" cy="80" r="18" fill="#7ef5c2" class="logo-accent"/>
+      <circle cx="80" cy="80" r="7" fill="#111522"/>`
+  },
+  {
+    id: 'ledger', name: 'Ledger C', stance: 'The planning mark',
+    description: 'A compact monogram built from scheduled blocks. It reads as a C first, while its colored segments suggest tasks, time blocks, and the weekly ledger.',
+    traits: ['Literal', 'Monogram', 'Businesslike'],
+    art: `
+      <path d="M116 53C107 42 95 37 79 37C54 37 38 55 38 80C38 105 54 123 79 123C95 123 107 118 116 107" fill="none" stroke="var(--core)" stroke-width="12" stroke-linecap="round" class="logo-core"/>
+      <path d="M53 48C46 53 42 60 40 68" fill="none" stroke="#7ef5c2" stroke-width="12" stroke-linecap="round" class="logo-accent"/>
+      <path d="M40 92C42 100 46 107 53 112" fill="none" stroke="#7eb8f5" stroke-width="12" stroke-linecap="round" class="logo-blue"/>
+      <rect x="76" y="61" width="42" height="12" rx="6" fill="#c77ef5" class="logo-purple"/>
+      <rect x="76" y="85" width="29" height="12" rx="6" fill="#f5d57e" class="logo-yellow"/>`
+  },
+  {
+    id: 'beacon', name: 'Beacon', stance: 'The mission-control mark',
+    description: 'A bright center broadcasts through measured arcs. It feels alive without feeling frantic—useful for a product that watches work, reports changes, and keeps the operator informed.',
+    traits: ['Alive', 'Mission control', 'Bold'],
+    art: `
+      <path d="M53 62A34 34 0 0 0 53 98" fill="none" stroke="#7eb8f5" stroke-width="10" stroke-linecap="round" class="logo-blue"/>
+      <path d="M107 62A34 34 0 0 1 107 98" fill="none" stroke="#c77ef5" stroke-width="10" stroke-linecap="round" class="logo-purple"/>
+      <path d="M38 46A54 54 0 0 0 38 114" fill="none" stroke="#7ef5c2" stroke-width="8" stroke-linecap="round" class="logo-accent"/>
+      <path d="M122 46A54 54 0 0 1 122 114" fill="none" stroke="#f5d57e" stroke-width="8" stroke-linecap="round" class="logo-yellow"/>
+      <circle cx="80" cy="80" r="18" fill="#ff6f9d" class="logo-pink"/>
+      <circle cx="80" cy="80" r="7" fill="var(--core)" class="logo-core"/>`
+  }
+];
+
+function icon(c, className = '') {
+  return `<svg class="${className}" viewBox="0 0 160 160" role="img" aria-label="${c.name} logo">
+    <defs>
+      <linearGradient id="tile-${c.id}" x1="0" y1="0" x2="1" y2="1">
+        <stop class="tile-start" stop-color="var(--tile-1)"/><stop class="tile-end" offset="1" stop-color="var(--tile-2)"/>
+      </linearGradient>
+    </defs>
+    <rect x="8" y="8" width="144" height="144" rx="34" fill="url(#tile-${c.id})"/>
+    <rect x="8.5" y="8.5" width="143" height="143" rx="33.5" fill="none" stroke="var(--tile-border)"/>
+    ${c.art}
+  </svg>`;
+}
+
+const dock = document.querySelector('#dock');
+const grid = document.querySelector('#concepts');
+
+dock.innerHTML = concepts.map(c => `<div class="dock-item" data-id="${c.id}">${icon(c)}<span>${c.name}</span></div>`).join('');
+grid.innerHTML = concepts.map((c, i) => `
+  <article class="concept" id="${c.id}" data-id="${c.id}">
+    <div class="artboard">${icon(c, 'hero-icon')}</div>
+    <div class="content">
+      <span class="number">${String(i + 1).padStart(2, '0')} / ${String(concepts.length).padStart(2, '0')}</span>
+      <h2>${c.name}</h2>
+      <div class="stance">${c.stance}</div>
+      <p class="description">${c.description}</p>
+      <div class="traits">${c.traits.map(t => `<span>${t}</span>`).join('')}</div>
+      <button class="pick" type="button">＋ Add to shortlist</button>
+      <div class="lockup">
+        ${icon(c)}
+        <span class="wordmark">Central Planner</span>
+        <span class="micro">${icon(c)}${icon(c)}</span>
+      </div>
+    </div>
+  </article>`).join('');
+
+function updateCount() {
+  const n = document.querySelectorAll('.concept.shortlisted').length;
+  document.querySelector('.short-count b').textContent = n;
+}
+
+function toggleCard(card) {
+  card.classList.toggle('shortlisted');
+  card.querySelector('.pick').textContent = card.classList.contains('shortlisted') ? '✓ On shortlist' : '＋ Add to shortlist';
+  updateCount();
+}
+
+grid.addEventListener('click', e => {
+  const card = e.target.closest('.concept');
+  if (card) toggleCard(card);
+});
+dock.addEventListener('click', e => {
+  const item = e.target.closest('.dock-item');
+  if (item) document.getElementById(item.dataset.id).scrollIntoView({behavior: 'smooth', block: 'center'});
+});
+
+document.querySelectorAll('.mode').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.mode').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  document.body.classList.remove('lake', 'saffron', 'clay', 'lavender');
+  if (btn.dataset.mode !== 'sage') document.body.classList.add(btn.dataset.mode);
+}));
+document.querySelectorAll('.scale').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.scale').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  document.documentElement.style.setProperty('--hero-size', btn.dataset.size);
+}));
+</script>
+</body>
+</html>

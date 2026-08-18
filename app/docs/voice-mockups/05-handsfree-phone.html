@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice mockup 05 — phone, hands-free</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .phones{ max-width:1240px; margin:14px auto; padding:0 24px; display:flex; gap:22px; flex-wrap:wrap; justify-content:center; }
+  .phoneCol{ width:330px; }
+  .phoneCap{ text-align:center; font-size:11px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--dim); font-weight:700; margin-bottom:10px; }
+  .phone{
+    position:relative; width:330px; height:640px; border-radius:38px; overflow:hidden;
+    border:1px solid var(--ov2a); background:
+      radial-gradient(700px 400px at 10% -5%, #2b2e6e55, transparent),
+      radial-gradient(600px 450px at 95% 8%, #6e2b5455, transparent), #101220;
+    box-shadow:0 30px 80px #00000088;
+    display:flex; flex-direction:column;
+  }
+  .pTop{ height:52px; flex-shrink:0; display:flex; align-items:center; gap:10px; padding:14px 18px 0;
+    font-weight:800; font-size:14px; }
+  .pTop span{ color:var(--green); font-weight:400; }
+  .pTop .chip{ margin-left:auto; font-size:10px; color:var(--mut); background:var(--glass);
+    border:1px solid var(--line); border-radius:20px; padding:3px 10px; font-family:ui-monospace,Menlo,monospace; }
+  .taskChip{ margin:14px 18px 0; padding:10px 13px; background:#171a2cdd; border:1px solid var(--line);
+    border-radius:14px; font-size:12.5px; font-weight:650; line-height:1.4; display:flex; gap:8px; align-items:center; }
+  .taskChip .dot{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .taskChip small{ display:block; color:var(--dim); font-weight:400; font-size:10px; margin-top:2px; }
+  .orbZone{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:0 26px; }
+  .orb{ width:120px; height:120px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:38px; position:relative; }
+  .orb::before{ content:''; position:absolute; inset:-14px; border-radius:50%; opacity:.5; }
+  .orb.listen{ background:radial-gradient(circle at 35% 30%, #a9f8d6, var(--green) 60%, #2ecf8e); color:var(--on-accent);
+    box-shadow:0 0 60px rgb(126 245 194 / 45%); }
+  .orb.listen::before{ border:2px solid rgb(126 245 194 / 45%); animation:orbPulse 1.6s infinite; }
+  .orb.work{ background:var(--panel); border:1px solid var(--ov22); color:var(--green); font-size:30px; }
+  .orb.work::before{ border:2px dashed rgb(126 245 194 / 25%); animation:orbSpin 6s linear infinite; }
+  .orb.speak{ background:radial-gradient(circle at 35% 30%, #e3b9ff, var(--purple) 60%, #8d4fd0); color:#2a0f3d;
+    box-shadow:0 0 60px rgb(199 126 245 / 45%); }
+  .orb.speak::before{ border:2px solid rgb(199 126 245 / 45%); animation:orbPulse 1.4s infinite; }
+  @keyframes orbPulse{ 0%{ transform:scale(.92); opacity:.7 } 70%{ transform:scale(1.12); opacity:0 } 100%{ opacity:0 } }
+  @keyframes orbSpin{ to{ transform:rotate(360deg); } }
+  .orbState{ font-size:11px; letter-spacing:.14em; text-transform:uppercase; font-weight:800; color:var(--dim); }
+  .orbState.g{ color:var(--green); } .orbState.p{ color:var(--purple); }
+  .liveTx{ font-size:14.5px; line-height:1.65; color:var(--ink); text-align:center; min-height:72px; }
+  .liveTx .interim{ color:var(--dim); font-style:italic; }
+  .liveTx.spoken{ color:var(--prose); }
+  .liveTx.spoken .speakNow{ font-weight:600; }
+  .workTail{ width:100%; background:var(--well); border:1px solid var(--line); border-radius:12px;
+    padding:10px 13px; font-family:ui-monospace,Menlo,monospace; font-size:10px; line-height:1.8; color:var(--mono-2); }
+  .workTail b{ color:var(--mono-1); font-weight:600; }
+  .pFoot{ flex-shrink:0; padding:0 18px 26px; display:flex; flex-direction:column; gap:10px; align-items:center; }
+  .pHint{ font-size:10.5px; color:var(--dim); text-align:center; line-height:1.6; }
+  .pBtns{ display:flex; gap:12px; }
+  .pBtn{ height:44px; padding:0 20px; border-radius:16px; border:1px solid var(--ov22); background:var(--glass);
+    color:var(--mut); font-size:12px; font-weight:700; display:inline-flex; align-items:center; gap:8px; }
+  .pBtn.mic{ background:var(--green); color:var(--on-accent); border-color:transparent; box-shadow:0 6px 18px #7ef5c244; }
+  .pBtn.stop{ color:var(--red); border-color:rgb(255 141 157 / 40%); }
+  .pBtn.mute{ color:var(--purple); border-color:rgb(199 126 245 / 40%); }
+</style>
+</head>
+<body>
+
+<div class="mockHead">
+  <span class="crumb"><a href="index.html">← voice mockups</a> · 05 of 06</span>
+  <h1>Phone, hands-free <small>the "walking home from the department" mode — /m/ gets a voice surface</small></h1>
+  <p>This is the remote payoff. The phone app gains a full-screen voice surface per task: one orb, three
+     states, no countdowns (hands-free sends on release). It talks over the same Tailscale HTTPS URL the
+     phone already uses — which is exactly what the mic requires. Left to right: you talking, Claude
+     working, Claude talking.</p>
+</div>
+<div class="mockNav">
+  <a href="index.html">index</a>
+  <a href="01-composer-idle.html">01 idle</a>
+  <a href="02-listening.html">02 listening</a>
+  <a href="03-confirm.html">03 auto-send</a>
+  <a href="04-speaking.html">04 claude speaks</a>
+  <a class="on" href="05-handsfree-phone.html">05 phone hands-free</a>
+  <a href="06-settings.html">06 settings</a>
+</div>
+
+<div class="phones">
+
+  <div class="phoneCol">
+    <div class="phoneCap">① listening</div>
+    <div class="phone">
+      <div class="pTop">central <span>/ planner</span><span class="chip">wk $4.12</span></div>
+      <div class="taskChip"><span class="dot" style="background:var(--run);"></span>
+        <span>Re-estimate SMM · tighter grid<small>ShockPersistence · sonnet · co-op</small></span></div>
+      <div class="orbZone">
+        <div class="orb listen">🎙</div>
+        <div class="orbState g">listening</div>
+        <div class="liveTx">How did the estimation finish up?
+          <span class="interim"> did the gini actually move…</span></div>
+      </div>
+      <div class="pFoot">
+        <div class="pBtns"><span class="pBtn mic">🎙 release to send</span></div>
+        <div class="pHint">hands-free: sends on release, no countdown<br>swipe down for the normal task sheet</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phoneCol">
+    <div class="phoneCap">② claude working</div>
+    <div class="phone">
+      <div class="pTop">central <span>/ planner</span><span class="chip">wk $4.12</span></div>
+      <div class="taskChip"><span class="dot" style="background:var(--run); animation:pulse 1.6s infinite;"></span>
+        <span>Re-estimate SMM · tighter grid<small>turn running · 2m 40s</small></span></div>
+      <div class="orbZone">
+        <div class="orb work">⌘</div>
+        <div class="orbState">working — you can keep talking</div>
+        <div class="workTail">
+          <b>⏺ Bash</b> julia run_smm.jl --grid tight<br>
+          &nbsp;&nbsp;⎿ iter 31/40 · J = 4.8e-5<br>
+          <b>⏺ Edit</b> results.md<br>
+          <span style="color:var(--faint)">…streaming — spoken updates on</span>
+        </div>
+      </div>
+      <div class="pFoot">
+        <div class="pBtns"><span class="pBtn mic">🎙 hold to talk</span><span class="pBtn stop">⏹ stop turn</span></div>
+        <div class="pHint">with narrate progress on, interim updates<br>are read aloud as they stream</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phoneCol">
+    <div class="phoneCap">③ claude speaking</div>
+    <div class="phone">
+      <div class="pTop">central <span>/ planner</span><span class="chip">wk $4.12</span></div>
+      <div class="taskChip"><span class="dot" style="background:var(--wait);"></span>
+        <span>Re-estimate SMM · tighter grid<small>turn finished · needs you</small></span></div>
+      <div class="orbZone">
+        <div class="orb speak">🔊</div>
+        <div class="orbState p">speaking · sentence 2 of 6</div>
+        <div class="liveTx spoken">The re-estimation finished, and the answer is yes.
+          <span class="speakNow">The wealth Gini rises from 0.78 to 0.81 under the tighter grid.</span></div>
+      </div>
+      <div class="pFoot">
+        <div class="pBtns"><span class="pBtn mic">🎙 barge in</span><span class="pBtn mute">✕ stop voice</span></div>
+        <div class="pHint">after speaking, it listens again automatically —<br>a real back-and-forth loop</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="notes">
+  <div class="nrow"><span class="nb">·</span><div class="nt">
+    <b>The loop:</b> speak → release → turn runs (tool tail on screen, optional spoken updates) →
+    Claude speaks the result → mic reopens. That cycle, with the phone in your pocket, is the
+    "extremely useful virtually" scenario — checking on an overnight estimation without touching a keyboard.</div></div>
+  <div class="nrow"><span class="nb">·</span><div class="nt">
+    <b>Requirement carried over from the plan:</b> the mic only exists on secure origins, so remote phones
+    must use the <code>https://…ts.net</code> Tailscale serve URL (the phone app's install path already
+    recommends exactly this). On plain-HTTP LAN addresses the orb renders disabled with a one-line
+    explanation and a link to REMOTE.md.</div></div>
+  <div class="nrow"><span class="nb">·</span><div class="nt">
+    <b>Deliberately absent:</b> no wake word, no always-on listening. Hold-to-talk on the phone (with
+    release-to-send) keeps mic time explicit and battery/privacy sane; the lock gesture from mockup 02
+    exists here too, as a long-press on the orb.</div></div>
+</div>
+
+</body>
+</html>

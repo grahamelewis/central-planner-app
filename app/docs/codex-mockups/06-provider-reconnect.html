@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Codex mockup 06 — provider reconnect</title><link rel="stylesheet" href="mock.css">
+</head>
+<body>
+  <header class="mockHead"><span class="crumb"><a href="index.html">← Codex mockups</a> · 06 of 09</span>
+    <h1>Codex expired, Claude still connected <small>never silently fall back</small></h1>
+    <p>The active task remains visibly bound to Codex. Reconnect preserves continuity; “Switch to Claude…” is available but explicitly starts a new thread. Click it to inspect the confirmation.</p></header>
+  <div id="mockNavSlot"></div>
+  <div class="frameWrap"><div class="shot" id="mockApp"></div></div>
+  <section class="notes">
+    <div class="nrow"><span class="nb">1</span><div class="nt"><b>The honest error names the provider.</b> A failed Codex turn does not become a generic “agent unavailable” mystery.</div></div>
+    <div class="nrow"><span class="nb">2</span><div class="nt"><b>Reconnect is primary because it preserves the thread.</b> The transcript and task state stay untouched while sign-in is repaired.</div></div>
+    <div class="nrow"><span class="nb">3</span><div class="nt"><b>Fallback requires consent.</b> Providers may differ in cost, permissions, tools, and behavior, so the dashboard must not reroute silently.</div></div>
+  </section>
+  <script>window.MOCKUP={services:{claude:'connected',codex:'expired'},mode:'unavailable',current:{provider:'codex',model:'gpt-5.6-sol',effort:'high'},hasThread:true,pins:[{n:1,style:'right:318px;bottom:325px'},{n:2,style:'right:261px;bottom:219px'},{n:3,style:'right:105px;bottom:219px'}]};</script>
+  <script src="mock.js"></script>
+</body>
+</html>

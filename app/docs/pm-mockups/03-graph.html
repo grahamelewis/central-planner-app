@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>③ the graph</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .lane{ margin-bottom:4px; }
+  .lanehd{ display:flex; align-items:center; gap:8px; font-size:11.5px; font-weight:600; margin:14px 0 2px; }
+  .lanehd small{ color:var(--dim); font-weight:400; }
+  .wrap{ overflow-x:auto; }
+  svg text{ font:9.5px ui-monospace, Menlo, monospace; fill:var(--mut); }
+  svg text.ttl{ font:10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill:var(--ink); }
+  svg .node rect{ fill:var(--panel); stroke:var(--line); }
+  svg .node.done{ opacity:.55; }
+  svg .node.running rect{ stroke:var(--purple); stroke-width:1.5; }
+  svg .node.waiting rect{ stroke:var(--yellow); stroke-width:1.5; }
+  svg .edge{ fill:none; stroke:var(--line); stroke-width:1.5; }
+  svg .edge.crit{ stroke:var(--red); stroke-width:2; }
+  svg .dl text{ fill:var(--red); font-weight:700; }
+  .keyrow{ font-size:10.5px; color:var(--dim); margin:10px 0 0; }
+  .keyrow b{ color:var(--red); font-weight:600; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="index.html">← pm mockups</a></div>
+  <h1>③ The graph</h1>
+  <div class="sub">lineage is already in every task — drawn, it becomes a schedule: what blocks what, and the red chain is what stands between you and the deadline</div>
+
+  <div id="lanes"></div>
+  <div class="keyrow">— edges follow <span class="mono">task.upstream</span> · <b>red</b> = critical
+    path to the deadline ◆ · node ring: ◠ running / ⏸ waiting · done nodes recede</div>
+
+  <div class="sec">unblocks the most <small>open tasks ranked by not-done downstream weight</small></div>
+  <div id="unblock"></div>
+
+  <div class="note"><b>Idea.</b> The workbench shows lineage one task at a time; this shows the
+    whole DAG per project with the <b>critical path</b> to each deadline marked. The instant reads:
+    wedge is a two-front race (the counterfactual and the referee letter BOTH gate the figures pass),
+    and rep-006's license question quietly gates the deposit. Pure derivation — upstream + status +
+    plan deadlines; zero new data. <b>Risk:</b> DAGs rot if lineage isn't maintained; the graph is
+    only as honest as task.upstream. Auto-suggesting missing edges (same files touched) would be a
+    billed-call feature worth weighing.</div>
+</main>
+<script src="data.js"></script>
+<script>
+(() => {
+  const NW = 138, NH = 36, PITCH_X = 168, PITCH_Y = 48, PAD = 6;
+  const depth = {};
+  const dep = (t) => depth[t.id] ??= (t.up?.length ? Math.max(...t.up.map(u => dep(byId[u]))) + 1 : 0);
+  TASKS.forEach(dep);
+
+  const CRIT = new Set(['wed-004', 'wed-006', 'rep-006', 'rep-005', 'sur-005']); // longest open chain per deadline
+  const critEdge = (a, b) => CRIT.has(a) && CRIT.has(b);
+
+  const lanes = Object.entries(PROJECTS).map(([k, p]) => {
+    const ts = tasksOf(k);
+    const cols = [];
+    ts.forEach(t => (cols[depth[t.id]] ??= []).push(t));
+    const dlCol = cols.length;
+    const rows = Math.max(...cols.map(c => c.length));
+    const H = rows * PITCH_Y + PAD * 2;
+    const pos = {};
+    cols.forEach((c, x) => c.forEach((t, y) => pos[t.id] = {
+      x: x * PITCH_X + PAD, y: y * PITCH_Y + PAD + (rows - c.length) * PITCH_Y / 2 }));
+    const dl = { x: dlCol * PITCH_X + PAD, y: H / 2 - 8 };
+    // deadline feeders: terminal open tasks (nothing downstream of them)
+    const feeders = ts.filter(t => t.status !== 'done' &&
+      !ts.some(o => (o.up || []).includes(t.id)));
+
+    const edges = [];
+    ts.forEach(t => (t.up || []).forEach(u => {
+      const a = pos[u], b = pos[t.id];
+      edges.push(`<path class="edge ${critEdge(u, t.id) ? 'crit' : ''}" d="M${a.x + NW},${a.y + NH / 2}
+        C${a.x + NW + 22},${a.y + NH / 2} ${b.x - 22},${b.y + NH / 2} ${b.x},${b.y + NH / 2}"/>`);
+    }));
+    feeders.forEach(t => {
+      const a = pos[t.id];
+      edges.push(`<path class="edge ${CRIT.has(t.id) ? 'crit' : ''}" d="M${a.x + NW},${a.y + NH / 2}
+        C${a.x + NW + 22},${a.y + NH / 2} ${dl.x - 20},${dl.y + 8} ${dl.x},${dl.y + 8}"/>`);
+    });
+
+    const nodes = ts.map(t => {
+      const { x, y } = pos[t.id];
+      const s = ST[t.status];
+      const ttl = t.title.length > 17 ? t.title.slice(0, 16) + '…' : t.title;
+      return `<g class="node ${t.status}" data-id="${t.id}" tabindex="0" role="img"
+          aria-label="${t.id} ${t.status}">
+        <rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="7"/>
+        <rect x="${x}" y="${y + 6}" width="3" height="${NH - 12}" style="fill:var(${p.v})"/>
+        <text x="${x + 11}" y="${y + 14}">${t.id} <tspan class="${s.cls}" style="fill:currentColor"></tspan></text>
+        <text class="ttl" x="${x + 11}" y="${y + 28}">${s.g} ${ttl}</text>
+      </g>`;
+    }).join('');
+
+    const W = dlCol * PITCH_X + 92;
+    return `<div class="lane">
+      <div class="lanehd"><i class="ldot" style="background:var(${p.v}); margin:0"></i>${p.name}
+        <small>${p.due.label} · ${daysUntil(p.due.date)}d</small></div>
+      <div class="wrap"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+        ${edges.join('')}${nodes}
+        <g class="dl"><text x="${dl.x}" y="${dl.y + 12}">◆ ${dstr(p.due.date)}</text></g>
+      </svg></div>
+    </div>`;
+  }).join('');
+  document.getElementById('lanes').innerHTML = lanes;
+
+  document.querySelectorAll('.node').forEach(n => wireTip(n, () => {
+    const t = byId[n.dataset.id], bl = blocks(t.id);
+    return { title: `${t.id} · ${t.title}`, rows: [
+      { k: 'status', v: ST[t.status].label }, { k: 'category', v: t.cat },
+      ...(t.cost ? [{ k: 'cost so far', v: usd(t.cost) }] : []),
+      { k: 'blocks', v: bl.length ? bl.join(', ') : 'nothing' } ] };
+  }));
+
+  // ── unblock ranking ──
+  const open = TASKS.filter(t => t.status !== 'done' && t.status !== 'queued');
+  const ranked = open.map(t => ({ t, bl: blocks(t.id) })).filter(r => r.bl.length)
+    .sort((a, b) => b.bl.length - a.bl.length);
+  const mx = Math.max(...ranked.map(r => r.bl.length));
+  document.getElementById('unblock').innerHTML = ranked.map(r => `
+    <div class="hrow" tabindex="0" data-id="${r.t.id}">
+      <span class="hl"><span class="chip">${r.t.id}</span> ${r.t.title}</span>
+      <span class="track lone"><span class="seg" style="background:var(${PROJECTS[r.t.p].v});
+        width:${(r.bl.length / mx) * 100}%"></span></span>
+      <span class="hv">${r.bl.length} task${r.bl.length > 1 ? 's' : ''}</span>
+    </div>`).join('');
+  document.querySelectorAll('#unblock .hrow').forEach(n => wireTip(n, () => {
+    const bl = blocks(n.dataset.id);
+    return { title: `${n.dataset.id} unblocks`, rows: bl.map(b =>
+      ({ k: b, v: byId[b].title.slice(0, 26), sw: sv(PROJECTS[byId[b].p].v) })) };
+  }));
+})();
+</script>
+</body>
+</html>

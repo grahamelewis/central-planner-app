@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Codex mockup 07 — new task</title><link rel="stylesheet" href="mock.css">
+</head>
+<body>
+  <header class="mockHead"><span class="crumb"><a href="index.html">← Codex mockups</a> · 07 of 09</span>
+    <h1>Choose the agent on a new task <small>explicit in storage, lightweight in the form</small></h1>
+    <p>The new-task form starts from the account default and saves both <b>provider</b> and <b>model</b>. Try switching between Claude and Codex; each service exposes only its own relevant model controls.</p></header>
+  <div id="mockNavSlot"></div>
+  <div class="frameWrap"><div class="shot" id="mockApp"></div></div>
+  <section class="notes">
+    <div class="nrow"><span class="nb">1</span><div class="nt"><b>Provider is a first-class task field.</b> It must not be inferred from the model name; explicit storage makes migration and provider-specific behavior safer.</div></div>
+    <div class="nrow"><span class="nb">2</span><div class="nt"><b>Only connected services are candidates.</b> In the single-service versions of this form, the provider card can collapse to one quiet selected row.</div></div>
+    <div class="nrow"><span class="nb">3</span><div class="nt"><b>Defaults reduce friction, not control.</b> New tasks inherit the Settings default, while every task can override it before launch or from its session bar.</div></div>
+  </section>
+  <script>window.MOCKUP={services:{claude:'connected',codex:'connected'},view:'newTask',current:{provider:'codex',model:'gpt-5.6-sol',effort:'high'},hasThread:false,pins:[{n:1,style:'right:438px;top:251px'},{n:2,style:'right:216px;top:281px'},{n:3,style:'right:285px;top:180px'}]};</script>
+  <script src="mock.js"></script>
+</body>
+</html>

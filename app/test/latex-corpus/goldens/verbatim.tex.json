@@ -1,0 +1,574 @@
+{
+ "mode": "full",
+ "ext": "tex",
+ "lines": [
+  {
+   "t": [
+    [
+     "cm",
+     "% Synthetic corpus: verbatim-family environments and \\verb."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\begin"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "verbatim"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "raw $dollars$ and \\commands and % percent stay literal here"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "  even {braces} and $$display$$ markers"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "verbatim"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "After verbatim, math works again: "
+    ],
+    [
+     "md",
+     "$"
+    ],
+    [
+     "mv",
+     "x"
+    ],
+    [
+     "mo",
+     "^"
+    ],
+    [
+     "nm",
+     "2"
+    ],
+    [
+     "md",
+     "$"
+    ],
+    [
+     "",
+     "."
+    ]
+   ],
+   "z": [
+    [
+     34,
+     39
+    ]
+   ]
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\begin"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "lstlisting"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "for i in 1:10   # julia-ish, $ not math"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "    push!(xs, i)"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "end"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "lstlisting"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\begin"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "minted"
+    ],
+    [
+     "pt",
+     "}"
+    ],
+    [
+     "st",
+     "{python}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "print(\"hello $USER\")"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "minted"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\begin"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "Verbatim"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "Capital-V Verbatim body with $ and \\foo"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "Verbatim"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "Inline: "
+    ],
+    [
+     "kw",
+     "\\verb"
+    ],
+    [
+     "st",
+     "|x = $y + z$|"
+    ],
+    [
+     "",
+     " then normal text with "
+    ],
+    [
+     "md",
+     "$"
+    ],
+    [
+     "mv",
+     "real"
+    ],
+    [
+     "md",
+     "$"
+    ],
+    [
+     "",
+     " math."
+    ]
+   ],
+   "z": [
+    [
+     49,
+     55
+    ]
+   ]
+  },
+  {
+   "t": [
+    [
+     "",
+     "Star form: "
+    ],
+    [
+     "kw",
+     "\\verb*"
+    ],
+    [
+     "st",
+     "|spaced $ arg|"
+    ],
+    [
+     "",
+     " and then more text."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "Other delims: "
+    ],
+    [
+     "kw",
+     "\\verb"
+    ],
+    [
+     "st",
+     "+plus $ delimited+"
+    ],
+    [
+     "",
+     " and "
+    ],
+    [
+     "kw",
+     "\\verb"
+    ],
+    [
+     "st",
+     "!bang $ delimited!"
+    ],
+    [
+     "",
+     "."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\begin"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "alltt"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "alltt body: $ stays literal"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "alltt"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\begin"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "filecontents"
+    ],
+    [
+     "pt",
+     "}"
+    ],
+    [
+     "st",
+     "{notes.txt}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "file contents body $ literal"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "filecontents"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\begin"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "comment"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "st",
+     "commented-out block: $x$ \\alpha"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "comment"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "End-of-line "
+    ],
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "verbatim"
+    ],
+    [
+     "pt",
+     "}"
+    ],
+    [
+     "",
+     " appearing in text mode above is fine; done."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [],
+   "z": []
+  }
+ ]
+}

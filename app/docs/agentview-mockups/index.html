@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentview mockups — index</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  table{ border-collapse:collapse; width:100%; font-size:11.5px; margin:14px 0; }
+  th, td{ text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th{ font-size:9.5px; letter-spacing:.08em; color:var(--dim); }
+  td:first-child a{ color:var(--purple); text-decoration:none; font-weight:700; }
+  .g{ color:var(--green); font-weight:700; } .y{ color:var(--yellow); font-weight:700; } .r{ color:var(--red); font-weight:700; }
+  .pick{ background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--purple);
+    border-radius:10px; padding:12px 16px; font-size:12.5px; color:var(--mut); margin-top:18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Console agent views — mockups</h1>
+  <div class="sub">replacing interleaved "◆ agent #N · … — running WebFetch" status spam ·
+    every variant is tested against the same three states: <b>3 mid-flight</b>, <b>stragglers</b>
+    (2 done, 1 grinding), <b>24-agent workflow</b> — the states are switchable on each page</div>
+
+  <table>
+    <tr><th>variant</th><th>at-a-glance</th><th>scales to 20+</th><th>stragglers</th><th>chronology</th><th>stream noise</th></tr>
+    <tr><td><a href="01-roster-strip.html">① roster strip</a></td>
+      <td class="g">best — pinned count + live chips</td><td class="g">yes (chips → counts)</td>
+      <td class="g">done chips dim + freeze</td><td class="y">needs click-to-filter</td><td class="g">removed from stream</td></tr>
+    <tr><td><a href="02-fleet-cards.html">② fleet cards</a></td>
+      <td class="g">strong — mission + verb per card</td><td class="g">best (grid wraps; phase headers)</td>
+      <td class="g">done cards shrink; grinder bright</td><td class="y">cards, not lines</td><td class="g">removed</td></tr>
+    <tr><td><a href="03-tree.html">③ ownership tree</a></td>
+      <td class="y">one line per agent</td><td class="y">lists, no roll-up</td>
+      <td class="g">done branches auto-collapse</td><td class="g">best — full per-agent transcript</td><td class="g">nested away</td></tr>
+    <tr><td><a href="04-ticker.html">④ one-line ticker</a></td>
+      <td class="y">good for ≤6</td><td class="y">falls back to per-phase lines</td>
+      <td class="g">lines freeze into verdicts</td><td class="r">none kept</td><td class="g">one line per agent, patched</td></tr>
+    <tr><td><a href="05-lanes.html">⑤ swimlanes</a></td>
+      <td class="g">parallelism is SPATIAL</td><td class="r">breaks past ~4</td>
+      <td class="g">lanes collapse to stubs</td><td class="g">per-lane order</td><td class="g">removed</td></tr>
+  </table>
+
+  <h1 style="font-size:16px;margin-top:30px;">Workflows (pages ⑥–⑨)</h1>
+  <div class="sub">a Workflow is ONE task to the parent session — 18 inner agents, zero visibility.
+    These variants climb a data-availability ladder (each page states what plumbing it needs):</div>
+  <table>
+    <tr><th>variant</th><th>shows</th><th>data it needs</th></tr>
+    <tr><td><a href="06-wf-banner.html">⑥ banner</a></td><td>one patching card: counters + latest summary</td>
+      <td class="g">nothing new — buildable today</td></tr>
+    <tr><td><a href="07-wf-phases.html">⑦ phase pipeline</a></td><td>stage strip w/ progress + live cards under the active phase</td>
+      <td class="y">phase + per-agent snapshot forwarded from the workflow</td></tr>
+    <tr><td><a href="08-wf-narrator.html">⑧ narrator timeline</a></td><td>the workflow's own log()/phase() lines, nested + timestamped</td>
+      <td class="y">narrator stream forwarded</td></tr>
+    <tr><td><a href="09-wf-subfleet.html">⑨ sub-fleet</a></td><td>the fleet board nested in a workflow container (⑦+⑧+②)</td>
+      <td class="r">full inner telemetry</td></tr>
+  </table>
+
+  <div class="pick"><b>Claude's read:</b> the shapes that survive all three states are ① and ②,
+    and they compose: the <b>roster strip</b> is the always-on summary (count · running/done/failed ·
+    live verbs), and expanding it opens the <b>fleet cards</b> — phase-grouped when the team came
+    from a workflow. ③'s nesting is worth stealing regardless: even with a strip, the agent lines
+    that remain in the transcript should nest under their spawn line so post-hoc reading works.
+    ⑤ is the most beautiful for exactly 2–4 agents and a dead end past that; ④ is the cheapest
+    incremental fix if you want one afternoon's improvement instead of a redesign. Existing
+    plumbing: <code>session:agents</code> already carries {n, type, desc, status, summary, tools,
+    tokens} per agent — every variant here renders from data the dashboard already receives.</div>
+</main>
+</body>
+</html>

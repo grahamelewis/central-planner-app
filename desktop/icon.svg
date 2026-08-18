@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="lake" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f3f5f0"/>
+      <stop offset="1" stop-color="#d2e1e8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="218" fill="url(#lake)"/>
+  <rect x="1.5" y="1.5" width="1021" height="1021" rx="216.5" fill="none" stroke="#1e1f2c" stroke-opacity="0.12" stroke-width="3"/>
+  <path d="M218 390 L442 262 L666 390 L666 646 L442 774 L218 646 Z
+           M218 390 L442 518 L666 390
+           M442 518 L442 774"
+        fill="none" stroke="#252735" stroke-width="45"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="800" cy="525" r="70" fill="#ff6f9d"/>
+</svg>

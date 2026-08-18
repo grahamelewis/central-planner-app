@@ -1,0 +1,22 @@
+% Synthetic corpus: a style file — macro definitions, package plumbing.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{macros}[2024/01/01 v1.0 Synthetic macros]
+\RequirePackage{amsmath}
+\RequirePackage[margin=1in]{geometry}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\abs}[1]{\left\lvert #1 \right\rvert}
+\renewcommand{\vec}[1]{\boldsymbol{#1}}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\newenvironment{proofsketch}
+  {\begin{proof}[Proof sketch]}
+  {\end{proof}}
+\newif\ifdraft
+\draftfalse
+\ifdraft
+  \newcommand{\todo}[1]{\textbf{TODO: #1}}
+\else
+  \newcommand{\todo}[1]{}
+\fi
+\setlength{\parskip}{0.5em}
+\endinput

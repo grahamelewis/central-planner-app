@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>① roster strip</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .roster{ position:sticky; top:0; background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; padding:7px 10px; margin-bottom:10px; font-size:10px; }
+  .roster .sum{ color:var(--ink); font-weight:700; margin-right:8px; }
+  .chips{ display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+  .achip{ display:inline-flex; align-items:center; gap:5px; max-width:100%; padding:2px 9px;
+    border-radius:99px; background:var(--chip); border:1px solid var(--line); white-space:nowrap; }
+  .achip .d{ overflow:hidden; text-overflow:ellipsis; max-width:220px; color:var(--mut); }
+  .achip.done{ opacity:.6; } .achip.failed{ border-color:var(--red); }
+  .achip .meta{ color:var(--faint); font-size:9px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="index.html">← agentview mockups</a></div>
+  <h1>① Roster strip</h1>
+  <div class="sub">a sticky one-glance summary pinned above the stream; agent chatter leaves the stream</div>
+  <div id="mock" class="console"></div>
+  <div class="note"><b>Idea.</b> One pinned strip: headline count (<i>3 agents · 2 running</i>) +
+    one chip per agent showing its CURRENT action, patched in place — the stream below keeps only
+    spawn lines and the orchestrator's own text, so the chronology stops being spammed by status
+    repeats. <b>Stragglers:</b> done chips dim to their one-line result and stop moving; the
+    grinder keeps its live verb and elapsed. <b>Scale:</b> past ~8 agents the chips collapse to
+    counts per status and the strip stays one line tall (workflow state shows this). Click a chip
+    → that agent's lines filter into view (not mocked).</div>
+</main>
+<script src="data.js"></script>
+<script>
+  statesBar(document.getElementById('mock'), (s, k) => {
+    const mock = document.getElementById('mock');
+    const ags = s.agents;
+    const run = ags.filter(a => a.status === 'running').length;
+    const done = ags.filter(a => a.status === 'done').length;
+    const fail = ags.filter(a => a.status === 'failed').length;
+    const q = ags.filter(a => a.status === 'queued').length;
+    const head = `<span class="sum ag">◆ ${ags.length} agents</span>`
+      + `${run ? `<span class="spin"></span>${run} running ` : ''}`
+      + `${done ? `<span class="ok">✓${done}</span> ` : ''}${fail ? `<span class="bad">✗${fail}</span> ` : ''}${q ? `·${q} queued` : ''}`;
+    const chips = k === 'team'
+      ? `<div class="chips">${s.phases.map(p =>
+          `<span class="achip"><b>${p.name}</b><span class="meta">${p.done}/${p.total}${p.failed ? ` <span class="bad">✗${p.failed}</span>` : ''}</span></span>`).join('')}
+          <span class="achip"><span class="spin"></span><span class="d">verify: claim 12 — WebFetch · source 3</span></span></div>`
+      : `<div class="chips">${ags.map(a =>
+          `<span class="achip ${a.status}">${MARK[a.status]}<span class="d">#${a.n} ${a.status === 'running' ? a.act : (a.summary || a.desc)}</span><span class="meta">${a.tok} · ${a.status === 'running' ? a.t : a.ago + ' ago'}</span></span>`).join('')}</div>`;
+    mock.innerHTML = `<div class="roster">${head}${chips}</div>${STREAM_TOP}
+      <div class="tl ret">stream keeps only spawns + Claude's own prose — per-agent status lines live in the strip</div>${STREAM_BOT}`;
+  });
+</script>
+</body>
+</html>

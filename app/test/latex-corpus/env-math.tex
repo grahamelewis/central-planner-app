@@ -1,0 +1,81 @@
+% env-math.tex — amsmath environments carrying math state across lines.
+% Part of the Central Planner latex-corpus. All content is synthetic (A13).
+\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+
+\begin{equation}
+a^2 + b^2 = c^2
+\end{equation}
+
+\begin{align}
+f(x) &= (x+1)^2 \\
+&= x^2 + 2x + 1 \\
+g(y) &\leq \sup_{t \in [0,1]} h(t, y)
+\end{align}
+
+\begin{align*}
+\nabla \cdot \mathbf{E} &= \rho / \varepsilon_0 \\
+\nabla \cdot \mathbf{B} &= 0
+\end{align*}
+
+\begin{gather}
+x_1 + x_2 = 7 \\
+x_1 - x_2 = 1
+\end{gather}
+
+Nested aligned inside equation (inner begin is inert, outer closes):
+\begin{equation}
+\begin{aligned}
+u_t + u u_x &= \nu u_{xx} \\
+u(x, 0) &= \phi(x)
+\end{aligned}
+\end{equation}
+
+Matrix family inside equation:
+\begin{equation}
+M = \begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix},
+\qquad
+N = \begin{bmatrix}
+0 & -1 \\
+1 & 0
+\end{bmatrix}
+\end{equation}
+
+\begin{multline}
+(a + b + c + d)^2 = a^2 + b^2 + c^2 + d^2 \\
++ 2ab + 2ac + 2ad + 2bc + 2bd + 2cd
+\end{multline}
+
+A bare cases environment at top level:
+\begin{cases}
+0 & \text{if } x < 0 \\
+x & \text{otherwise}
+\end{cases}
+
+\begin{eqnarray}
+y &=& mx + b \\
+&=& 0
+\end{eqnarray}
+
+\begin{subequations}
+\begin{align}
+p &= q \\
+r &= s
+\end{align}
+\end{subequations}
+
+\begin{split}
+A &= B \\
+&= C
+\end{split}
+
+Inline smallmatrix: $\bigl(\begin{smallmatrix} a & b \\ c & d \end{smallmatrix}\bigr)$.
+
+Interior unindented carry-line proof:
+\begin{equation}
+z = w
++ v
+\end{equation}
+
+\end{document}

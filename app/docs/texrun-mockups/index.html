@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tex run mockups — relocating ▶ and fixing the squirm</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .cards{ max-width:1240px; margin:10px auto; padding:0 24px; display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:14px; }
+  .card{ display:block; text-decoration:none; color:inherit; background:var(--well);
+    border:1px solid var(--line); border-radius:14px; padding:18px 20px; transition:border-color .15s; }
+  .card:hover{ border-color:var(--ov3a); }
+  .card .n{ font-size:10px; color:var(--dim); font-weight:700; letter-spacing:.1em; }
+  .card h3{ font-size:14.5px; margin:6px 0 7px; }
+  .card p{ font-size:12px; color:var(--mut); line-height:1.65; }
+  .card .demoRow{ display:flex; align-items:center; gap:7px; margin-top:12px; padding:6px 10px;
+    background:var(--chrome-66); border:1px solid var(--line); border-radius:7px;
+    font-size:10px; color:var(--dim); font-family:ui-monospace,Menlo,monospace; }
+  .card.reco{ border-color:rgb(126 245 194 / 30%); }
+  .card.reco .n::after{ content:' · RECOMMENDED'; color:var(--green); }
+  .contract{ max-width:1240px; margin:4px auto 6px; padding:0 24px; }
+  .contract .inner{ background:var(--glass); border:1px solid var(--line); border-radius:14px;
+    padding:16px 20px; font-size:12.5px; color:var(--mut); line-height:1.7; }
+  .contract b{ color:var(--ink); }
+  .contract code{ font-family:ui-monospace,Menlo,monospace; font-size:11px; color:var(--green);
+    background:var(--well); border:1px solid var(--line); border-radius:5px; padding:1px 6px; }
+</style>
+</head>
+<body>
+
+<div class="mockHead">
+  <span class="crumb">app/docs/texrun-mockups — open any page from file://, no server needed</span>
+  <h1>Rethinking the LaTeX compile button <small>five takes on where ▶ lives and how it holds still</small></h1>
+  <p>Two complaints drive this series. <b>Placement:</b> ▶ compiles a document it can't see — it sits in the
+     editor foot while the PDF and its ✓/✗ verdict live in the viewer toolbar, next to − fit ＋.
+     <b>Geometry:</b> the button and its neighbors reshape at the worst moments — <code>▶ run</code> swells into
+     <code>⊘ stop run</code> when you click it, and an unsaved draft swaps the save note for a longer sentence
+     plus a materializing <code>save</code> button. Pages 02–04 move ▶ up beside the zoom cluster (the ask);
+     05 is the no-relocation floor. Every page is <b>live</b> — click the run control and the editor text to
+     feel the states — and carries a <b>measured state strip</b> proving the geometry holds.</p>
+</div>
+
+<div class="contract"><div class="inner">
+  <b>The geometry contract</b> (shared by every proposal): every state of a control renders in the
+  <b>same box</b> — glyph and color swap, width and height never do. Whatever can appear later (verdict, 🔧 fix,
+  unsaved signal) either has its space <b>reserved from the start</b> or slides in from a right-anchor that
+  shifts nothing — the handoff <code>.pdfVerdict</code> already documents in the real CSS. Unsaved state becomes
+  an <b>amber corner dot</b> (toolbar variants) or a <b>fixed-width save chip</b> (foot), and ▶ always
+  <b>saves, then compiles</b> — so “run before saving” stops being a trap that needs UI.
+</div></div>
+
+<div class="cards">
+  <a class="card" href="01-today.html">
+    <span class="n">01</span>
+    <h3>Today — the baseline</h3>
+    <p>Where everything sits now, with both nuisances live: click ▶ and watch it grow into ⊘ stop run; click
+       the editor and watch the foot swell. The state strip measures the damage in pixels.</p>
+    <div class="demoRow"><span>paper.tex</span><button class="runBtn">▶ run</button><span>editable — ⌘S saves</span></div>
+  </a>
+  <a class="card reco" href="02-toolbar-left.html">
+    <span class="n">02</span>
+    <h3>Toolbar · left — ▶ leads the zoom cluster</h3>
+    <p>The Overleaf-familiar spot: one fixed 34×18 box ahead of − fit ＋, verdict unchanged at the right
+       anchor. Unsaved = amber corner dot. Simple, discoverable, one new element in the bar.</p>
+    <div class="demoRow"><span class="runIc">▶</span><span class="pzBtn">−</span><span class="pzPct">fit</span><span class="pzBtn">＋</span><span class="pdfVerdict ok" style="margin-left:auto">✓ 2.3s</span></div>
+  </a>
+  <a class="card" href="03-toolbar-merged.html">
+    <span class="n">03</span>
+    <h3>Toolbar · merged — the verdict grows an action side</h3>
+    <p>Zero added chrome: one pill in the verdict's spot with two fixed slots — ▶/⊘ action left, 9-char status
+       right (compile · ⟳ pass 2 · ✓ 2.3s · ✗ 0.8s). Status clicks through to ▶ output, as today.</p>
+    <div class="demoRow"><span class="pzBtn">−</span><span class="pzPct">fit</span><span class="pzBtn">＋</span><span class="runPill" style="margin-left:auto"><span class="act">▶</span><span class="st ok">✓ 2.3s</span></span></div>
+  </a>
+  <a class="card" href="04-toolbar-cockpit.html">
+    <span class="n">04</span>
+    <h3>Toolbar · cockpit — ▶ plus a reserved 🔧 slot</h3>
+    <p>The maximal take: compile, fix, zoom, verdict — the whole tex loop in one bar. The Claude-fix button's
+       box is permanent; a failing build lights it amber instead of summoning it. Colors change, layout never.</p>
+    <div class="demoRow"><span class="runIc">▶</span><span class="fixIc hot">🔧</span><span class="pzBtn">−</span><span class="pzPct">fit</span><span class="pzBtn">＋</span><span class="pdfVerdict no" style="margin-left:auto">✗ 0.8s</span></div>
+  </a>
+  <a class="card" href="05-foot-fixed.html">
+    <span class="n">05</span>
+    <h3>Foot · fixed geometry — no relocation</h3>
+    <p>The floor: ▶ stays put but stops squirming — equal-length ▶ run/⊘ stop labels in a fixed box, and a
+       constant-width save chip whose dot ambers. Ship this for .jl/.py/.R/.sql regardless of the tex choice —
+       those runnables have no toolbar to move to.</p>
+    <div class="demoRow"><span>estimation.jl</span><button class="runBtn runFixed">▶ run</button><span class="saveChip"><i></i>saved · ⌘S</span></div>
+  </a>
+  <div class="card" style="cursor:default">
+    <span class="n">READING ORDER</span>
+    <h3>A suggested path</h3>
+    <p>01 to feel the problem, then 02 (the recommendation: familiar spot, minimal learning), 03 if the bar
+       should stay lean, 04 if 🔧 deserves promotion, 05 as the floor that ships either way. Recommendation:
+       <b>02 + 05</b> — ▶ into the toolbar for tex/pdf pairs, fixed-geometry foot everywhere else.</p>
+  </div>
+</div>
+
+</body>
+</html>

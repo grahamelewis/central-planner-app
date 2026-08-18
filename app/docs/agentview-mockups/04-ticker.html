@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>④ one-line ticker</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .tick{ border:1px dashed var(--line); border-radius:8px; padding:6px 10px; margin:8px 0;
+    background:rgb(from var(--purple) r g b / 4%); }
+  .tick .row{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fin{ color:var(--faint); }
+</style>
+</head>
+<body>
+<main>
+  <div class="crumb"><a href="index.html">← agentview mockups</a></div>
+  <h1>④ One-line ticker</h1>
+  <div class="sub">the minimal fix: ONE patching line per agent, plus one permanent line when each finishes</div>
+  <div id="mock" class="console"></div>
+  <div class="note"><b>Idea.</b> Exactly what the karaoke/answer line already does for speech:
+    each agent owns ONE line that patches in place (verb, tok, clock), so the stream never
+    accumulates status spam; when an agent finishes, its line freezes into the permanent verdict
+    row. <b>Stragglers:</b> automatic — finished lines freeze with "✓ … 7m ago", the grinder's
+    line keeps ticking. <b>Scale:</b> 24 lines is still 24 lines; the workflow state compresses
+    to one line per PHASE plus the busiest agent. Cheapest to build (the console already patches
+    segments in place); least structure.</div>
+</main>
+<script src="data.js"></script>
+<script>
+  statesBar(document.getElementById('mock'), (s, k) => {
+    const mock = document.getElementById('mock');
+    let rows;
+    if (k === 'team') {
+      rows = s.phases.map(p => `<div class="row"><span class="ag">◆ ${p.name}</span> ${p.done}/${p.total}
+        ${p.failed ? `<span class="bad">✗${p.failed}</span>` : ''}
+        ${p.running ? `<span class="spin"></span>${p.running} running` : p.done === p.total ? '<span class="ok">✓ complete</span>' : '<span class="small">queued</span>'}</div>`).join('')
+        + `<div class="row small">busiest: verify: claim 12 — WebFetch · source 3 · 41s</div>`;
+    } else {
+      rows = s.agents.map(a => a.status === 'running'
+        ? `<div class="row"><span class="ag">◆ #${a.n}</span> <span class="spin"></span>${a.act} <span class="small">· ${a.tools} tools · ${a.tok} · ${a.t}</span></div>`
+        : `<div class="row fin"><span class="ag">◆ #${a.n}</span> ${MARK[a.status]} ${a.summary} <span class="small">· ${a.tok} · ${a.ago} ago</span></div>`).join('');
+    }
+    mock.innerHTML = `${STREAM_TOP}<div class="tick">${rows}</div>${STREAM_BOT}`;
+  });
+</script>
+</body>
+</html>

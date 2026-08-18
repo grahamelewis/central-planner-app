@@ -1,0 +1,287 @@
+{
+ "mode": "full",
+ "ext": "tex",
+ "lines": [
+  {
+   "t": [
+    [
+     "cm",
+     "% Synthetic corpus: comments in every position."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "cm",
+     "% A full-line comment with $math-looking$ content and \\commands inside."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "Text before a comment "
+    ],
+    [
+     "cm",
+     "% trailing comment with \\alpha and $x$"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "An escaped percent "
+    ],
+    [
+     "nm",
+     "100"
+    ],
+    [
+     "kw",
+     "\\%"
+    ],
+    [
+     "",
+     " is not a comment, but this is "
+    ],
+    [
+     "cm",
+     "% real comment"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "md",
+     "$"
+    ],
+    [
+     "mv",
+     "a"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "mo",
+     "+"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "mv",
+     "b"
+    ],
+    [
+     "md",
+     "$"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "cm",
+     "% comment after inline math closes"
+    ]
+   ],
+   "z": [
+    [
+     0,
+     7
+    ]
+   ]
+  },
+  {
+   "t": [
+    [
+     "md",
+     "$"
+    ],
+    [
+     "mv",
+     "c"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "mo",
+     "+"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "mv",
+     "d"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "cm",
+     "% comment inside an open inline zone — legacy behavior frozen"
+    ]
+   ],
+   "z": [
+    [
+     0,
+     68
+    ]
+   ]
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\begin"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "equation"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "  "
+    ],
+    [
+     "mv",
+     "x"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "mo",
+     "="
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "nm",
+     "1"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "cm",
+     "% comment inside a math environment"
+    ]
+   ],
+   "z": [
+    [
+     2,
+     43
+    ]
+   ]
+  },
+  {
+   "t": [
+    [
+     "kw",
+     "\\end"
+    ],
+    [
+     "pt",
+     "{"
+    ],
+    [
+     "cl",
+     "equation"
+    ],
+    [
+     "pt",
+     "}"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "cm",
+     "%% double-percent comment"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "cm",
+     "%"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "Empty comment above; indented comment below."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "   "
+    ],
+    [
+     "cm",
+     "% indented comment"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "Final line."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [],
+   "z": []
+  }
+ ]
+}

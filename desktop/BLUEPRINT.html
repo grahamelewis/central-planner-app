@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Central Planner — Phase 1 Blueprint: the Desktop Shell</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1b1e24;
+    --panel2: #21252d;
+    --ink: #d7dce3;
+    --ink-dim: #9aa3b0;
+    --ink-faint: #6b7482;
+    --accent: #6fb3e0;
+    --accent2: #c9a86a;
+    --good: #7dbb8a;
+    --warn: #d0a05a;
+    --bad: #cf7a72;
+    --line: #303642;
+    --code-bg: #101215;
+    --mark: #2a3140;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f6f3;
+      --panel: #ffffff;
+      --panel2: #f0efeb;
+      --ink: #23272e;
+      --ink-dim: #59606b;
+      --ink-faint: #8a8f98;
+      --accent: #2a6f9e;
+      --accent2: #8a6d2f;
+      --good: #33704a;
+      --warn: #8a5f1e;
+      --bad: #a03d33;
+      --line: #d8d5cd;
+      --code-bg: #edece7;
+      --mark: #e4e9f2;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 40px 28px 90px; }
+  header.doc {
+    border-bottom: 2px solid var(--line);
+    padding-bottom: 20px; margin-bottom: 30px;
+  }
+  h1 { font-size: 27px; line-height: 1.25; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .date { color: var(--ink-dim); font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; }
+  h2 {
+    font-size: 20px; margin: 44px 0 12px; padding-top: 10px;
+    border-top: 1px solid var(--line); letter-spacing: -0.01em;
+  }
+  h2 .no { color: var(--accent2); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  h3 { font-size: 16px; margin: 24px 0 8px; }
+  p { margin: 10px 0; }
+  .mission { font-size: 15.5px; }
+  code {
+    font: 12.5px/1.5 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; margin: 14px 0;
+  }
+  pre code { background: none; border: 0; padding: 0; white-space: pre; }
+  table {
+    border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 13.5px;
+  }
+  .tablewrap { overflow-x: auto; }
+  th, td {
+    border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top;
+  }
+  th { background: var(--panel2); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-dim); }
+  td { background: var(--panel); }
+  tr.sub td { background: var(--panel2); font-weight: 600; }
+  ul, ol { margin: 10px 0; padding-left: 26px; }
+  li { margin: 5px 0; }
+  .pill {
+    display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; border-radius: 10px; padding: 1px 8px; vertical-align: 1px;
+  }
+  .pill.p1 { background: var(--good); color: var(--bg); }
+  .pill.def { background: var(--panel2); color: var(--ink-dim); border: 1px solid var(--line); }
+  .pill.rej { background: var(--bad); color: var(--bg); }
+  .pill.mod { background: var(--warn); color: var(--bg); }
+  .callout {
+    border-left: 4px solid var(--accent); background: var(--panel);
+    padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0;
+  }
+  .callout.rule { border-left-color: var(--bad); }
+  .callout b:first-child { color: var(--accent); }
+  .callout.rule b:first-child { color: var(--bad); }
+  .inv {
+    counter-reset: inv; list-style: none; padding-left: 0;
+  }
+  .inv li {
+    counter-increment: inv; padding: 8px 12px 8px 46px; position: relative;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 8px 0;
+  }
+  .inv li::before {
+    content: "I" counter(inv); position: absolute; left: 12px; top: 9px;
+    font: 700 12px/1.6 ui-monospace, Menlo, monospace; color: var(--accent2);
+  }
+  .diagram {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin: 16px 0; overflow-x: auto;
+  }
+  .diagram svg { display: block; margin: 0 auto; min-width: 720px; }
+  .runflow { display: flex; gap: 0; align-items: stretch; flex-wrap: nowrap; min-width: 720px; }
+  .runbox {
+    flex: 1; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 12px; font-size: 12.5px; margin: 0 6px;
+  }
+  .runbox b { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); margin-bottom: 4px; }
+  .runarrow { align-self: center; color: var(--ink-faint); font-size: 18px; padding: 0 2px; }
+  .day {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 4px 18px 12px; margin: 16px 0;
+  }
+  .day h3 { color: var(--accent2); }
+  .day ol li { margin: 8px 0; }
+  .ac { display: block; color: var(--ink-dim); font-size: 12.5px; margin-top: 2px; }
+  .ac::before { content: "✓ accept: "; color: var(--good); font-weight: 700; }
+  .small { font-size: 12.5px; color: var(--ink-dim); }
+  .src { color: var(--ink-faint); font-size: 11.5px; }
+  mark { background: var(--mark); color: var(--ink); padding: 0 3px; border-radius: 3px; }
+  a { color: var(--accent); }
+  .toc { columns: 2; column-gap: 32px; font-size: 13.5px; margin: 10px 0 0; }
+  .toc li { break-inside: avoid; }
+  @media (max-width: 640px) { .toc { columns: 1; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div class="date">2026-08-07 · rev 2 (post-audit) · Contract document · desktop/BLUEPRINT.html</div>
+  <h1>Central Planner — Phase 1 Blueprint: the Desktop Shell</h1>
+  <p class="mission">
+    Phase 1 delivers a small Electron shell in a new top-level <code>desktop/</code> folder — a
+    physically separate construction with its own <code>package.json</code> — that is a pure
+    <em>client</em> of the one Central Planner server. The launchd service
+    (<code>local.projectmanager</code>, KeepAlive) remains the sole owner of port 4242: the shell
+    <b>attaches to a healthy running server and contains no code path that starts, signals, or
+    races one</b>. The spawn fallback drafted in rev 1 was removed by audit
+    (<code>desktop/BLUEPRINT_AUDIT.txt</code>, 2026-08-07): no user-space pre-check can make it
+    safe while the server runs its boot side-effects before binding the port — it is deferred to
+    <b>Phase 1.5</b> behind hard preconditions (§7), the first being the ~3-line server fix that
+    defuses mis-spawns at the source. <code>app/</code> takes exactly <b>one deliberate diff</b>:
+    the two-line feature-detect that hides the mic button where speech recognition cannot work
+    (§6 G1). The wins: a real window and dock identity, native notifications that fire even with
+    the window closed, a single-instance lock, and no background-tab throttling. The browser at
+    <code>http://127.0.0.1:4242</code> and the phone PWA keep working at all times —
+    unconditionally, since the shell never owns the server. This document is the binding contract,
+    in the spirit of <code>app/CONTRACT.md</code>: what is written here is what gets built — three
+    days, not weeks.
+  </p>
+  <ol class="toc">
+    <li>Goals / non-goals</li>
+    <li>Decision record</li>
+    <li>File tree</li>
+    <li>Main-process architecture (state machine)</li>
+    <li>Native integrations: Phase 1 vs deferred</li>
+    <li>Platform gotchas &amp; mitigations</li>
+    <li>Build plan (days 1–3 + deferred Phase 1.5)</li>
+    <li>Test plan</li>
+    <li>Risk register</li>
+    <li>Appendix: designs, critic must-fixes, audit disposition</li>
+  </ol>
+</header>
+
+<!-- ============================================================ -->
+<h2><span class="no">1</span>Goals &amp; non-goals</h2>
+
+<h3>Goals (the contract's deliverables)</h3>
+<ul>
+  <li><b>Own window + dock identity.</b> A packaged (unsigned, ad-hoc) <code>Central Planner.app</code> with icon, Cmd+Tab presence, and notification attribution.</li>
+  <li><b>Native notifications.</b> macOS banners for the same five moments <code>app/lib/sessions.js</code> pushes to ntfy — approval needed (<code>session:permission</code>), question asked and handoff recorded (<code>task:update</code> transitions — these fields <em>never</em> ride <code>session:status</code>; sessions.js stores them via <code>updateTask()</code>), sign-in needed and turn failed (<code>session:status</code> <code>authNeeded</code>/<code>error</code>) — driven by the shell's own persistent WebSocket to <code>/ws</code>. They keep firing with the window closed. <b>Best-effort by design:</b> the phone's ntfy push remains the guaranteed channel; on reconnect the <code>state</code> snapshot reseeds missed question/handoff banners, while an approval that fired into a dead socket cannot be reconstructed (pending permissions are absent from the snapshot — sessions.js:1792-1800). Documented, not hidden.</li>
+  <li><b>Single-instance lock.</b> Relaunching focuses the existing window.</li>
+  <li><b>No throttling.</b> <code>backgroundThrottling:false</code> so the SPA's 30 s heartbeat and 15 s WS stale-check run at full rate while hidden — the thing a browser tab cannot promise.</li>
+  <li><b>One-server rule, enforced by construction.</b> Attach-only lifecycle: Phase 1 ships no spawn path, no child processes, no signals — there is nothing to get wrong. Quit never touches any server.</li>
+  <li><b>One deliberate <code>app/</code> diff, zero others.</b> The mic feature-detect (§6 G1 — two lines that also improve every non-Chrome browser). The server serves the whole frontend; the shell loads <code>http://127.0.0.1:&lt;port&gt;</code> and bundles nothing.</li>
+  <li><b>A shipped contract.</b> <code>desktop/CONTRACT.md</code> carries the invariants, state table, probe rules, and cross-folder couplings; review gates on it like <code>app/CONTRACT.md</code>.</li>
+</ul>
+
+<h3>Non-goals (explicitly out of Phase 1)</h3>
+<ul>
+  <li>Any <em>other</em> modification to <code>app/</code>. Two candidate diffs remain <em>recorded, not taken</em> (appendix C): the ~10-line runtime <code>hashchange</code> route for live task deep links (Phase 2), and the ~3-line <code>server.js</code> reorder (bind port before the stranded-task sweep; exit on listen error) — now the named <b>entry precondition for Phase 1.5</b>, not a Phase-1 change.</li>
+  <li><b>The spawn fallback itself.</b> Removed from Phase 1 by audit findings F3/F4/F7/F19 (the TOCTOU race is un-closable from user space; packaged repo discovery is broken; lifecycle re-entry races; orphan hazard). Deferred to Phase 1.5 (§7) behind hard preconditions. Attach-only is a complete product on this machine — launchd attach is ~100% of launches.</li>
+  <li>Vite/TypeScript migration, Monaco, render-model rework (later phases). Code signing, notarization, dmg, auto-update (Phase 5).</li>
+  <li>Dock badge (designated <b>first Phase-2 add</b>, ~15 lines on the existing WS listener), dock bounce, tray item, global shortcuts, login item, always-on-top, multi-window, custom protocol handler.</li>
+  <li>Making dictation <em>work</em> inside the shell — Electron ships no speech-recognition backend; the mic button hides itself there (G1) and the browser + phone PWA remain the dictation paths. Replacing or replicating ntfy — phone push is untouched; desktop notifications are additive, local-only, and explicitly best-effort.</li>
+  <li>Windows/Linux. The lifecycle is deliberately launchd-specific; darwin only.</li>
+  <li>Pidfiles, orphan adoption, auto-respawn budgets, DEGRADED health telemetry — cut with the critics (over-built for a machine where launchd is the ~100% case; adoption was the portfolio's only kill-what-you-didn't-spawn vector).</li>
+  <li>Any preload script or IPC surface. The renderer is exactly a browser tab; <code>connecting.html</code> is static.</li>
+  <li>Telemetry, crash reporting, external resources of any kind (public repo; hard no-CDN rule).</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2><span class="no">2</span>Decision record</h2>
+<p class="small">Every load-bearing choice, with rationale and provenance (D1/D2/D3 = the minimal / lifecycle / native-integration designs; C1/C2 = the two critiques; F# = findings of the independent 2026-08-07 audit, dispositioned in appendix D). Conflicts are resolved here — there are no open either/ors in this contract.</p>
+
+<div class="tablewrap"><table>
+  <tr><th style="width:16%">Topic</th><th style="width:40%">Decision</th><th>Rationale</th></tr>
+
+  <tr><td><b>Spine</b></td>
+    <td>Design 1's frame: flat <code>desktop/</code> package, zero runtime deps, no preload, no build step, main-process-only native code. Grafts from D2/D3 as below; the spawn fallback was removed by audit (→ Phase 1.5). Contract total: <b>3 days, attach-only</b>.</td>
+    <td>Both critics independently converged on this. Matches repo culture (plain ESM, few deps, <code>node --test</code>). D2's 9-state machine and D3's badge/prefs tail were scope beyond the days-not-weeks constraint. <span class="src">C1 + C2 recommendedScope</span></td></tr>
+
+  <tr><td><b>Attach-only lifecycle</b></td>
+    <td>Attach-first, decided by pre-flight evidence; <b>Phase 1 ships no spawn path at all</b>. Probe = <code>GET /m/manifest.webmanifest</code> (1.5 s timeout) classified <b>HEALTHY</b> (200 + JSON <code>name === "Central Planner"</code>) / <b>FOREIGN</b> (any other HTTP answer) / <b>REFUSED</b> / <b>TIMEOUT</b>. REFUSED + launchd job loaded → WAIT_LAUNCHD (KeepAlive is respawning it). REFUSED + job not loaded → SERVER_ABSENT splash with start instructions (<code>cd app &amp;&amp; npm start</code>, or load the launchd service) and a continuing probe loop — first HEALTHY attaches. TIMEOUT → re-probe at 5 s; if TCP accepts while HTTP won't answer → <b>OCCUPIED</b> splash. Never spawn, in any state.</td>
+    <td>The audit (F3) killed the spawn gates: no user-space pre-check can reserve a port for another process, and the damage window is real — <code>server.on('error')</code> only logs and idles (server.js:1171-1173) while the stranded-task sweep + watchers run <em>before</em> <code>listen</code> (1146-1157 vs 1175), so a mis-spawned child rewrites live <em>billed</em>-task state before it learns the port is taken. Rev 1's "re-verified atomically" was unearned: gates shrink the race, they don't close it. Only the server-side bind-first fix closes it; until that lands in <code>app/</code>, spawning is out. <span class="src">audit F3; C1/C2 mustFix 1 context</span></td></tr>
+
+  <tr><td><b>Spawn fallback</b> <span class="pill def">Phase 1.5</span></td>
+    <td>Deferred behind five hard entry preconditions: (1) the ~3-line <code>server.js</code> reorder lands — bind before side effects, exit on listen error — making any mis-spawn harmless at the source; (2) a serialized spawn coordinator (single-flight, generation token, <code>expectedExit</code>/<code>quitting</code> flags, idempotent terminal states); (3) a real packaged-repo locator (persisted <code>userData</code> setting — <code>__dirname/..</code> points into <code>Contents/Resources</code> in a packaged .app, and Finder launches inherit no terminal env); (4) an explicit orphan policy for a child that outlives a crashed shell; (5) quit protection scoped to <em>all</em> active work in the snapshot — sessions, runs, jobs, texfix — not task records alone. The rev-1 spawn design (three-gate precondition, EADDRINUSE stderr watch, 15 s budget kill, SIGTERM→3s→SIGKILL, plist PATH mirror, real-node-first, second-death stop) is preserved in appendix D as the starting point.</td>
+    <td>Each precondition maps to an audit blocker (F3/F7/F4/F19/F9 respectively). Attach-only loses nothing on this machine: launchd attach is ~100% of launches, and the fallback's only audience is a launchd-less fresh install — which the README walks through <code>npm start</code> in one line. <span class="src">audit F3, F4, F7, F9, F19, F27 + bottom line</span></td></tr>
+
+  <tr><td><b>Close &amp; quit semantics</b></td>
+    <td><b>Close (red button / Cmd+W) hides — silently, no dialog.</b> The window and its page live on (drafts, scroll, view state intact); the app + notifier WS stay alive; dock click or a notification click re-shows. <b>Cmd+Q quits the shell and touches no server, ever</b> — there is no owned mode in Phase 1, so quit sends no signals of any kind; browser tabs and the phone PWA are unaffected by construction. The <code>will-prevent-unload</code> draft dialog fires only on paths that actually unload the page: <b>reload and quit</b>.</td>
+    <td>Audit F5: Electron emits BrowserWindow <code>close</code> <em>before</em> any DOM unload — a close handler that hides produces no unload, so <code>will-prevent-unload</code> can never fire on Cmd+W; rev 1's "dialog on every path" was self-contradictory and its day-1 Cmd+W acceptance criterion unimplementable. The fix is also better UX: hiding loses nothing, so prompting on close was noise. Quit and Cmd+R do unload, and there the guard works exactly as Electron designed. The rev-1 owned-quit machinery (running-task confirm, SIGTERM cascade) moves to Phase 1.5 with the spawn path, rescoped to all active work per F9. <span class="src">audit F5, F6, F9 + D3 close≠quit</span></td></tr>
+
+  <tr><td><b>Security posture</b></td>
+    <td><code>sandbox:true</code>, <code>contextIsolation:true</code>, <code>nodeIntegration:false</code>, <b>no preload script at all</b>, <code>backgroundThrottling:false</code>. <b>Both</b> permission hooks installed — <code>setPermissionRequestHandler</code> <em>and</em> <code>setPermissionCheckHandler</code> — denying by default and allowing exactly <code>clipboard-sanitized-write</code>, and only when the requesting origin is the dashboard origin <em>and</em> the request comes from the main frame of the shell's own webContents (never an artifact iframe). No fullscreen grant — nothing in the dashboard requests it. No IPC surface exists anywhere.</td>
+    <td>The page needs zero renderer privileges — every native win lives in main via the server's own HTTP/WS surface. Audit F10: the check handler is the other half of Chromium's permission path (synchronous checks bypass the request handler), and rev 1's fullscreen allowance violated its own least-privilege rule — dropped. The clipboard allowlist stays: blanket deny would silently degrade every copy button (app.js:944, 3530). <span class="src">D1 posture + C1 mustFix 6 + audit F10</span></td></tr>
+
+  <tr><td><b>Window-open / navigation routing</b></td>
+    <td><code>setWindowOpenHandler</code> returns <code>{action:'deny'}</code> always; URLs with scheme <b>http, https, or mailto only</b> are passed to <code>shell.openExternal</code> — including same-origin <code>127.0.0.1:&lt;port&gt;</code> URLs. All other schemes (<code>file:</code>, app schemes) are dropped silently with a log line. <code>will-navigate</code> is pinned to the <code>http://127.0.0.1:&lt;port&gt;</code> origin; anything else is prevented and routed through the same scheme filter.</td>
+    <td>The SPA's delegated handler <code>window.open</code>s <em>every</em> link — including LLM-generated markdown hrefs (app.js:1732-1740) — so an unfiltered <code>openExternal</code> would launch local apps from a <code>file://</code> link. Same-origin links go to the default browser because that is their labeled intent ("open in browser ↗", app.js:5480-5495) and the OAuth popups (8092, 8909) must reach a real browser. Iframes are already sandboxed without <code>allow-popups</code>. <span class="src">D1 uniform rule + C1 mustFix 4</span></td></tr>
+
+  <tr><td><b>Profile / localStorage</b></td>
+    <td>Accept the one-time reset. Electron's fresh <code>userData</code> partition means first launch loses Chrome-held localStorage: theme, pane widths (<code>wbSidePx</code>/<code>wbCenterPx</code>/<code>wbVSplit</code>), per-task tabs, open viewers, voice prefs, kaimon dismissal. Documented prominently in README ("first launch looks like a fresh install — two minutes to re-set theme and panes; it never happens again"). No migration tooling. Editor drafts are in-memory only (app.js:71) — nothing worse is at risk.</td>
+    <td>Migration would mean scripting Chrome's profile or injecting into the page — both far out of Phase-1 scope for a one-time, two-minute, cosmetic cost. Both critics required it be documented, not hidden; neither required tooling. <span class="src">C1 mustFix 9</span></td></tr>
+
+  <tr><td><b>Voice layer</b></td>
+    <td><b>The one <code>app/</code> diff ships:</b> the mic button renders only when recognition can actually work — <code>SR_CTOR &amp;&amp; !/Electron/.test(navigator.userAgent)</code> (~2 lines at the app.js:8161 consumer). In the shell the mic simply isn't there; TTS (voice replies + karaoke highlight) works natively and is untouched. No Chromium switches — <code>disable-speech-api</code> stays a Phase-2 experiment (C1 verified it kills <code>speechSynthesis</code> too).</td>
+    <td>Audit F25 is right that a visibly dead primary control undermines the daily-driver bar, and the fix is not shell-specific hackery: the constructor <em>exists</em> in Electron and fails only at runtime against Google's absent speech backend, so UA detection is the honest feature-check (constructor presence alone is insufficient), and hiding an inoperable control is correct product behavior in any browser. This is where zero-diffs purity correctly bends. <span class="src">audit F25; C1 mustFix 5 context</span></td></tr>
+
+  <tr><td><b>Notification wiring</b></td>
+    <td>ONE persistent main-process WebSocket to <code>ws://127.0.0.1:&lt;port&gt;/ws</code> using Node's native <code>WebSocket</code> global (no <code>ws</code> dep). <b>The corrected event map</b> (audit F1 — rev 1 put two of five banners on an event that never carries them): <code>session:permission</code> → "Approval needed" (identity = <code>requestId</code>; cleared by <code>session:permission:resolved</code>, sessions.js:918/1747); <code>task:update</code> where <code>question</code> transitions null→text → "Claude is asking" (identity = project + id + question hash); <code>task:update</code> where <code>handoff</code> becomes non-null → "handoff recorded" (identity = project + id); <code>session:status</code> with <code>authNeeded</code> → "sign-in needed", with <code>error</code> → "turn failed" (identity = project + id + error hash). Bodies stay generic (privacy default, mirroring notify.js). <b>Last-notified state persists</b> in <code>userData/notify-state.json</code> (atomic writes) so a shell restart neither re-fires old banners nor loses its place. <b>Snapshot reconciliation:</b> every (re)connect delivers the <code>state</code> snapshot free — tasks sitting at <code>waiting</code> with an unnotified <code>question</code>/<code>handoff</code> fire then (covers sleep, backoff gaps, fresh launches); pending approvals are <em>not</em> in the snapshot and are accepted as best-effort (F2) — ntfy is the durable channel. <b>Liveness:</b> the socket copies the renderer's watchdog — the server ticks every 25 s, so &gt;60 s of silence → terminate + reconnect (F13); <code>close</code>/<code>error</code> → capped 5 s→60 s backoff; <code>powerMonitor resume</code> → immediate kick. <b>Suppression:</b> a banner is suppressed only when the window is focused <em>and</em> <code>webContents.getURL()</code>'s hash names that banner's project (zero-IPC project awareness, F14); suppressed banners still go to the shell log. <b>Click:</b> focus/re-show the window — honestly labeled (F8): the SPA has no runtime hash routing (<code>hashchange</code> count in app.js: zero), so deep-linking a <em>live</em> window awaits the Phase-2 <code>hashchange</code> diff; only a window created fresh loads <code>#&lt;projectKey&gt;</code> (init-time routing, app.js:10240-10253). Renderer never calls the Notification API (grep-clean), so no double-notify risk.</td>
+    <td>Verified against the working tree: <code>question</code>/<code>handoff</code> reach the wire exclusively via <code>updateTask()</code> → <code>task:update</code>, never on <code>session:status</code> payloads (sessions.js:1262/1612); <code>session:permission:resolved</code> fires on allow, deny, interrupt, and turn-end (sessions.js:918, 1152, 1561, 1747). Each WS connect costs the server a full snapshot plus throttled auth/codex subprocess spawns (server.js:1091-1097), hence the hard backoff cap, asserted in tests. <span class="src">audit F1, F2, F8, F12, F13, F14; D1 transport</span></td></tr>
+
+  <tr><td><b>Single-instance</b></td>
+    <td><code>app.requestSingleInstanceLock()</code>; if denied, quit immediately; the first instance's <code>second-instance</code> handler re-shows and focuses the window. The lock is per-shell only — the one-<em>server</em> rule is enforced by the port + launchd, never by the shell.</td>
+    <td>Prevents duplicate windows and duplicate notifier sockets. All three designs agreed. <span class="src">D1/D2/D3</span></td></tr>
+
+  <tr><td><b>Menu &amp; shortcuts</b></td>
+    <td>Custom menu from default roles with the <code>resetZoom</code> accelerator rebound to <b>Cmd+Shift+0</b>; no menu item may ever bind Cmd+0..5 (CONTRACT.md invariant). Verified against the pinned Electron on day 1.</td>
+    <td>Electron's default View menu binds <code>resetZoom</code> to CmdOrCtrl+0, and menu accelerators fire before the page keydown — silently breaking the dashboard's Cmd+0..5 view switching (verified app.js:10222-10228). <span class="src">D1/D3 independently; C2 mustFix 5a</span></td></tr>
+
+  <tr><td><b>Draft guard</b></td>
+    <td>Handle <code>webContents 'will-prevent-unload'</code>: native dialog "Unsaved drafts — leave anyway?"; proceed only on confirmation. Fires on the two paths that actually unload — <b>reload (Cmd+R) and quit</b>. Close never triggers it (close hides; nothing unloads, nothing is lost).</td>
+    <td>app.js:10063-10066 preventDefaults <code>beforeunload</code> when drafts/dirty HTML edits exist; Electron shows no dialog by default, so reload/quit would silently no-op. Close is exempt by Electron's own event order (audit F5): <code>close</code> precedes unload, and the hide handler ends the sequence before any unload begins. <span class="src">all three designs + audit F5</span></td></tr>
+
+  <tr><td><b>Server death mid-use</b></td>
+    <td>While the SPA is loaded: <b>do nothing</b>. The in-memory page survives, its own WS reconnects every 3 s (app.js:1703), launchd KeepAlive respawns the server in seconds. The shell intervenes only on a <b>filtered</b> <code>did-fail-load</code>: <b>main frame only</b> (<code>isMainFrame</code> — artifact iframes 404 routinely and must never splash the live dashboard), ignoring <code>ERR_ABORTED</code>/superseded navigations, draft-vetoed reloads, expected transitions to <code>connecting.html</code>, and events from a stale lifecycle generation → <code>connecting.html</code> → probe loop → <code>loadURL</code> back on HEALTHY. All lifecycle triggers (startup, did-fail-load, wake, retry) funnel through <b>one single-flight reconcile loop</b> with a generation token — concurrent triggers join the active loop, never start a second (invariant I8). <code>powerMonitor 'resume'</code> kicks the notifier reconnect and fires one immediate probe.</td>
+    <td>Reloading a live SPA to fix a 3-second launchd restart would destroy drafts and view state to solve a problem the frontend already solves. The filter list is audit F11 verbatim — an unfiltered handler would let a deleted artifact's iframe 404 replace the whole dashboard with the splash. The single-flight rule is F7's surviving core: attach-only removes the double-<em>spawn</em> hazard, but two concurrent probe loops racing <code>loadURL</code> is still a real bug class. <span class="src">D1 philosophy + audit F7, F11</span></td></tr>
+
+  <tr><td><b>Shell log</b></td>
+    <td><code>userData/logs/shell.log</code> — append-only, size-capped (~1 MB, single rotation to <code>shell.log.1</code>, atomic writes): every lifecycle decision with its evidence (probe class, launchctl exit, generation), every dropped URL scheme, every notification fired / suppressed / failed (including the <code>Notification 'failed'</code> event), watchdog kicks, backoff state, and crash-adjacent errors. Startup logs the shell version + pinned Electron version. The README names it beside launchd's <code>/tmp/projectmanager.log</code>.</td>
+    <td>Audit F23: a Finder-launched app has no terminal — without a persistent log, every lifecycle mystery ("why didn't it notify?", "why the splash?") is undiagnosable. The log is also the honest home for suppressed-banner records and scheme drops that would otherwise vanish. <span class="src">audit F23</span></td></tr>
+
+  <tr><td><b>Port resolution</b></td>
+    <td><code>CP_PORT</code> env → <code>config.json</code> <code>"port"</code> → 4242 — with the config file located the way the <em>server</em> locates it: <code>CP_ROOT</code> env first, then the repo root (mirrors <code>app/lib/config.js:21-24, :50</code>). Values validated: integer, 1..65535; garbage falls through to the next source with a log line. Re-read on every entry into a probe loop. <b>Honest limits</b> (audit F18): a port change under a loaded, healthy SPA is not auto-healed — the page keeps talking to its old origin until a manual Cmd+R (no main-frame load failure ever fires), and the new origin means one more localStorage reset (storage is per-origin). Both documented in README; neither is worth machinery for a value that changes ~never.</td>
+    <td>The shell reads the same sources by the same rules, so shell and server cannot disagree; validation keeps a typo'd config from wedging the probe loop. <span class="src">all designs + audit F18</span></td></tr>
+
+  <tr><td><b>Health probing rules</b></td>
+    <td>The only HTTP probe is <code>GET /m/manifest.webmanifest</code> (200, 431 B, ~4 ms, express.static — zero app code). Forbidden forever: <code>POST /api/heartbeat</code> (writes wall-clock time to the ledger, server.js:987-998), <code>GET /api/state</code> as a probe (228 KB synchronous fs sweep), and WS-connect-as-ping (each connect = full snapshot + auth/codex subprocess spawns).</td>
+    <td>Cheapest side-effect-free 200 the server exposes, and it doubles as the identity check. Deliberately removes any need for a new <code>/api/health</code> route (which would violate zero-app/-changes). <span class="src">scout + D2</span></td></tr>
+
+  <tr><td><b>Packaging &amp; dev workflow</b></td>
+    <td>Dev loop: <code>npm start</code> (<code>electron .</code>). Pack: <code>npm run pack</code> — a small script wrapping <code>@electron/packager</code> (which natively emits <code>&lt;out&gt;/&lt;name&gt;-darwin-&lt;arch&gt;/</code>; the script deliberately flattens to <code>dist/Central Planner.app</code>), ad-hoc signed, bundle id <code>com.centralplanner.desktop</code>, <code>icon.icns</code>. <b>Reproducibility</b> (F22): <code>package-lock.json</code> committed; Electron <em>and</em> <code>@electron/packager</code> pinned exact; the dependency assertion is <code>npm ls --omit=dev</code> (empty), not <code>--all</code>. <b>Signing honesty</b> (F17): ad-hoc <em>is</em> a signature — day-2 acceptance includes <code>codesign --verify --deep --strict</code> passing on the packed bundle, a listener on <code>Notification</code>'s <code>failed</code> event logging to shell.log, and README triaging "signature/attribution problem" separately from "user denied notification permission" (different fixes; System Settings cannot repair the former). Pack <b>before</b> testing notifications. Tests: <code>npm test</code> (<code>node --test test/*.test.mjs</code>). No electron-builder, no Developer-ID signing, no dmg (Phase 5).</td>
+    <td>Dock name/icon and notification identity are bundle properties — day-ordering insight from D3, made a day-2 gate by both critics. F22's corrections (lockfile, packager pin, real output path, the right <code>npm ls</code> flag) close the reproducibility gaps; F17's close the "why no banner?" diagnosis gap. <span class="src">D1 tooling + D3 ordering + C2 mustFix 8 + audit F17, F22</span></td></tr>
+
+  <tr><td><b>Contract, couplings &amp; governance</b></td>
+    <td><code>desktop/CONTRACT.md</code> ships day 2 and becomes <b>the single binding review gate</b> from that moment — this BLUEPRINT is the design record and stops being normative once CONTRACT.md exists (F28: two live normative docs will drift). It carries: the eight invariants (§4), the state table, probe rules, close/quit semantics, the Cmd+0..5 no-shadow rule, the manual smoke matrix, the pinned exact Electron + packager versions, and the <b>full</b> cross-folder coupling inventory (F15 — rev 1's three were an undercount): (1) port precedence + <code>CP_ROOT</code> config discovery (config.js), (2) manifest route + <code>name === "Central Planner"</code>, (3) launchd label <code>local.projectmanager</code>, (4) the notifier's event names and payload shapes (<code>session:permission(:resolved)</code>, <code>task:update</code>, <code>session:status</code>, the <code>state</code> snapshot), (5) init-only hash routing, (6) Cmd+0..5 page bindings, (7) the <code>beforeunload</code> draft guard, (8) Node ≥ 20, (9) the 25 s WS tick the watchdog times against. <b>Version-skew rule</b> (F16): an <code>app/</code> change touching any listed coupling updates <code>desktop/</code> in the same commit <em>and</em> triggers re-pack + smoke re-run — the dashboard's self-update button updates the server, never the packaged shell, so drift is real and the couplings list is the tripwire.</td>
+    <td>Graham asked for a contract; guarantees only survive maintenance if written where the next change trips over them. The F1 event-map bug survived rev 1 precisely because the WS payload coupling wasn't on the list — the expanded inventory is that lesson generalized. <span class="src">D2 framing + C2 mustFix 2 &amp; 6 + audit F15, F16, F28</span></td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2><span class="no">3</span>The <code>desktop/</code> file tree</h2>
+
+<pre><code>desktop/
+├── BLUEPRINT.html        # this document — the Phase-1 design record (normative until
+│                         #   CONTRACT.md ships on day 2, then the design history)
+├── CONTRACT.md           # THE binding short form from day 2: invariants I1–I8, state
+│                         #   table, probe rules, close/quit semantics, Cmd+0..5
+│                         #   no-shadow rule, the 9 cross-folder couplings + version-
+│                         #   skew/re-pack rule, pinned exact versions, smoke matrix
+├── README.md             # run/pack/test; one-server rule in one page; System
+│                         #   Settings notification allow; signature-vs-permission
+│                         #   failure triage; localStorage fresh-profile note (+ the
+│                         #   port-change caveat); log paths (/tmp/projectmanager.log
+│                         #   = launchd's; userData/logs/shell.log = ours)
+├── .gitignore            # node_modules/, dist/
+├── package.json          # "central-planner-desktop", private, ESM; main: main.js
+│                         #   ZERO runtime deps; devDeps: electron + @electron/packager
+│                         #   (both pinned EXACT); scripts: start / pack / test
+├── package-lock.json     # committed — reproducible packs (audit F22)
+├── main.js               # ~240 lines: single-instance lock, app lifecycle wiring,
+│                         #   BrowserWindow factory (sandbox, no preload,
+│                         #   backgroundThrottling:false, permission check+request
+│                         #   handlers), setWindowOpenHandler + will-navigate scheme
+│                         #   filter, will-prevent-unload dialog (reload/quit only),
+│                         #   custom menu (resetZoom → Cmd+Shift+0), close-hides /
+│                         #   activate-reshows / Cmd+Q-quits (no server signals exist),
+│                         #   window-bounds JSON persistence (display-validated,
+│                         #   atomic, debounced), powerMonitor resume hook
+├── serverlink.js         # ~240 lines, main-process only, dependency-injectable:
+│                         #   resolvePort() (CP_PORT → config.json via CP_ROOT-aware
+│                         #   discovery → 4242, validated, re-read per loop), probe()
+│                         #   → HEALTHY|FOREIGN|REFUSED|TIMEOUT, launchdLoaded(),
+│                         #   the single-flight reconcile loop (generation token),
+│                         #   notifier (native WebSocket, corrected event map,
+│                         #   snapshot reconciliation, persisted notify-state, 60 s
+│                         #   tick watchdog, focus+project suppression, 5s→60s capped
+│                         #   backoff), shellLog() (capped rotation)
+├── connecting.html       # static splash (file://), zero scripts, zero IPC, zero
+│                         #   external assets; variants (connecting / waiting for
+│                         #   launchd / server absent + start instructions / occupied
+│                         #   or foreign port) selected by query param; recovery is
+│                         #   the automatic probe loop, not a button
+├── icon.icns             # dock/app icon (+ icon.png for dev app.dock.setIcon)
+└── test/
+    └── lifecycle.test.mjs  # node --test: decision-table matrix, notifier event map +
+                            #   reconciliation + de-dupe persistence, watchdog, single-
+                            #   flight, did-fail-load filter, port/bounds validation —
+                            #   injected fakes, no Electron runtime, no billed paths (§8)</code></pre>
+
+<!-- ============================================================ -->
+<h2><span class="no">4</span>Main-process architecture: the state machine</h2>
+
+<div class="callout rule"><b>The rule above all rules:</b> the shell never starts, signals, restarts, or port-races any server. Phase 1 contains no spawn path — attach, wait, or refuse are the only verbs. And one coordinator: every lifecycle trigger (startup, did-fail-load, wake, retry) joins the single active reconcile loop; none starts a second (invariant I8).</div>
+
+<h3>Startup decision (attach-only)</h3>
+<div class="diagram">
+<svg viewBox="0 0 960 640" width="960" height="640" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="var(--ink-dim)"/>
+    </marker>
+  </defs>
+  <style>
+    .box { fill: var(--panel2); stroke: var(--line); stroke-width: 1.5; rx: 8; }
+    .box.good { stroke: var(--good); }
+    .box.bad { stroke: var(--bad); }
+    .box.warn { stroke: var(--warn); }
+    .lbl { fill: var(--ink); font-weight: 600; }
+    .sub { fill: var(--ink-dim); font-size: 11px; font-weight: 400; }
+    .edge { stroke: var(--ink-dim); stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+    .elbl { fill: var(--accent); font-size: 11.5px; font-weight: 600; }
+    .elbl2 { fill: var(--ink-dim); font-size: 11px; }
+  </style>
+
+  <!-- Lock -->
+  <rect class="box" x="330" y="14" width="300" height="52" rx="8"/>
+  <text class="lbl" x="480" y="36" text-anchor="middle">requestSingleInstanceLock()</text>
+  <text class="sub" x="480" y="54" text-anchor="middle">denied → quit; second-instance → focus existing window</text>
+
+  <line class="edge" x1="480" y1="66" x2="480" y2="96"/>
+
+  <!-- Resolve port -->
+  <rect class="box" x="330" y="98" width="300" height="52" rx="8"/>
+  <text class="lbl" x="480" y="120" text-anchor="middle">RESOLVE_PORT</text>
+  <text class="sub" x="480" y="138" text-anchor="middle">CP_PORT → config.json (CP_ROOT-aware) → 4242 · validated · re-read each loop</text>
+
+  <line class="edge" x1="480" y1="150" x2="480" y2="180"/>
+
+  <!-- Probe -->
+  <rect class="box" x="330" y="182" width="300" height="66" rx="8"/>
+  <text class="lbl" x="480" y="206" text-anchor="middle">PROBE</text>
+  <text class="sub" x="480" y="224" text-anchor="middle">GET /m/manifest.webmanifest · 1.5 s timeout</text>
+  <text class="sub" x="480" y="240" text-anchor="middle">classify: HEALTHY / FOREIGN / REFUSED / TIMEOUT</text>
+
+  <!-- HEALTHY -> ATTACHED -->
+  <path class="edge" d="M330 215 L170 215 L170 300"/>
+  <text class="elbl" x="180" y="208">HEALTHY</text>
+  <text class="elbl2" x="180" y="222">200 + name === "Central Planner"</text>
+  <rect class="box good" x="40" y="302" width="260" height="84" rx="8"/>
+  <text class="lbl" x="170" y="326" text-anchor="middle">ATTACHED</text>
+  <text class="sub" x="170" y="344" text-anchor="middle">loadURL http://127.0.0.1:PORT</text>
+  <text class="sub" x="170" y="360" text-anchor="middle">open the ONE notifier WS · reconcile missed</text>
+  <text class="sub" x="170" y="376" text-anchor="middle">banners from the snapshot · never touch server</text>
+
+  <!-- FOREIGN -->
+  <path class="edge" d="M480 248 L480 300"/>
+  <text class="elbl" x="490" y="272">FOREIGN / OCCUPIED</text>
+  <text class="elbl2" x="490" y="286">any other HTTP answer, or TCP accepts w/o HTTP</text>
+  <rect class="box bad" x="350" y="302" width="260" height="72" rx="8"/>
+  <text class="lbl" x="480" y="326" text-anchor="middle">BLOCKED_FOREIGN</text>
+  <text class="sub" x="480" y="344" text-anchor="middle">splash names the squatter + port + lsof hint</text>
+  <text class="sub" x="480" y="360" text-anchor="middle">probe loop continues · attach on first HEALTHY</text>
+
+  <!-- TIMEOUT self-loop -->
+  <path class="edge" d="M630 200 L700 200 L700 160 L632 186"/>
+  <text class="elbl" x="712" y="182">TIMEOUT</text>
+  <text class="elbl2" x="712" y="196">re-probe @ 5 s; TCP</text>
+  <text class="elbl2" x="712" y="210">accepts → OCCUPIED</text>
+  <text class="elbl2" x="712" y="224">(SIGSTOP'd-server case)</text>
+
+  <!-- REFUSED -> launchctl -->
+  <path class="edge" d="M630 236 L790 236 L790 300"/>
+  <text class="elbl" x="643" y="258">REFUSED</text>
+  <text class="elbl2" x="643" y="272">(ECONNREFUSED only)</text>
+  <rect class="box" x="660" y="302" width="260" height="60" rx="8"/>
+  <text class="lbl" x="790" y="326" text-anchor="middle">GATE: launchctl list</text>
+  <text class="sub" x="790" y="344" text-anchor="middle">local.projectmanager — exit code = job loaded?</text>
+
+  <!-- loaded -> WAIT_LAUNCHD -->
+  <path class="edge" d="M790 362 L790 420"/>
+  <text class="elbl" x="800" y="394">job loaded</text>
+  <rect class="box warn" x="660" y="422" width="260" height="86" rx="8"/>
+  <text class="lbl" x="790" y="446" text-anchor="middle">WAIT_LAUNCHD</text>
+  <text class="sub" x="790" y="464" text-anchor="middle">KeepAlive is respawning it — NEVER spawn</text>
+  <text class="sub" x="790" y="480" text-anchor="middle">splash · re-probe 1 s × 20 s, then 5 s forever</text>
+  <text class="sub" x="790" y="496" text-anchor="middle">splash shows /tmp/projectmanager.log</text>
+  <!-- WAIT -> rail -> ATTACHED -->
+  <path class="edge" d="M790 508 L790 530 L170 530 L170 386"/>
+  <text class="elbl" x="200" y="524">first HEALTHY → attach</text>
+
+  <!-- not loaded -> SERVER_ABSENT -->
+  <path class="edge" d="M720 362 L560 362 L560 420"/>
+  <text class="elbl" x="440" y="404">job NOT loaded</text>
+  <rect class="box warn" x="430" y="422" width="260" height="86" rx="8"/>
+  <text class="lbl" x="560" y="446" text-anchor="middle">SERVER_ABSENT</text>
+  <text class="sub" x="560" y="464" text-anchor="middle">NO SPAWN — splash with start instructions:</text>
+  <text class="sub" x="560" y="480" text-anchor="middle">cd app &amp;&amp; npm start · or load the launchd job</text>
+  <text class="sub" x="560" y="496" text-anchor="middle">probe loop continues @ 5 s</text>
+  <line x1="560" y1="508" x2="560" y2="529" stroke="var(--ink-dim)" stroke-width="1.5"/>
+
+  <!-- why-no-spawn footer -->
+  <rect class="box bad" x="40" y="556" width="880" height="60" rx="8"/>
+  <text class="lbl" x="480" y="580" text-anchor="middle">WHY NO SPAWN (audit F3) — the gap between any user-space check and a child's bind() cannot be closed,</text>
+  <text class="sub" x="480" y="598" text-anchor="middle">and the server runs its stranded-task sweep BEFORE listen with a non-exiting error handler (server.js:1146-1175) — a mis-spawned child corrupts</text>
+  <text class="sub" x="480" y="612" text-anchor="middle">live billed-task state. Spawning returns only in Phase 1.5, after the server binds first (precondition 1). Until then: attach, wait, or refuse.</text>
+</svg>
+</div>
+
+<h3>Running loop (after attach)</h3>
+<div class="diagram"><div class="runflow">
+  <div class="runbox"><b>Running</b>SPA loaded from the server. Shell does zero server management. Notifier WS listens (60 s tick watchdog); banners suppressed only when focused <em>on that project</em>. Heartbeat semantics preserved: <code>document.hasFocus()</code> tracks window focus, so an unfocused shell logs no time.</div>
+  <div class="runarrow">→</div>
+  <div class="runbox"><b>Server blips</b>Shell does <em>nothing</em>. SPA's own 3 s WS reconnect + launchd KeepAlive self-heal; drafts and view state survive. Notifier WS reconnects on 5 s→60 s capped backoff, drives no UI.</div>
+  <div class="runarrow">→</div>
+  <div class="runbox"><b>did-fail-load</b>Main-frame only; ERR_ABORTED and stale generations ignored (artifact iframes 404 routinely — F11): swap to <code>connecting.html</code>, join the single-flight probe loop (port re-resolved each cycle), <code>loadURL</code> back on first HEALTHY.</div>
+  <div class="runarrow">→</div>
+  <div class="runbox"><b>Sleep / wake</b><code>powerMonitor 'resume'</code>: kick notifier WS reconnect (skip backoff) + one immediate probe. Renderer heals itself — app.js already probes on window <code>focus</code>/<code>online</code>.</div>
+  <div class="runarrow">→</div>
+  <div class="runbox"><b>Close / Quit</b>Close hides silently — no dialog, nothing unloads, banners keep firing; dock click re-shows. Cmd+Q quits the shell and touches no server. <code>will-prevent-unload</code> → native draft dialog on reload and quit only (close never unloads — F5).</div>
+</div></div>
+
+<h3>The eight invariants (verbatim into CONTRACT.md)</h3>
+<ol class="inv">
+  <li>The shell never starts, kills, restarts, or signals any server process, and never mutates <code>launchctl</code> state — Phase 1 contains no code path that sends a signal or spawns a child.</li>
+  <li>Phase 1 ships no spawn path. The lifecycle's only verbs are attach, wait, and refuse; the spawn fallback exists only in Phase 1.5, gated on its five preconditions (§7).</li>
+  <li>Exactly one notifier WebSocket exists at any time, with reconnect backoff capped at 5 s→60 s and a 60 s silence watchdog; HTTP probing uses only <code>GET /m/manifest.webmanifest</code>; <code>POST /api/heartbeat</code>, <code>/api/state</code>-as-probe, and WS-connect-as-ping are forbidden.</li>
+  <li>The renderer holds zero privileges: no preload, no IPC, sandbox + contextIsolation on; permission check <em>and</em> request handlers deny by default, allowing only origin-pinned, main-frame <code>clipboard-sanitized-write</code>; all window-opens denied, with http/https/mailto routed to <code>shell.openExternal</code> and every other scheme dropped and logged.</li>
+  <li>No menu item ever binds an accelerator in Cmd+0..5; <code>resetZoom</code> lives on Cmd+Shift+0.</li>
+  <li>A live SPA is never reloaded by the shell; intervention happens only on main-frame, filtered <code>did-fail-load</code> (§2); close hides silently, and the draft dialog fires only on paths that actually unload (reload, quit).</li>
+  <li><code>http://127.0.0.1:&lt;port&gt;</code> in a browser and the phone PWA behave identically before, during, and after the shell runs — unconditionally, since the shell never owns the server.</li>
+  <li>At most one lifecycle reconcile loop is active at any moment: every trigger (startup, did-fail-load, wake, retry) joins the current generation or is dropped; a superseded generation's callbacks are inert.</li>
+</ol>
+<p class="small">Cross-folder couplings — the FULL inventory (audit F15), recorded in CONTRACT.md with the same-commit-update + re-pack rule (F16): (1) port precedence &amp; <code>CP_ROOT</code> config discovery (<code>app/lib/config.js:21-24, :50</code>); (2) <code>m/manifest.webmanifest</code>'s <code>name === "Central Planner"</code>; (3) launchd label <code>local.projectmanager</code>; (4) the notifier's event names + payload shapes (<code>session:permission(:resolved)</code>, <code>task:update</code>, <code>session:status</code>, the <code>state</code> snapshot); (5) init-only hash routing (app.js:10240-10253); (6) Cmd+0..5 page bindings; (7) the <code>beforeunload</code> draft guard; (8) Node ≥ 20; (9) the 25 s WS tick (events.js) the watchdog times against.</p>
+
+<!-- ============================================================ -->
+<h2><span class="no">5</span>Native integrations: Phase 1 vs deferred</h2>
+
+<div class="tablewrap"><table>
+  <tr><th>Feature</th><th>Value</th><th>Cost</th><th>Status</th></tr>
+  <tr><td>Own window, dock icon, Cmd+Tab identity (packaged ad-hoc .app)</td><td>The reason the shell exists; notification attribution and Spotlight come free with the bundle</td><td>0.5 d incl. icns + packager script</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td>Native notifications from the main-process WS (approval / question / sign-in / turn-failed / handoff)</td><td>The headline win: Claude-needs-you moments reach the OS even with the window hidden or closed</td><td>~1 d (corrected event map + snapshot reconciliation + persisted de-dupe)</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td>Notifications continue with window <em>closed</em> (close ≠ quit, WS lives in main)</td><td>Turns the app into ambient infrastructure — impossible in a tab</td><td>~0 (architecture consequence)</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td><code>backgroundThrottling:false</code></td><td>Heartbeat + WS stale-check at full rate while hidden — the anti-throttling win</td><td>1 line + battery measurement (§8)</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td>Single-instance lock</td><td>Relaunch focuses instead of duplicating windows/sockets</td><td>~10 lines</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td>Focus + project-aware banner suppression</td><td>No spam while already watching <em>that project</em> — a focused window on a different project still banners (F14)</td><td><code>isFocused()</code> + <code>getURL()</code> hash check</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td>Native draft-guard dialog (<code>will-prevent-unload</code>)</td><td>Correctness: reload/quit never silently no-op — close hides and never prompts (F5)</td><td>~10 lines</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td>Custom menu preserving Cmd+0..5</td><td>Muscle-memory view switching survives</td><td>~30 lines</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td>Window-bounds persistence (hand-rolled JSON)</td><td>Reopens where you left it — saved bounds validated against connected displays, off-screen re-centers on primary (F24); atomic write, debounced</td><td>~25 lines</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td>Notification click → focus/re-show the window (a window created fresh loads <code>#&lt;projectKey&gt;</code>)</td><td>Honest scope (F8): app/ has no runtime hash routing, so a live window keeps its current view — true one-click deep links await the Phase-2 <code>hashchange</code> diff</td><td>~10 lines</td><td><span class="pill p1">Phase 1</span></td></tr>
+  <tr><td>Dock badge: count of tasks waiting on a human</td><td>Glanceable "Claude needs you N times" — but badge-accuracy reconciliation (snapshot reseeding, stale requestId expiry) is a small project of its own</td><td>~15 lines naive; real cost is accuracy machinery</td><td><span class="pill def">Phase 2 — first add</span></td></tr>
+  <tr><td>Task-level deep link into a <em>live</em> window</td><td>High — but needs the ~10-line <code>hashchange</code> route in app/ (the one flagged legitimate diff)</td><td>0.5 d + app/ diff</td><td><span class="pill def">Phase 2</span></td></tr>
+  <tr><td>Dock bounce on approval</td><td>Salience, but obnoxious with agent teams issuing several requests/min</td><td>1 line</td><td><span class="pill def">Phase 2, opt-in</span></td></tr>
+  <tr><td>Tray / menu-bar status item</td><td>Marginal over dock badge for a dock-resident app</td><td>0.5–1 d</td><td><span class="pill def">Phase 2+</span></td></tr>
+  <tr><td>Always-on-top, login item, global summon shortcut, multi-window, dock jump-list</td><td>Nice-to-haves; each drags prefs/menu/README surface behind it</td><td>various</td><td><span class="pill def">Phase 2+</span></td></tr>
+  <tr><td>Mic button hidden where recognition can't work (the one <code>app/</code> diff)</td><td>No dead primary control in the shell (F25); also correct behavior for any non-Chrome browser</td><td>~2 lines in app/</td><td><span class="pill p1">Phase 1</span></td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2><span class="no">6</span>Known platform gotchas &amp; chosen mitigations</h2>
+
+<div class="tablewrap"><table>
+  <tr><th style="width:4%">#</th><th style="width:26%">Gotcha</th><th>Mechanism (verified)</th><th style="width:32%">Chosen mitigation</th></tr>
+  <tr><td>G1</td><td>Mic dictation dies in Electron; TTS survives</td><td><code>webkitSpeechRecognition</code> exists but streams to Google's speech service with keys Electron doesn't ship — fails at runtime with a misleading HTTPS toast (app.js:8161, 8223-8230). <code>speechSynthesis</code> uses the macOS voice stack and works. Constructor presence alone is therefore NOT a valid feature-check.</td><td>The one accepted <code>app/</code> diff (F25): the mic renders only when <code>SR_CTOR</code> exists AND the UA isn't Electron (~2 lines). Voice replies/karaoke untouched; browser + phone PWA remain the dictation paths; <code>disable-speech-api</code> stays a Phase-2 experiment (it kills TTS as specified).</td></tr>
+  <tr><td>G2</td><td>Every link click spawns an Electron child window</td><td>Delegated handler <code>window.open</code>s every left-clicked <code>a[href]</code> (app.js:1732-1740), including LLM-generated markdown hrefs; OAuth flows <code>window.open</code> external auth pages (8092, 8909).</td><td><code>setWindowOpenHandler</code> deny-all; http/https/mailto → <code>shell.openExternal</code> (same-origin included — that's the labeled intent); other schemes dropped. <code>will-navigate</code> origin-pinned.</td></tr>
+  <tr><td>G3</td><td>Cmd+0 stolen by the default menu</td><td>Default View menu binds <code>resetZoom</code> to CmdOrCtrl+0; accelerators fire before page keydown, shadowing the view switcher (app.js:10222-10228).</td><td>Custom menu; <code>resetZoom</code> → Cmd+Shift+0; CONTRACT invariant I5; verified on the pinned Electron day 1.</td></tr>
+  <tr><td>G4</td><td>Reload/quit silently no-op when drafts exist — and close must not prompt</td><td><code>beforeunload</code> guard preventDefaults when drafts or dirty HTML edits exist (app.js:10063-10066); Electron shows no native dialog. And Electron's <code>close</code> event precedes any unload — a hide-on-close handler means no unload ever happens on close, so a close-path draft dialog is unimplementable as well as unwanted (F5).</td><td><code>will-prevent-unload</code> → native dialog on reload + quit. Close hides silently — nothing is lost, the page lives on.</td></tr>
+  <tr><td>G5</td><td>Background throttling — the thing we came to kill</td><td>Electron throttles hidden/occluded windows by default, degrading the 15 s stale-check and 30 s heartbeat to ~1/min — exactly what the SPA fights in Chrome.</td><td><code>backgroundThrottling:false</code>. Time-ledger stays honest: <code>document.hasFocus()</code> gates heartbeats and maps to real window focus. Battery cost measured under a streaming turn (§8).</td></tr>
+  <tr><td>G6</td><td>Fresh profile = one-time localStorage loss</td><td>Electron's own <code>userData</code> partition doesn't see Chrome's localStorage: theme, pane widths, per-task tabs, open viewers, voice prefs reset once. Drafts are in-memory only — nothing worse at risk.</td><td>Documented prominently in README; no migration tooling (out of proportion for a one-time two-minute cost).</td></tr>
+  <tr><td>G7</td><td>Notification identity/delivery for ad-hoc-signed builds</td><td>Dev-mode banners attribute to "Electron"; macOS ties notification permission to the bundle id and may drop banners from apps with signature problems — and a signature failure looks identical to user-denied permission, while System Settings can only fix the latter (F17).</td><td>Pack <em>before</em> testing (stable bundle id); day-2 gates: <code>codesign --verify --deep --strict</code> passes AND a banner visibly appears from the packaged app; <code>Notification 'failed'</code> listener logs to shell.log; README triages signature-vs-permission separately.</td></tr>
+  <tr><td>G8</td><td>EADDRINUSE zombie is not inert</td><td>See §4 footer: error handler never exits; pre-listen boot sweeps rewrite live task files.</td><td>Phase 1: no spawn path exists — the hazard is unreachable from the shell (I2). Phase 1.5 precondition 1 is the ~3-line server fix (bind before side effects, exit on listen error) that removes the hazard at the source instead of gating around it.</td></tr>
+  <tr><td>G9</td><td>WS connects are expensive server-side</td><td>Every connect triggers a full snapshot send plus throttled auth/codex subprocess spawns (server.js:1091-1097).</td><td>Single persistent socket, 5 s→60 s capped backoff, connects-per-minute bound asserted in tests (I3).</td></tr>
+  <tr><td>G10</td><td>Half-open sockets after sleep — or after network flips that fire no resume event</td><td>Post-wake sockets stay OPEN but eat broadcasts — the case the server's 25 s tick exists for. <code>powerMonitor 'resume'</code> alone misses interface changes (Wi-Fi hop, VPN toggle) that also half-open the socket (F13).</td><td>The notifier copies the renderer's watchdog rule: &gt;60 s without any frame → terminate + reconnect. <code>powerMonitor 'resume'</code> additionally force-kicks reconnect + one probe; renderer already self-heals on <code>focus</code>/<code>online</code>.</td></tr>
+  <tr><td>G11</td><td>Port changed while shell runs</td><td>Static capture would hammer the old port forever — and a HEALTHY loaded SPA never fires <code>did-fail-load</code>, so it keeps talking to its old origin regardless (F18). A new port is also a new browser origin → separate localStorage (one more one-time view-state reset).</td><td>Port re-resolved + validated (integer 1..65535, CP_ROOT-aware config discovery) on every probe-loop entry; the loaded-SPA limit and the localStorage caveat live in README — a manual Cmd+R after a port change is the accepted recovery.</td></tr>
+  <tr><td>G12</td><td>Artifact iframes fire <code>did-fail-load</code></td><td>The dashboard embeds artifact/PDF iframes that 404 or abort routinely (deleted artifacts, superseded loads); Electron reports frame failures with an <code>isMainFrame</code> flag (F11).</td><td>The recovery handler filters: main frame only; <code>ERR_ABORTED</code>, stale generations, and expected <code>connecting.html</code> transitions ignored — with a dedicated regression test (§8). Unfiltered, a deleted artifact would splash over a live dashboard.</td></tr>
+  <tr><td>G13</td><td>Packaged shell drifts from a self-updating server</td><td>The dashboard's Update button updates the repo/server but never rebuilds the packaged .app (F16); an old shell can outlive many server updates while its couplings shift under it.</td><td>The CONTRACT.md couplings inventory is the tripwire: an app/ change touching it re-packs + re-smokes in the same change; the shell logs its own version + pinned Electron at startup for diagnosis.</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2><span class="no">7</span>Build plan</h2>
+<p>Ordered, each step with an acceptance criterion. Day 1 ends with a usable daily driver. The spawn fallback is not in this plan at all — it is Phase 1.5, listed after day 3 with its entry preconditions.</p>
+
+<div class="day">
+<h3>Day 1 — the attached daily driver (no spawn path yet)</h3>
+<ol>
+  <li>Scaffold <code>desktop/</code> package: package.json (pinned exact Electron + @electron/packager, zero runtime deps), package-lock.json committed, .gitignore, npm scripts.
+    <span class="ac"><code>npm start</code> opens a window; <code>npm ls --omit=dev</code> shows zero deps.</span></li>
+  <li>Single-instance lock + window factory (sandbox, no preload, permission check+request handlers, <code>backgroundThrottling:false</code>) + display-validated bounds persistence.
+    <span class="ac">Second <code>npm start</code> focuses the first window; bounds survive relaunch; bounds saved on a now-disconnected display re-center on the primary; a copy button on the dashboard still copies; a permission request from an artifact iframe is denied.</span></li>
+  <li><code>serverlink.js</code> attach path: resolvePort (CP_ROOT-aware, validated), probe/classify, launchctl gate, WAIT_LAUNCHD + SERVER_ABSENT loops, single-flight reconcile with generation token, <code>connecting.html</code> splash variants, filtered did-fail-load recovery.
+    <span class="ac">Kill the server (<code>launchctl kickstart -k</code>): already-loaded SPA self-heals untouched; Cmd+R during the outage lands on the splash and auto-returns on respawn; a deleted artifact's iframe 404 changes nothing.</span></li>
+  <li>Link routing: <code>setWindowOpenHandler</code> + <code>will-navigate</code> with the scheme filter.
+    <span class="ac">A dashboard link opens in the default browser; a crafted <code>file:///Applications</code> markdown link does nothing (logged); Claude OAuth "sign in" reaches the browser.</span></li>
+  <li>Custom menu with <code>resetZoom</code> rebound; verify on the pinned Electron that the default menu really shadows Cmd+0 and the rebind fixes it.
+    <span class="ac">Cmd+0 switches to overview; Cmd+1..5 switch projects; Cmd+Shift+0 resets zoom.</span></li>
+  <li><code>will-prevent-unload</code> native dialog (reload/quit only).
+    <span class="ac">With a draft in a composer, Cmd+R and Cmd+Q each show the dialog and cancel keeps the page; Cmd+W hides instantly with <em>no</em> dialog and the draft is intact on re-show.</span></li>
+  <li>Close-hides / activate-reshows / Cmd+Q-quits wiring.
+    <span class="ac">Red button hides; dock click restores with state intact; Cmd+Q exits and the launchd server PID is unchanged; a parallel Chrome tab and the phone PWA are demonstrably unaffected.</span></li>
+  <li>The one <code>app/</code> diff: gate the mic button on <code>SR_CTOR &amp;&amp; !/Electron/.test(navigator.userAgent)</code>.
+    <span class="ac">Mic absent in the shell; present in Chrome; voice replies (TTS) work in both.</span></li>
+</ol>
+<p class="small"><b>Day-1 exit bar:</b> Graham works in the shell instead of a tab for the evening.</p>
+</div>
+
+<div class="day">
+<h3>Day 2 — notifications, packaging, contract, tests</h3>
+<ol>
+  <li>Pack the .app first: the pack script (flattens packager output to <code>dist/</code>), ad-hoc signed, bundle id, icon.icns.
+    <span class="ac"><code>dist/Central Planner.app</code> launches from Finder with correct dock name + icon; <code>codesign --verify --deep --strict</code> passes.</span></li>
+  <li>Notifier: single WS, corrected event map (<code>session:permission(:resolved)</code>, <code>task:update</code> question/handoff transitions, <code>session:status</code> error/authNeeded), persisted notify-state, snapshot reconciliation, focus+project suppression, 60 s watchdog, capped backoff, click-to-focus, <code>Notification 'failed'</code> listener.
+    <span class="ac"><b>Gate:</b> from the packaged app with the window hidden, a staged <code>session:permission</code> AND a staged <code>task:update</code> question transition each produce a visible macOS banner; clicking focuses the window; no banner when focused on that project; shell restart re-fires nothing; a question staged while the notifier was down banners on reconnect (snapshot reseed); a delivery failure appears in shell.log. One-time System Settings allow documented.</span></li>
+  <li><code>powerMonitor</code> resume hook.
+    <span class="ac">Lid-close 2 min, reopen: a staged event notifies within ~5 s of wake.</span></li>
+  <li><code>test/lifecycle.test.mjs</code> (§8) green.
+    <span class="ac"><code>npm test</code> passes; backoff-bound test fails if the cap is removed.</span></li>
+  <li>Write <code>CONTRACT.md</code> (invariants I1–I8, state table, the full 9-coupling inventory + re-pack rule, pinned exact versions, smoke matrix) and <code>README.md</code> (G6 localStorage note + port-change caveat, G1 mic note, G7 signature-vs-permission triage). From this point CONTRACT.md is the sole binding document (F28).
+    <span class="ac">A reader can run, pack, and reason about the lifecycle from these two files alone.</span></li>
+</ol>
+</div>
+
+<div class="day">
+<h3>Day 3 — hardening + smoke matrix</h3>
+<ol>
+  <li>Shell log: capped rotation, all lifecycle/notification/scheme events; startup line logs shell version + pinned Electron.
+    <span class="ac">Log exists after a Finder launch; a dropped <code>file://</code> link and a suppressed banner both appear in it.</span></li>
+  <li>Manual smoke matrix (from CONTRACT.md): launchctl kickstart mid-use; sleep/wake notify; draft-guard on reload and quit; close-hides-silently; Cmd+0..5; foreign squatter (<code>python3 -m http.server 4242</code> on the port) → splash, attach after freeing; <b>SIGSTOP the server</b> → deterministic TIMEOUT→OCCUPIED classification (F26 — replaces the flaky "large fetch" trick), SIGCONT → recovery; localStorage first-run note sanity.
+    <span class="ac">All rows checked off and initialed in CONTRACT.md.</span></li>
+  <li>Battery/energy measurement: a streaming turn with the window occluded, on battery, ~10 min; record Activity Monitor energy impact in CONTRACT.md.
+    <span class="ac">Number recorded; if egregious, a Phase-2 "throttle-when-hidden-unless-streaming" note is filed — not fixed now.</span></li>
+</ol>
+</div>
+
+<div class="day">
+<h3>Phase 1.5 — the spawn fallback (deferred; unscheduled)</h3>
+<p class="small">Entry preconditions, each retiring the audit finding that removed spawn from Phase 1 — ALL must land before any spawn code is written:</p>
+<ol>
+  <li><b>Server binds before side effects</b> (~3-line <code>app/server.js</code> reorder: <code>listen</code> ahead of the sweeps, exit on listen error) — retires F3's corruption race at the source.</li>
+  <li><b>Serialized spawn coordinator</b>: single-flight, generation token, <code>expectedExit</code>/<code>quitting</code> flags, idempotent terminal states — retires F7's double-spawn and re-entry races (timeout-kill → exit-handler respawn; Cmd+Q racing the exit handler).</li>
+  <li><b>Packaged repo locator</b>: repo path persisted to <code>userData</code> (written when launched from a repo checkout; user-editable), never <code>__dirname</code> arithmetic — retires F4.</li>
+  <li><b>Orphan policy</b>: a child that outlives a crashed shell is detected (recorded child PID + start-time guard + identity probe), documented, and manually recoverable — retires F19.</li>
+  <li><b>Quit protection over ALL active work</b> — sessions, runs, jobs, texfix from the snapshot, not task records alone — retires F9 (and drops rev 1's "never data loss" overclaim: killing a mid-write script can corrupt work).</li>
+</ol>
+<p class="small">The rev-1 spawn design carries forward as the starting point (appendix D): three-gate ECONNREFUSED-only precondition, EADDRINUSE stderr watch, 15 s budget kill, SIGTERM→3s→SIGKILL to own child only, plist PATH mirror, real-node-first resolution, ownership-flip-via-full-re-decision, second-death-in-60s stop.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2><span class="no">8</span>Test plan</h2>
+<p>Smallest meaningful, matching the repo's <code>node --test</code> culture. The shell's safety-critical core is a pure decision table with two injectable inputs — that is what gets automated. Billing safety is trivial: the shell never calls any <code>/api</code> mutation route (CP_NO_BILLED spirit honored by construction).</p>
+<ul>
+  <li><b><code>test/lifecycle.test.mjs</code></b> (<code>node --test</code>, no Electron runtime — <code>serverlink.js</code> takes its probe/launchctl/ws/clock functions as injectable deps):
+    <ul>
+      <li><b>Decision matrix:</b> probe ∈ {HEALTHY, FOREIGN, REFUSED, TIMEOUT} × launchctl ∈ {loaded, not} → asserted states {ATTACH, WAIT_LAUNCHD, SERVER_ABSENT, BLOCKED/OCCUPIED}; no input combination reaches a spawn — there is none to reach.</li>
+      <li><b>Notifier event map (the F1 regression, pinned forever):</b> against a scripted fake WS feed — <code>session:permission</code> banners once and clears on <code>:resolved</code>; a <code>task:update</code> question null→text banners, same-text again doesn't, a later different question does; <code>handoff</code> newly set banners once; <code>session:status</code> error/authNeeded banner; <code>question</code>/<code>handoff</code> keys appearing on a <code>session:status</code> payload are IGNORED.</li>
+      <li><b>Reconciliation + persistence:</b> a snapshot containing an unnotified waiting question fires exactly one banner; restart with the same persisted notify-state fires none; an approval absent from the snapshot never resurrects (best-effort, documented).</li>
+      <li><b>Watchdog + backoff:</b> a silent socket &gt; 60 s (fake clock) → terminate + reconnect; a flapping stub server → ≤ N connects/minute (fails if the cap is ever removed).</li>
+      <li><b>Single-flight:</b> concurrent triggers (startup + did-fail-load + resume) yield exactly one reconcile loop; a superseded generation's completion is inert.</li>
+      <li><b>Filters + parsing:</b> did-fail-load with <code>isMainFrame:false</code> or <code>ERR_ABORTED</code> → no intervention; port values <code>"abc"</code>/<code>0</code>/<code>70000</code> fall through with a log; identity probe classifies wrong-name / 404 / non-JSON as FOREIGN; off-screen saved bounds re-center.</li>
+    </ul></li>
+  <li><b>Manual smoke matrix</b> lives in CONTRACT.md, not CI (packaged-app concerns can't be automated cheaply): packaged banner + codesign verify (day-2 gates), Cmd+0..5, draft-guard on reload/quit, close-hides-silently, sleep/wake notify, kickstart mid-use, foreign squatter, SIGSTOP/SIGCONT probe classification, battery measurement, localStorage first-run note.</li>
+  <li><b>Non-goals:</b> no Playwright/Electron-driver harness, no UI screenshot tests, no billed-route exercise of any kind.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2><span class="no">9</span>Risk register</h2>
+
+<div class="tablewrap"><table>
+  <tr><th style="width:4%">#</th><th style="width:34%">Risk</th><th style="width:12%">Likelihood</th><th>Response</th></tr>
+  <tr><td>R1</td><td>macOS drops notifications from the ad-hoc-signed app — and a signature problem looks identical to user-denied permission</td><td>Medium</td><td>Day-2 gates: <code>codesign --verify</code> passes AND a banner visibly appears from the packaged app; <code>Notification 'failed'</code> logged to shell.log; README triages the two failure kinds separately; permanent fix is Phase-5 signing.</td></tr>
+  <tr><td>R2</td><td>Native WebSocket missing (pinned Electron too old)</td><td>Low</td><td>Pin the exact current stable on day 1 (far past the ≥35 floor); if ever forced lower, adding <code>ws</code> is a dependency concession, not a design change — recorded in CONTRACT.md.</td></tr>
+  <tr><td>R3</td><td>Notifier backoff bug → reconnect storm against a flapping server (each connect = snapshot + subprocess spawns)</td><td>Low</td><td>Single-socket + cap + watchdog are invariants (I3); connects-per-minute bound is a failing test, not a hope. Pre-existing <code>spawn EBADF</code> noise in the launchd log is documented as unrelated — do not chase during dev.</td></tr>
+  <tr><td>R4</td><td><code>backgroundThrottling:false</code> energy cost during hidden streaming turns on battery</td><td>Medium</td><td>Measured explicitly on day 3 under the real workload (streaming turn, occluded window, battery) and the number recorded; any mitigation is a named Phase-2 item.</td></tr>
+  <tr><td>R5</td><td>An <code>app/</code> change to any recorded coupling breaks the shell silently</td><td>Medium</td><td>The full 9-item couplings inventory in CONTRACT.md with the same-commit-update + re-pack rule; rev 1's F1 event-map bug is the standing proof of why the list must be complete.</td></tr>
+  <tr><td>R6</td><td>An approval fires while the notifier socket is down and never reaches the desktop</td><td>Accepted</td><td>Pending approvals aren't in the snapshot (sessions.js:1792-1800) — irrecoverable without an app/-side attention model (recorded as a Phase-2 candidate). ntfy phone push remains the durable channel, and the approval card is waiting in the SPA on next look.</td></tr>
+  <tr><td>R7</td><td>Packaged shell version-skews against a self-updated server</td><td>Medium over time</td><td>G13: the couplings tripwire + re-pack rule; the shell logs its version at startup; Phase-5 auto-update closes it permanently.</td></tr>
+  <tr><td>R8</td><td>Focus suppression hides a banner that was actually wanted (focused on the right project, looking away)</td><td>Low</td><td>Suppressed banners are still logged to shell.log; suppression is project-scoped, not window-scoped, so cross-project moments always banner.</td></tr>
+  <tr><td>R9</td><td>Electron version drift changes menu roles / WebSocket / throttling behavior</td><td>Low</td><td>Exact pin in package.json + CONTRACT.md; upgrades are deliberate events with the day-1 menu verification and day-2 notification gates re-run.</td></tr>
+  <tr><td>R10</td><td>Future macOS tightens Gatekeeper on unsigned local apps</td><td>Low (today)</td><td>Accepted for a self-built app on the builder's own machine; Phase-5 signing closes it permanently.</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2><span class="no">10</span>Appendix</h2>
+
+<h3>A. The three design angles — contributions and rejections</h3>
+<p class="small">Historical — rev 1's synthesis record. Spawn-related "adoptions" listed here were subsequently moved to Phase 1.5 by the audit (appendix D).</p>
+<div class="tablewrap"><table>
+  <tr><th style="width:18%">Design</th><th style="width:44%">Adopted into this contract</th><th>Rejected (and why)</th></tr>
+  <tr><td><b>D1 — Minimal</b><br><span class="small">2 days, 4 files</span></td>
+    <td>The spine: file shape, zero runtime deps, no preload/IPC posture, native WebSocket transport, uniform scheme-filtered <code>openExternal</code>, custom menu / resetZoom fix, <code>will-prevent-unload</code> dialog, do-nothing-on-transient-death philosophy, close-hides semantics, hand-rolled bounds persistence, @electron/packager, honest cut list.</td>
+    <td>Its spawn gate (probe-timeout = down; no TCP/identity check — one blocked event loop away from spawning into an occupied port); the unsatisfiable "child exited" SPAWNING exit condition; ELECTRON_RUN_AS_NODE as primary runtime; no quit confirm; no test file; contract-as-README-section.</td></tr>
+  <tr><td><b>D2 — Lifecycle robustness</b><br><span class="small">5 days, 9 states</span></td>
+    <td>The identity probe (HEALTHY/FOREIGN/DOWN classification via manifest name); CONTRACT.md as a shipped review-gating file; the invariants list (adopted nearly verbatim); TOCTOU pre-spawn re-check; WAIT_LAUNCHD cadence; real-node-first spawn resolution; the owned-quit running-task confirm; the recorded cross-folder couplings.</td>
+    <td>The 9-state machine, DEGRADED tick-staleness monitoring (the shell never intervenes on a live page — nothing to monitor for); pidfile + orphan adoption (the portfolio's only literal kill-what-you-didn't-spawn vector via PID reuse); auto-respawn budgets; offline.html's preload/IPC bridge (reintroduced the surface the no-preload posture eliminates — for a status page); the <code>ws</code> dependency; the 5-day scope.</td></tr>
+  <tr><td><b>D3 — Native integration</b><br><span class="small">4.5 days, notifications-first</span></td>
+    <td>The raw TCP spawn gate (strongest of the three); the WS→notification mapping table mirroring the ntfy call sites; focus-aware suppression; close≠quit windowless notifications; fresh-window <code>#&lt;projectKey&gt;</code> deep link; <code>lifecycle.test.mjs</code> shape; pack-before-testing-notifications ordering; the flagged Phase-2 app/ diff (hashchange route).</td>
+    <td><code>disable-speech-api</code> as primary mic fix (verified to kill TTS too — its own red line); blanket deny-all permissions (breaks clipboard; fixed with allowlist); dock badge + accuracy machinery, bounce, always-on-top, prefs.js tail (scope); the self-contradictory "ownership never flips" invariant (resolved via full re-decision on child exit); the <code>ws</code> dependency.</td></tr>
+</table></div>
+
+<h3>B. Critic must-fix disposition — none silently dropped</h3>
+<p class="small">Historical — rev 1's disposition, kept for provenance. Rows referencing the spawn path (C1-1/2/3/7/8, C2-1) now apply to Phase 1.5's preserved design, not to Phase 1; invariant numbers cited below are rev 1's.</p>
+<div class="tablewrap"><table>
+  <tr><th style="width:6%">Src</th><th style="width:52%">Must-fix</th><th>Disposition</th></tr>
+  <tr><td>C1-1</td><td>ECONNREFUSED-only spawn evidence; TCP gate + identity check</td><td><span class="pill p1">Incorporated</span> §2 attach-or-spawn; invariant I2.</td></tr>
+  <tr><td>C1-2</td><td>EADDRINUSE stderr watch + kill-on-budget-expiry</td><td><span class="pill p1">Incorporated</span> §2 post-spawn supervision; invariant I3.</td></tr>
+  <tr><td>C1-3</td><td>Owned-quit running-task confirm</td><td><span class="pill p1">Incorporated</span> §2 quit semantics — kept over C2's cut list (10 lines guarding a live billed turn).</td></tr>
+  <tr><td>C1-4</td><td>Scheme-allowlist every <code>openExternal</code></td><td><span class="pill p1">Incorporated</span> §2 routing; invariant I5.</td></tr>
+  <tr><td>C1-5</td><td>Drop <code>disable-speech-api</code> as primary mic mitigation</td><td><span class="pill p1">Incorporated</span> dead mic button ships; switch is a Phase-2 experiment only.</td></tr>
+  <tr><td>C1-6</td><td>Allowlist <code>clipboard-sanitized-write</code> if deny-all ships</td><td><span class="pill p1">Incorporated</span> §2 security posture.</td></tr>
+  <tr><td>C1-7</td><td>Cut or fix orphan adoption (PID-reuse kill hazard)</td><td><span class="pill p1">Incorporated</span> cut entirely; no pidfiles exist.</td></tr>
+  <tr><td>C1-8</td><td>Resolve D3's ownership-invariant contradiction before code</td><td><span class="pill p1">Incorporated</span> ownership flips only via full re-decision on child exit (§2, §4).</td></tr>
+  <tr><td>C1-9</td><td>Document the localStorage profile reset</td><td><span class="pill p1">Incorporated</span> G6 + README requirement + smoke-matrix row.</td></tr>
+  <tr><td>C2-1</td><td>Refuse spawn when anything answers/accepts on the port</td><td><span class="pill p1">Incorporated</span> same as C1-1; OCCUPIED handling covers TCP-accepts-without-HTTP.</td></tr>
+  <tr><td>C2-2</td><td>Ship CONTRACT.md as a real review-gating file</td><td><span class="pill p1">Incorporated</span> §3 file tree; §4 invariants verbatim.</td></tr>
+  <tr><td>C2-3</td><td>Add <code>lifecycle.test.mjs</code></td><td><span class="pill p1">Incorporated</span> §8, with dependency injection so no Electron runtime is needed (fixes C1's testability note on D3).</td></tr>
+  <tr><td>C2-4</td><td>Real-node-first spawn; ELECTRON_RUN_AS_NODE demoted to fallback</td><td><span class="pill p1">Incorporated</span> §2 spawn runtime.</td></tr>
+  <tr><td>C2-5a</td><td>Build-time verification: menu resetZoom shadowing + rebind</td><td><span class="pill p1">Incorporated</span> day-1 step 5 acceptance criterion.</td></tr>
+  <tr><td>C2-5b</td><td>Build-time verification of <code>disable-speech-api</code> before signing the contract</td><td><span class="pill mod">Modified</span> the switch does not ship in Phase 1 at all (per C1-5), so the verification moves to the Phase-2 experiment where it gates that experiment. A conditional ship-if-test-passes clause would be an unresolved either/or in a contract.</td></tr>
+  <tr><td>C2-6</td><td>Pin exact Electron version; record in CONTRACT.md</td><td><span class="pill p1">Incorporated</span> §2 contract row; R9.</td></tr>
+  <tr><td>C2-7</td><td>Capped single-socket WS backoff + tested connects/min bound</td><td><span class="pill p1">Incorporated</span> invariant I4; §8 backoff test.</td></tr>
+  <tr><td>C2-8</td><td>Pack before testing notifications; README System-Settings note</td><td><span class="pill p1">Incorporated</span> day-2 ordering + gate; G7.</td></tr>
+  <tr><td>C1-x</td><td>Cross-cutting: battery cost of unthrottled hidden streaming; port-change re-read; localStorage; day-1 notification acceptance gate</td><td><span class="pill p1">Incorporated</span> §7 day-3 step 4 / G11 / G6 / day-2 gate respectively.</td></tr>
+  <tr><td>C2-x</td><td>Cross-cutting: eight converged invariants written as the contract; spawn path deferrable if day 3 slips</td><td><span class="pill p1">Incorporated</span> §4 invariants; §7 preamble.</td></tr>
+</table></div>
+
+<h3>C. The <code>app/</code> diffs — one taken, two recorded</h3>
+<ol>
+  <li><b>app.js mic feature-detect (~2 lines) — TAKEN in Phase 1</b> (§6 G1): the one deliberate <code>app/</code> diff.</li>
+  <li><b>server.js listen-reorder (~3 lines) — promoted to Phase 1.5 entry precondition 1:</b> bind the port before the stranded-task sweep and exit on listen error. Spawning does not return without it.</li>
+  <li><b>app.js hashchange route (~10 lines) — Phase 2:</b> runtime hash routing to enable live-window task-level deep links from notification clicks (init-only routing exists today, app.js:10240-10253).</li>
+</ol>
+
+<h3>D. The 2026-08-07 audit — disposition</h3>
+<p class="small">An independent audit (<code>desktop/BLUEPRINT_AUDIT.txt</code>, 28 findings) reviewed rev 1; its central factual claims were re-verified against the working tree before adoption (event payloads, hashchange count, snapshot contents, server startup order, permission-event names). This revision keeps the findings that were true and load-bearing; the rest are recorded here so nothing is silently dropped.</p>
+<div class="tablewrap"><table>
+  <tr><th style="width:34%">Adopted — reshaped this revision</th><th>Where it landed</th></tr>
+  <tr><td>F1 — notification event map was factually wrong (question/handoff never ride <code>session:status</code>)</td><td>§2 notification row rewritten; pinned-forever regression in §8; the coupling added to the F15 inventory</td></tr>
+  <tr><td>F2 — WS channel is lossy; zero-app-change delivery can't be guaranteed</td><td>Explicit best-effort semantics + snapshot reconciliation + persisted notify-state (§2); R6</td></tr>
+  <tr><td>F3 — spawn TOCTOU un-closable from user space; damage precedes detection</td><td>Spawn removed from Phase 1; Phase 1.5 precondition 1 (server binds first)</td></tr>
+  <tr><td>F4 — packaged repo discovery broken (<code>Resources/app</code>, no Finder env)</td><td>Phase 1.5 precondition 3 (persisted locator)</td></tr>
+  <tr><td>F5 — <code>close</code> precedes unload; close-path draft dialog unimplementable</td><td>Close hides silently; guard on reload/quit only (§2, G4, I6, day-1 steps)</td></tr>
+  <tr><td>F6 — owned-quit contradicted the browser/PWA invariant</td><td>Moot under attach-only; I7 now holds unconditionally</td></tr>
+  <tr><td>F7 — lifecycle needs serialization</td><td>Single-flight reconcile + generation token (I8, §2, §8); full coordinator spec is Phase 1.5 precondition 2</td></tr>
+  <tr><td>F8 — notification clicks can't deep-link a live window</td><td>Claim demoted honestly (§2, §5); hashchange diff stays the Phase-2 fix</td></tr>
+  <tr><td>F9 / F19 — quit scope too narrow; orphaned-child hazard</td><td>Phase 1.5 preconditions 5 and 4; rev 1's "never data loss" overclaim dropped</td></tr>
+  <tr><td>F10–F18, F21–F24, F26 — permission handlers, iframe-filtered did-fail-load, notifier state rules, watchdog, suppression scope, couplings inventory, version skew, signing honesty, port rules, exact pins, packaging reproducibility, shell log, bounds recovery, deterministic tests</td><td>§2, §4, §6, §7, §8 — each marked <span class="src">audit F#</span> at its site</td></tr>
+  <tr><td>F25 — dead mic button unacceptable</td><td>The one <code>app/</code> diff, taken (G1, §5, day-1 step 8)</td></tr>
+  <tr><td>F27 — 3-day estimate not credible for the full contract</td><td>3 days now covers attach-only in full; spawn unscheduled</td></tr>
+  <tr><td>F28 — two normative documents will drift</td><td>CONTRACT.md becomes the sole binding gate on day 2; this file becomes the design record</td></tr>
+</table></div>
+<div class="tablewrap"><table>
+  <tr><th style="width:34%">Not adopted / deferred — with reasons</th><th>Why</th></tr>
+  <tr><td>F20 — identity probe identifies the product, not the instance or a protocol version</td><td>True but low-stakes for attach-only on localhost: any healthy Central Planner on your port is yours. A version field in the probe response needs an <code>app/</code> change; recorded as a Phase-2 candidate. The practical skew risk is covered by the F16 tripwire (G13).</td></tr>
+  <tr><td>F14 — task-level suppression accuracy</td><td>Project-level accuracy adopted zero-IPC via <code>getURL()</code>'s hash; task-level needs a routing bridge (preload/IPC or URL writes) that breaks the no-preload posture for marginal gain. Suppressed banners are logged.</td></tr>
+  <tr><td>F2's full fix — a durable attention/event model in <code>app/</code></td><td>Real server surface (persisted attention events, replay, acks) — recorded as a Phase-2 candidate. Phase 1 ships explicit best-effort + ntfy as the durable channel instead of quietly promising delivery it can't make.</td></tr>
+  <tr><td>F21's version number</td><td>The principle (pin exact, not "≥35") is adopted; the specific current-stable number is deliberately not written here — it is recorded in package.json + CONTRACT.md at pin time on day 1.</td></tr>
+  <tr><td>Rev-1 spawn machinery (appendix A/B rejections stand)</td><td>Preserved, not deleted: it is Phase 1.5's starting design, to be rebuilt on top of the five preconditions.</td></tr>
+</table></div>
+
+<p class="small" style="margin-top:40px; border-top: 1px solid var(--line); padding-top: 14px;">
+  Central Planner desktop shell — Phase 1 contract · 2026-08-07 · <b>rev 2</b> · Synthesized from three designs and two critiques, then hardened against the independent audit (<code>desktop/BLUEPRINT_AUDIT.txt</code>) with every adopted claim re-verified against the working tree. Binding until day 2, when <code>desktop/CONTRACT.md</code> takes over as the sole normative document.
+</p>
+
+</div>
+</body>
+</html>

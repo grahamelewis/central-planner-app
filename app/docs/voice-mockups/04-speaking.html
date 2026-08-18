@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice mockup 04 — Claude speaks</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .zoomWrap{ max-width:880px; margin:14px auto; padding:0 24px; }
+  .zoom{ position:relative; border:1px solid var(--ov22); border-radius:16px; overflow:hidden;
+    background:var(--well); box-shadow:0 30px 80px #00000088; }
+  .zoom .codeHalf{ position:relative; inset:auto; border:none; border-radius:0; }
+  .zoom .consoleBox{ min-height:380px; padding-bottom:76px; }
+  .stripWrap{ max-width:880px; margin:10px auto; padding:0 24px; }
+  .strip{ position:relative; border:1px solid var(--ov22); border-radius:16px; overflow:hidden;
+    background:var(--sess); box-shadow:0 20px 50px #00000066; padding-top:4px; }
+</style>
+</head>
+<body>
+
+<div class="mockHead">
+  <span class="crumb"><a href="index.html">← voice mockups</a> · 04 of 06</span>
+  <h1>Claude speaks <small>the console reads itself — sentence by sentence, karaoke-highlighted</small></h1>
+  <p>The turn just finished and voice is on, so Claude reads its answer aloud. Speech follows the
+     <b>≋ console</b> prose sentence-by-sentence with a purple wash on the line being spoken — the same
+     purple the console tab already owns. Tool chatter, thinking, code blocks and math are <b>never</b>
+     read; they're summarized in a spoken aside ("…skipping a results table…") or skipped.</p>
+</div>
+<div class="mockNav">
+  <a href="index.html">index</a>
+  <a href="01-composer-idle.html">01 idle</a>
+  <a href="02-listening.html">02 listening</a>
+  <a href="03-confirm.html">03 auto-send</a>
+  <a class="on" href="04-speaking.html">04 claude speaks</a>
+  <a href="05-handsfree-phone.html">05 phone hands-free</a>
+  <a href="06-settings.html">06 settings</a>
+</div>
+
+<div class="zoomWrap"><div class="zoom">
+  <div class="codeHalf">
+    <div class="ctabs">
+      <div class="ctab">estimation.jl</div>
+      <div class="ctab">shock_grid.jl</div>
+      <div class="ctab console on">≋ console</div>
+    </div>
+    <div class="consoleBox">
+      <div class="cseg cs-you"><div class="csTag csYou">YOU</div>
+        <div class="csMd"><p>Re-run the SMM estimation with the tighter shock grid and tell me whether
+          the wealth Gini moves.</p></div></div>
+      <div class="cseg"><div class="csTag">CLAUDE</div>
+        <div class="csMd">
+          <p>Done — 40 SMM iterations converged in 11 minutes.</p>
+          <div class="csTool"><b>⏺ Bash</b> julia --project scripts/run_smm.jl --grid tight
+            <span style="color:var(--faint)"> ⎿ converged · J = 8.1e-6</span></div>
+          <p>The re-estimation finished, and the answer is yes.
+            <span class="speakNow">The wealth Gini rises from 0.78 to 0.81 under the tighter grid,
+            driven almost entirely by the top decile.</span>
+            The persistence estimate ρ barely moves (0.966 → 0.968), so this is a discretization
+            effect, not a parameter shift. I've written the comparison to <code>results.md</code>
+            and regenerated figure 3 — the Lorenz curves now cross visibly at the 88th percentile.</p>
+          <p><strong>Worth deciding:</strong> keep the 251-node grid as the headline spec, or report
+            both and footnote the coarse grid? The referee's point 2 becomes easier under the former.</p>
+        </div>
+      </div>
+      <div class="speakPill">
+        <span class="wave purple" style="height:12px;"><i></i><i></i><i></i><i></i></span>
+        <span class="lbl">speaking</span>
+        <span style="color:var(--dim)">sentence 2 of 6 · Samantha</span>
+        <span class="ctl" title="pause">⏸</span>
+        <span class="ctl x" title="stop speaking">✕</span>
+      </div>
+    </div>
+  </div>
+  <span class="pin" style="left:36px; top:268px;">1</span>
+  <span class="pin" style="right:238px; bottom:20px;">2</span>
+</div></div>
+
+<div class="stripWrap"><div class="strip">
+  <div class="chat" style="position:relative; top:0;">
+    <div class="composer" style="margin-top:8px;">
+      <textarea rows="1" placeholder="Message Claude · Re-estimate SMM — Enter sends, ⇧Enter for a new line"></textarea>
+      <button class="micBtn speaking" title="Claude is speaking — press to talk (mutes playback)">🔊</button>
+      <button class="send">Send</button>
+    </div>
+    <div class="sessbar">
+      <span class="dropBtn">sonnet ▾</span>
+      <span class="dropBtn">co-op ▾</span>
+      <span class="webtog">web off</span>
+      <span class="voicetog on">🎙 voice on</span>
+      <span><b>44.6k tok</b> · 7 turns</span>
+    </div>
+  </div>
+  <span class="pin" style="right:148px; top:14px;">3</span>
+</div></div>
+
+<div class="notes" style="max-width:880px;">
+  <div class="nrow"><span class="nb">1</span><div class="nt">
+    <b>Karaoke highlight.</b> The sentence currently in the speaker gets a soft purple wash and underline —
+    you can glance at the screen and know exactly where the voice is, or look away entirely. Sentences are
+    the TTS chunking unit anyway (that's the low-latency streaming trick), so highlight and audio stay in
+    lockstep for free.</div></div>
+  <div class="nrow"><span class="nb">2</span><div class="nt">
+    <b>The speaking pill</b> floats over the console: live equalizer, position, voice name, pause and stop.
+    It's the only new floating chrome in the whole feature, and it exists only while audio is playing.
+    With <b>narrate progress</b> enabled (settings), the same pill appears mid-turn reading Claude's
+    interim updates between tool calls — the "colleague across the room" mode for long estimations.</div></div>
+  <div class="nrow"><span class="nb">3</span><div class="nt">
+    <b>The mic becomes the speaker control</b> while Claude talks: 🔊, purple. Pressing it (or Space)
+    <b>barges in</b> — playback ducks instantly and it starts listening. Barge-in stops the <i>voice</i>,
+    never the <i>work</i>; ⏹ stop remains the only thing that interrupts a running turn.</div></div>
+  <div class="nrow"><span class="nb">·</span><div class="nt">
+    Speak policy (settings, mockup 06): <b>final answers only</b> (default — speak when the turn ends) or
+    <b>narrate progress</b> (also read interim updates during the turn). Both strip markdown, read
+    <code>results.md</code> as "results dot em dee", and replace display math and tables with a short
+    spoken description.</div></div>
+</div>
+
+</body>
+</html>

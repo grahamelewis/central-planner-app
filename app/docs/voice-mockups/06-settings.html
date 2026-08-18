@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice mockup 06 — settings</title>
+<link rel="stylesheet" href="mock.css">
+<style>
+  .setWrap{ max-width:760px; margin:14px auto; padding:0 24px; }
+  .setCard{ background:var(--glass); border:1px solid var(--line); border-radius:18px;
+    backdrop-filter:blur(14px); padding:20px 22px; box-shadow:0 30px 80px #00000066; position:relative; }
+  .setH{ font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--mut);
+    font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
+  .setSub{ font-size:11.5px; color:var(--dim); line-height:1.65; margin-bottom:14px; }
+  .srow{ display:flex; align-items:center; gap:14px; padding:13px 2px; border-bottom:1px solid var(--ov08); }
+  .srow:last-child{ border-bottom:none; }
+  .srow .sl{ flex:1; min-width:0; }
+  .srow .sl b{ font-size:13px; font-weight:650; color:var(--ink); display:block; }
+  .srow .sl small{ font-size:11px; color:var(--dim); line-height:1.6; display:block; margin-top:3px; max-width:420px; }
+  .seg{ display:inline-flex; border:1px solid var(--ov22); border-radius:9px; overflow:hidden; flex-shrink:0; }
+  .seg span{ padding:6px 13px; font-size:11.5px; color:var(--dim); cursor:pointer; border-right:1px solid var(--ov14); }
+  .seg span:last-child{ border-right:none; }
+  .seg span.on{ background:var(--ink); color:var(--ink-inv); font-weight:700; }
+  .tgl{ width:38px; height:22px; border-radius:99px; background:var(--ov14); position:relative;
+    cursor:pointer; flex-shrink:0; border:1px solid var(--ov22); }
+  .tgl i{ position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%;
+    background:var(--dim); transition:all .15s; }
+  .tgl.on{ background:rgb(126 245 194 / 22%); border-color:rgb(126 245 194 / 35%); }
+  .tgl.on i{ left:18px; background:var(--green); }
+  .vsel{ display:inline-flex; align-items:center; gap:8px; }
+  .vsel .dropBtn{ height:26px; font-size:11px; padding:0 11px; }
+  .vsel .prev{ width:26px; height:26px; border-radius:7px; border:1px solid var(--ov22);
+    display:inline-flex; align-items:center; justify-content:center; color:var(--purple);
+    cursor:pointer; font-size:10px; }
+  .costNote{ margin-top:12px; padding:10px 13px; border:1px dashed rgb(245 213 126 / 35%);
+    background:rgb(245 213 126 / 5%); border-radius:10px; font-size:11px; color:var(--yellow); line-height:1.7; }
+  .costNote b{ color:var(--yellow); }
+  .costNote code{ font-family:ui-monospace,Menlo,monospace; font-size:10px; color:var(--ink);
+    background:var(--well); border:1px solid var(--line); border-radius:5px; padding:1px 6px; }
+</style>
+</head>
+<body>
+
+<div class="mockHead">
+  <span class="crumb"><a href="index.html">← voice mockups</a> · 06 of 06</span>
+  <h1>Settings › Voice <small>one card in the existing Settings view — voice, pace, and manners</small></h1>
+  <p>Voice gets one card in the Settings pane you already have (next to theme). Everything runs on the
+     <b>browser's built-in speech</b> — recognition and replies alike. No accounts, no API keys, no new
+     spend, nothing to install: the card is just manners and defaults. (If a better voice ever feels
+     necessary, an external engine could slot in here later — deliberately out of scope for now.)</p>
+</div>
+<div class="mockNav">
+  <a href="index.html">index</a>
+  <a href="01-composer-idle.html">01 idle</a>
+  <a href="02-listening.html">02 listening</a>
+  <a href="03-confirm.html">03 auto-send</a>
+  <a href="04-speaking.html">04 claude speaks</a>
+  <a class="on" href="06-settings.html">06 settings</a>
+</div>
+
+<div class="setWrap"><div class="setCard">
+  <div class="setH">🎙 VOICE</div>
+  <div class="setSub">Talk to task sessions and have Claude talk back. The mic is push-to-talk
+    (hold 🎙 or Space); these settings shape the rest.</div>
+
+  <div class="srow">
+    <div class="sl"><b>Voice replies</b>
+      <small>Default for new tasks — each task keeps its own 🎙 toggle in the session bar,
+        like web search.</small></div>
+    <span class="seg"><span class="on">off</span><span>on</span></span>
+  </div>
+
+  <div class="srow">
+    <div class="sl"><b>Voice</b>
+      <small>Picked from the voices installed on this device (the "enhanced" system voices sound
+        noticeably better — a one-time OS download). ▶ speaks a sample line.</small></div>
+    <span class="vsel"><span class="dropBtn">Samantha ▾</span><span class="prev">▶</span></span>
+  </div>
+
+  <div class="srow">
+    <div class="sl"><b>Speech rate</b>
+      <small>How fast Claude reads. Applies to replies only; recognition is unaffected.</small></div>
+    <span class="seg"><span>0.9×</span><span class="on">1×</span><span>1.2×</span><span>1.5×</span></span>
+  </div>
+
+  <div class="srow">
+    <div class="sl"><b>What gets spoken</b>
+      <small><b>Final answers</b> reads the result when a turn ends. <b>Narrate progress</b> also
+        reads Claude's interim updates between tool calls — the follow-along mode for long runs.
+        Code, tables and math are always summarized, never read.</small></div>
+    <span class="seg"><span class="on">final answers</span><span>narrate progress</span></span>
+  </div>
+
+  <div class="srow">
+    <div class="sl"><b>Auto-send pause</b>
+      <small>The beat between releasing the mic and the message sending. Hands-free surfaces
+        (phone) ignore this and send on release.</small></div>
+    <span class="seg"><span>0s</span><span class="on">3s</span><span>5s</span></span>
+  </div>
+
+  <div class="srow">
+    <div class="sl"><b>Barge-in</b>
+      <small>Pressing the mic while Claude speaks always stops playback. This never interrupts the
+        running turn — ⏹ stop stays the only thing that does.</small></div>
+    <span class="tgl on"><i></i></span>
+  </div>
+
+  <div class="costNote"><b>Cost & privacy.</b> Voice itself is <b>free</b> — no external API, no key,
+    nothing new in the ledger; the only spend a voice message causes is the ordinary Claude turn it
+    sends. Replies are synthesized on this device. One honest caveat: in Chrome, speech
+    <i>recognition</i> routes mic audio through Google's speech service (Safari can do it on-device) —
+    worth knowing, and another reason the mic is push-to-talk rather than always-on.</div>
+</div></div>
+
+<div class="notes" style="max-width:760px;">
+  <div class="nrow"><span class="nb">·</span><div class="nt">
+    <b>Where it lives:</b> global defaults here; the per-task <code>voice on/off</code> chip in the
+    session bar overrides per task (mockup 01). That mirrors how model/permission dropdowns already
+    split global-vs-task.</div></div>
+  <div class="nrow"><span class="nb">·</span><div class="nt">
+    <b>Remote note surfaced in-place:</b> if the page is loaded over plain HTTP from a non-localhost
+    address, this card shows an amber banner — "mic needs HTTPS — use your tailscale serve URL" —
+    instead of a silently dead mic button.</div></div>
+</div>
+
+</body>
+</html>

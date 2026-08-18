@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>raw | formatted fence toggle — scheme + mockups</title>
+<style>
+  :root{ --bg:#eceef5; --panel:#f7f8fc; --ink:#1c1e26; --mut:#4a4e5c; --dim:#8a8fa3; --line:#dcdee8;
+    --green:#0e9f6e; --purple:#7c5cff; --yellow:#b7791f; --well:#ffffff; --chip:#e7e9f2; }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#15161c; --panel:#1d1f27; --ink:#e8e9ee; --mut:#b3b7c4; --dim:#767b8c; --line:#2b2e3a;
+      --green:#34d399; --purple:#a78bfa; --yellow:#fbbf24; --well:#181a21; --chip:#262935; } }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main{ max-width:860px; margin:0 auto; padding:40px 24px 80px; }
+  h1{ font-size:21px; letter-spacing:-.02em; margin:0 0 4px; }
+  h2{ font-size:14px; color:var(--purple); margin:28px 0 8px; }
+  .sub{ color:var(--dim); font-size:12px; margin-bottom:8px; }
+  ul{ margin:8px 0; padding-left:22px; color:var(--mut); font-size:13px; }
+  li{ margin:6px 0; } li b{ color:var(--ink); }
+  code{ background:var(--chip); border-radius:5px; padding:1px 6px; font-size:12px; font-family:ui-monospace,Menlo,monospace; }
+  .verdict{ background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--green);
+    border-radius:10px; padding:10px 16px; font-size:13px; color:var(--mut); }
+  /* ── the mock fence, console geometry ── */
+  .fence{ background:var(--well); border:1px solid var(--line); border-radius:10px; margin:12px 0; overflow:hidden; max-width:640px; }
+  .fhead{ display:flex; align-items:center; gap:8px; padding:4px 10px; background:var(--panel);
+    border-bottom:1px solid var(--line); font:10px ui-monospace,Menlo,monospace; color:var(--dim); }
+  .fbody{ padding:10px 14px; font:11px/1.75 ui-monospace,Menlo,monospace; color:var(--mut); white-space:pre-wrap; }
+  .fmt{ display:none; padding:12px 16px; font:13px/1.7 Georgia, 'Times New Roman', serif; color:var(--ink); }
+  .fence.on .fbody{ display:none; } .fence.on .fmt{ display:block; }
+  .fmt .eq{ text-align:center; margin:10px 0; font-style:italic; }
+  .fmt .lem{ margin:10px 0; } .fmt .lem b{ font-style:normal; }
+  .fmt em{ font-style:italic; }
+  .approx{ font-size:9px; color:var(--yellow); text-align:right; padding:0 10px 6px; }
+  /* variant A: segmented pill in the header */
+  .segT{ margin-left:auto; display:inline-flex; border:1px solid var(--line); border-radius:99px; overflow:hidden; }
+  .segT span{ padding:2px 10px; cursor:pointer; }
+  .segT span.on{ background:var(--purple); color:#fff; }
+  /* variant B: hover ghosts */
+  .fence.vB .fhead{ display:none; }
+  .fence.vB{ position:relative; }
+  .ghost{ position:absolute; top:6px; right:8px; display:flex; gap:4px; opacity:0; transition:opacity .15s;
+    font:10px ui-monospace,Menlo,monospace; }
+  .fence.vB:hover .ghost{ opacity:1; }
+  .ghost span{ background:var(--chip); border:1px solid var(--line); border-radius:6px; padding:2px 8px; cursor:pointer; }
+  .ghost span.on{ color:var(--purple); border-color:var(--purple); }
+  /* variant C: footer chip */
+  .ffoot{ display:flex; justify-content:flex-end; padding:3px 10px 6px; font:10px ui-monospace,Menlo,monospace; color:var(--dim); }
+  .ffoot span{ cursor:pointer; }
+  .ffoot b{ color:var(--purple); cursor:pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>raw | formatted — LaTeX fences in the console</h1>
+  <div class="sub">scheme + design attempts · 2026-07-30 · no implementation yet</div>
+
+  <div class="verdict"><b>Feasibility: high, mostly assembled from existing parts.</b> The raw
+    display isn't an accident — <code>katexEl()</code> passes
+    <code>ignoredTags: ['pre','code',…]</code>, so fenced blocks are deliberately exempt from
+    math typesetting. "Formatted" = take the fence's text and push it through the pipeline the
+    console already uses for answer prose: <code>md(text, {chat:true})</code> (marked +
+    DOMPurify, style-forbidding) → <code>katexEl(el, texMacrosVisible(project, task))</code> —
+    which means the paper's own dialect (<code>\E</code>, <code>\ah</code>…) typesets correctly
+    via the existing macro harvest, not as phantom-red unknowns. New code is: the toggle chrome,
+    a per-fence state store, and a light structural pass for non-math LaTeX.</div>
+
+  <h2>How it would work</h2>
+  <ul>
+    <li><b>Eligibility:</b> the button appears only on tex-ish fences — lang tag
+      <code>```tex/latex</code>, or heuristic: ≥2 of <code>$…$</code> /
+      <code>\begin{…}</code> / <code>\[</code> in the body. Julia/Python fences are untouched.</li>
+    <li><b>Formatted render:</b> lazy on first toggle, cached on the segment. Math segments
+      typeset via KaTeX; a small pre-pass handles the structure KaTeX can't:
+      <code>\emph/\textbf</code> → styles, <code>\begin{lemma|proof|remark}</code> → labeled
+      blocks, <code>\label/\citet</code> → dimmed chips. Everything else stays literal text —
+      this is a <i>reading aid</i>, not a compiler; the pdf pane remains the ground truth.</li>
+    <li><b>State:</b> per-fence choice keyed by a hash of the fence's content, stored in the
+      task's console view state — NOT on the DOM node.</li>
+    <li><b>Default:</b> raw. The fence is source; formatting is the opt-in.</li>
+  </ul>
+
+  <h2>Things to watch out for</h2>
+  <ul>
+    <li><b>Repaint survival:</b> the console rebuilds segments on macro-harvest bumps,
+      streaming re-segmentation, and renderWB — DOM-attached toggle state would silently reset.
+      Hence the content-hash store, re-applied by the segment renderer.</li>
+    <li><b>Streaming tail:</b> no toggle while the fence is still streaming (csRaw); it appears
+      when the segment settles. A mid-stream toggle would typeset half an equation.</li>
+    <li><b>Sanitization:</b> fence content is model output — the formatted path MUST go through
+      the same DOMPurify profile as answer prose (it does, by construction, if md() is reused).</li>
+    <li><b>Copy:</b> formatted view must keep the raw text one click away (copy icon copies the
+      SOURCE, never the rendered HTML) — otherwise the toggle costs him paste-into-tex.</li>
+    <li><b>Macro drift:</b> unknown macros still paint KaTeX-red; fine (consistent with answer
+      math), but the harvest must use the task's pins (<code>texMacrosVisible</code>), not a
+      global set.</li>
+    <li><b>Big fences:</b> a whole appendix in one fence = hundreds of KaTeX nodes — render
+      once, cache, and never re-typeset on scroll.</li>
+    <li><b>Honesty limit:</b> alignment environments (<code>align</code>, custom numbering,
+      cross-refs) will render approximately or not at all — the toggle should never claim
+      pdf-fidelity.</li>
+  </ul>
+
+  <h2>Design attempts — click the controls; formatted view is a styled approximation of KaTeX output</h2>
+
+  <div class="sub">A · segmented pill in a fence header strip (my pick — discoverable, carries the lang tag, room for ⧉ copy)</div>
+  <div class="fence vA">
+    <div class="fhead">tex<span class="segT"><span class="on">raw</span><span>formatted</span></span></div>
+    <div class="fbody">Fix prices $(r,w)$ and let $\{(\varepsilon_t,\zeta_t)\}_{t\ge0}$ be the i.i.d.\ shock
+sequence with law $\mu_0$.
+\begin{equation}\label{eq:feasible}
+    c_t + a_{t+1} = x_t,\qquad a_{t+1}\ge0
+\end{equation}
+\begin{lemma}[The feasible set scales]\label{lem:scale}
+For every $\theta>0$, $\ \Phi(\theta x,\theta P) = \theta\,\Phi(x,P)$.
+\end{lemma}</div>
+    <div class="fmt">Fix prices <i>(r, w)</i> and let <i>{(ε<sub>t</sub>, ζ<sub>t</sub>)}<sub>t≥0</sub></i> be the i.i.d. shock sequence with law <i>μ</i><sub>0</sub>.
+      <div class="eq">c<sub>t</sub> + a<sub>t+1</sub> = x<sub>t</sub>,&nbsp;&nbsp;&nbsp;a<sub>t+1</sub> ≥ 0&nbsp;&nbsp;&nbsp;<span style="color:var(--dim);font-style:normal;font-size:11px;">(eq:feasible)</span></div>
+      <div class="lem"><b>Lemma 1</b> (The feasible set scales)<b>.</b> <em>For every θ &gt; 0, Φ(θx, θP) = θ Φ(x, P).</em></div>
+      <div class="approx">mock — real version typesets with KaTeX + the paper's macro dialect</div>
+    </div>
+  </div>
+
+  <div class="sub">B · hover ghosts (zero chrome at rest — but undiscoverable, and the fence loses its lang label)</div>
+  <div class="fence vB">
+    <div class="ghost"><span class="on">raw</span><span>fmt</span><span title="copy source">⧉</span></div>
+    <div class="fbody">with $x_0=x$, $P_0=P$. Write $\Phi(x,P)$ for the set of such plans and
+\[
+    V^{\mathrm{lev}}(x,P) \;=\; \sup_{\{c_t\}\in\Phi(x,P)} \E_0\sum_{t\ge0}\beta^{t}\,\frac{c_t^{1-\sigma}}{1-\sigma}.
+\]</div>
+    <div class="fmt">with <i>x</i><sub>0</sub> = <i>x</i>, <i>P</i><sub>0</sub> = <i>P</i>. Write <i>Φ(x, P)</i> for the set of such plans and
+      <div class="eq">V<sup>lev</sup>(x, P) = sup<sub>{c<sub>t</sub>} ∈ Φ(x,P)</sub> 𝔼<sub>0</sub> Σ<sub>t≥0</sub> β<sup>t</sup> c<sub>t</sub><sup>1−σ</sup> / (1−σ).</div>
+      <div class="approx">mock — real version typesets with KaTeX + the paper's macro dialect</div>
+    </div>
+  </div>
+
+  <div class="sub">C · footer chip (out of the reading line, but easy to miss and far from where your eye starts)</div>
+  <div class="fence vC">
+    <div class="fbody" style="border-bottom:none;">\begin{proof}
+The shock sequence is independent of $(x,P)$, and $P_t = P\prod_{s\le t}e^{\varepsilon_s}$,
+so scaling $P$ by $\theta$ scales $P_t$ by $\theta$ along every history.
+\end{proof}</div>
+    <div class="fmt"><div class="lem"><b>Proof.</b> The shock sequence is independent of <i>(x, P)</i>, and <i>P<sub>t</sub> = P</i> Π<sub>s≤t</sub> e<sup>ε<sub>s</sub></sup>, so scaling <i>P</i> by θ scales <i>P<sub>t</sub></i> by θ along every history. ∎</div>
+      <div class="approx">mock — real version typesets with KaTeX + the paper's macro dialect</div></div>
+    <div class="ffoot"><span>raw · <b>formatted</b></span></div>
+  </div>
+
+  <h2>Recommendation</h2>
+  <ul>
+    <li><b>Variant A.</b> The header strip earns its pixels three ways: lang label (restores
+      information the bare fence hides), the toggle where your eye starts, and a home for ⧉
+      copy-source. B is prettiest at rest but invisible to discover; C reads as an
+      afterthought.</li>
+    <li>Scope v1 to <b>math + the four common environments</b> (equation, align→approx, lemma-
+      family, proof); everything else literal. Ship the honesty footer ("approximate — compile
+      for ground truth") only if testing shows people over-trust it.</li>
+  </ul>
+</main>
+<script>
+  document.querySelectorAll('.segT span, .ghost span:not([title]), .ffoot span, .ffoot b').forEach((el) => {
+    el.addEventListener('click', () => {
+      const fence = el.closest('.fence');
+      fence.classList.toggle('on');
+      fence.querySelectorAll('.segT span, .ghost span:not([title])').forEach((s) =>
+        s.classList.toggle('on', (fence.classList.contains('on')) === /f/i.test(s.textContent)));
+    });
+  });
+</script>
+</body>
+</html>

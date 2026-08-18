@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Codex integration mockups</title>
+  <link rel="stylesheet" href="mock.css">
+</head>
+<body>
+  <main class="indexWrap">
+    <section class="hero">
+      <div class="eyebrow">Design review · no production changes</div>
+      <h1>Claude + Codex in the planner</h1>
+      <p>This suite proposes a provider-neutral session experience that remains quiet for people with one service,
+        scales cleanly to both, and never pretends a thread can move invisibly between providers. Every model control
+        in the numbered pages is clickable. Use the <b>Dark / Bright</b> switch on any page and resize the browser—the
+        workbench re-composes at tablet and narrow-pane widths instead of preserving a clipped desktop canvas.</p>
+      <div class="decisionBar">
+        <span><b>One compact control:</b> provider + model</span>
+        <span><b>Explicit boundary:</b> provider changes start a thread</span>
+        <span><b>Clean single-service mode:</b> no disabled catalog</span>
+        <span><b>No silent fallback:</b> reconnect or choose</span>
+        <span><b>Always-glanceable usage:</b> real percentages at the bottom</span>
+      </div>
+      <div class="indexTheme"><span>Preview this index:</span><span class="themeCtl" aria-label="Preview theme"><button data-index-theme="dark" class="on">● Dark</button><button data-index-theme="light">○ Bright</button></span></div>
+    </section>
+
+    <section class="pageGrid">
+      <a class="pageCard" href="01-dual-service.html"><span class="num">01 / NORMAL STATE</span><h2>Both services connected</h2><p>The workbench stays almost unchanged. The session bar gets one compact agent/model control and provider-aware usage.</p><span class="tag">everyday view</span></a>
+      <a class="pageCard" href="02-model-picker.html"><span class="num">02 / PRIMARY INTERACTION</span><h2>Open model chooser</h2><p>Models are grouped by connected service. Click a Codex model to see the provider-thread boundary confirmation.</p><span class="tag">interactive</span></a>
+      <a class="pageCard" href="03-claude-only.html"><span class="num">03 / ONE SERVICE</span><h2>Claude only</h2><p>The chooser contains Claude models only, with a small “connect Codex” footer instead of a wall of unavailable options.</p><span class="tag">zero Codex dependency</span></a>
+      <a class="pageCard" href="04-codex-only.html"><span class="num">04 / ONE SERVICE</span><h2>Codex only</h2><p>The same dashboard works without Claude. Codex reasoning effort appears only where it is relevant.</p><span class="tag">zero Claude dependency</span></a>
+      <a class="pageCard" href="05-no-services.html"><span class="num">05 / FIRST RUN</span><h2>Neither connected</h2><p>A launch-time setup card offers either provider equally; adding the second service remains optional.</p><span class="tag">onboarding</span></a>
+      <a class="pageCard" href="06-provider-reconnect.html"><span class="num">06 / FAILURE STATE</span><h2>Current provider disconnected</h2><p>The thread is preserved. Reconnect is primary; switching is explicit and never happens as a hidden fallback.</p><span class="tag">honest recovery</span></a>
+      <a class="pageCard" href="07-new-task.html"><span class="num">07 / TASK CREATION</span><h2>Choose on a new task</h2><p>Provider and model are saved explicitly with the task, seeded from the user’s default and easy to override.</p><span class="tag">interactive</span></a>
+      <a class="pageCard" href="08-settings.html"><span class="num">08 / ACCOUNT LEVEL</span><h2>Services and defaults</h2><p>Separate connection cards, one default agent/model, dynamic catalogs, and a clear home for provider-specific controls.</p><span class="tag">settings</span></a>
+      <a class="pageCard" href="09-usage-meter.html"><span class="num">09 / GLOBAL STATUS</span><h2>Claude + Codex usage</h2><p>Real short-window percentages stay visible at the bottom; click for every provider window, reset time, and data-source status.</p><span class="tag">live app-server data</span></a>
+    </section>
+
+    <section class="indexSec">
+      <h2>Scenario behavior</h2>
+      <table class="matrix">
+        <thead><tr><th>Connected state</th><th>Chooser contents</th><th>Bottom usage</th><th>Launch behavior</th></tr></thead>
+        <tbody>
+          <tr><td>Claude only</td><td>Claude models + quiet Codex connect link</td><td>Claude percentage</td><td class="yes">Launches normally</td></tr>
+          <tr><td>Codex only</td><td>Codex models + quiet Claude connect link</td><td>Codex percentage</td><td class="yes">Launches normally</td></tr>
+          <tr><td>Both</td><td>Two provider groups</td><td>Both percentages; active provider emphasized</td><td class="yes">Launches selected provider</td></tr>
+          <tr><td>Neither</td><td class="quiet">No model chooser yet</td><td class="quiet">No meter</td><td>Shows equal-choice setup card</td></tr>
+          <tr><td>Active provider expired</td><td>Current choice remains visible</td><td>Last reading marked stale</td><td>Reconnect or explicitly start another thread</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+  <script>
+    document.querySelectorAll('[data-index-theme]').forEach(button => button.addEventListener('click', () => {
+      document.documentElement.dataset.theme = button.dataset.indexTheme;
+      document.querySelectorAll('[data-index-theme]').forEach(item => item.classList.toggle('on', item === button));
+    }));
+  </script>
+</body>
+</html>

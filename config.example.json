@@ -1,0 +1,49 @@
+{
+  "//": "Copy this file to config.json (gitignored) and fill it in — or run the guided setup. Every field is optional; omitted fields use the defaults shown here.",
+  "user": { "name": "" },
+  "port": 4242,
+  "weeklyHourTarget": 35,
+  "agents": {
+    "//": "Defaults for NEW agent tasks. Existing tasks keep their own provider/model. Codex models are discovered dynamically from the local Codex CLI; set defaultModel to null to use its CLI default.",
+    "defaultProvider": "claude",
+    "defaultModel": "claude-opus-5",
+    "defaultReasoningEffort": "high"
+  },
+  "usageLimits": {
+    "//": "FALLBACK budgets for the status bar's usage meter. When you are signed in to Claude Code (OAuth), the meter shows the REAL plan windows the Agent SDK reports and ignores everything below; these budgets are used only before the first task turn has fetched a reading, or on an ANTHROPIC_API_KEY install where no plan windows exist. They are YOUR OWN targets and the values here are GUESSES — an estimate against an invented budget is worth little, so either set them from claude.ai > Settings > Usage, or use \"usageLimits\": false for PLAN-ONLY mode, where the meter shows real windows and simply hides when there is no reading.",
+    "sessionHours": 5,
+    "sessionTokens": 10000000,
+    "weeklyTokens": 150000000,
+    "topModel": "claude-fable-5",
+    "topModelWeeklyTokens": 30000000
+  },
+  "notifications": {
+    "//": "ntfy.sh push. Topic is the ONLY secret — make it random. Empty disables pushes. ntfyDetail:true sends task text to the PUBLIC broker.",
+    "ntfyTopic": "",
+    "ntfyClickBase": "",
+    "ntfyDetail": false
+  },
+  "artifactGlobs": {
+    "//": "Optional — directories the artifact/file scanners skip. Omit to use the built-in defaults.",
+    "ignoreDirs": ["node_modules", ".git", "data", "_literature", "literature", ".claude", "renv", ".venv", "__pycache__"],
+    "maxDepth": 6
+  },
+  "//kaimon": "Warm Julia REPL (github.com/kahliburke/Kaimon.jl) — ON by default and fully dashboard-managed: sessions in auto-detected Julia projects get a persistent REPL that keeps packages+state loaded across turns. Nothing to configure; if kaimon isn't installed, a one-click enable card appears in Julia projects (needs Julia >= 1.12). Set \"kaimon\": false to disable, or tune with {\"bin\": \"/path/to/kaimon\", \"idleMinutes\": 30}.",
+  "projects": {
+    "//": "Keys are permanent identifiers (tasks/ledger/etc. are stored under them) — pick a short slug. status: active (default, no tag) | trial (tag in nav) | inactive (hidden from nav & overview). Manage these in-app via the Manage Projects tab.",
+    "myproject": {
+      "name": "My Project",
+      "root": "/absolute/path/to/your/project",
+      "color": "#7ef5c2",
+      "texWatch": null,
+      "status": "active"
+    },
+    "scratch": {
+      "name": "scratch",
+      "root": "/absolute/path/to/another/project",
+      "color": "#f5d57e",
+      "texWatch": "slides/main.tex",
+      "status": "trial"
+    }
+  }
+}

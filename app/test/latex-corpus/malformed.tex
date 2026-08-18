@@ -1,0 +1,23 @@
+% Synthetic corpus: malformed input — the highlighter must not crash or wash the world.
+\begin{equation}
+  x = y + z
+% note: no matching end-of-equation for a while
+Some text still inside the never-closed equation zone.
+\end{align}
+That \end did not match; behavior is whatever legacy does — frozen by goldens.
+\begin{alignat}
+  mismatched close below
+\end{alignat*}
+\begin{}
+\end{}
+\begin {spaced} \end {spaced}
+Unmatched braces } { and stray brackets ] [ here.
+\verb|unclosed verb argument runs to end of line $ not math
+Plain line after unclosed verb.
+$ unclosed inline at line start, dies at EOL
+\[ unclosed bracket display carries on
+still carried
+\]
+\begin{verbatim}
+never closed verbatim: the rest of THIS FILE is literal, including $x$ and \alpha
+last literal line

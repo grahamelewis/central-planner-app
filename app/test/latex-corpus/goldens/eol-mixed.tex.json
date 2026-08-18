@@ -1,0 +1,116 @@
+{
+ "mode": "full",
+ "ext": "tex",
+ "lines": [
+  {
+   "t": [
+    [
+     "cm",
+     "% Synthetic corpus: mixed EOLs (LF, CRLF, lone CR)."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "This line ends with CRLF.\r"
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "This line ends with LF."
+    ]
+   ],
+   "z": []
+  },
+  {
+   "t": [
+    [
+     "",
+     "This one with lone CR.\rMath zone opens here: "
+    ],
+    [
+     "md",
+     "\\["
+    ],
+    [
+     "",
+     "\r"
+    ]
+   ],
+   "z": [
+    [
+     45,
+     48
+    ]
+   ]
+  },
+  {
+   "t": [
+    [
+     "",
+     "  "
+    ],
+    [
+     "mv",
+     "a"
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "mo",
+     "="
+    ],
+    [
+     "",
+     " "
+    ],
+    [
+     "mv",
+     "b"
+    ]
+   ],
+   "z": [
+    [
+     2,
+     7
+    ]
+   ]
+  },
+  {
+   "t": [
+    [
+     "md",
+     "\\]"
+    ],
+    [
+     "",
+     "\r"
+    ]
+   ],
+   "z": [
+    [
+     0,
+     2
+    ]
+   ]
+  },
+  {
+   "t": [
+    [
+     "",
+     "No final newline on the last line"
+    ]
+   ],
+   "z": []
+  }
+ ]
+}
