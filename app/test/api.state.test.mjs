@@ -21,7 +21,7 @@ after(async () => { if (sb) await sb.stop(); });
 test('snapshot has every key the frontend reads, with the right shapes', async () => {
   const { status, body } = await sb.fetchJson('GET', '/api/state');
   assert.equal(status, 200);
-  for (const key of ['projects', 'categories', 'abstracts', 'tasks', 'artifacts', 'pdf', 'ledger', 'sessions', 'runs']) {
+  for (const key of ['projects', 'categories', 'abstracts', 'tasks', 'artifacts', 'pdf', 'ledger', 'sessions', 'runs', 'tailnet']) {
     assert.ok(key in body, `snapshot is missing '${key}'`);
   }
   assert.deepEqual(Object.keys(body.projects).sort(), ['alpha', 'beta']);
@@ -37,6 +37,7 @@ test('snapshot has every key the frontend reads, with the right shapes', async (
   assert.deepEqual(body.sessions, []);
   assert.deepEqual(body.runs, {});
   assert.deepEqual(body.pdf, {});
+  assert.equal(body.tailnet.state, 'unavailable');
 });
 
 test('ledger summary starts at zero with the configured target and a Monday start', async () => {

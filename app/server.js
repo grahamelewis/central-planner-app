@@ -35,6 +35,7 @@ import { getUpdateStatus, checkForUpdates, applyUpdate, startUpdateChecks } from
 import { createCategory, updateCategory, renameCategory, deleteCategory, renameGroup as renameCatGroup, deleteGroup as deleteCatGroup } from './lib/categoryStore.js';
 import { getPlanSnapshot, addDeadline, removeDeadline, addSource as addCalSource, removeSource as removeCalSource, setIncludeAllDay, setRoute, clearRoute, refreshCal, initPlan } from './lib/plan.js';
 import { getDecisions, addDecision, retireDecision, setStanding, allDecisions } from './lib/decisions.js';
+import { tailnet } from './lib/tailnet.js';
 
 // Never let an exception take the process down.
 process.on('uncaughtException', (err) => {
@@ -87,6 +88,34 @@ function assertProjectKey(project) {
   }
 }
 
+// Tailnet configuration changes are host controls, not ordinary dashboard
+// mutations. A remote copy of the UI can see status but may not turn off the
+// route it is currently using (or reconfigure the host). Express is not set to
+// trust proxies, so req.hostname comes from the original Host header that
+// Tailscale Serve forwards.
+function assertLocalControl(req) {
+  const host = String(req.hostname || '').toLowerCase();
+  const local = host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
+  const viaTailnet = Object.keys(req.headers || {}).some((k) => k.toLowerCase().startsWith('tailscale-'));
+  const origin = String(req.get('origin') || '');
+  let localOrigin = true; // CLI/local automation commonly sends no Origin
+  if (origin) {
+    try {
+      const u = new URL(origin);
+      const originHost = u.hostname.toLowerCase();
+      const originPort = Number(u.port || (u.protocol === 'http:' ? 80 : 443));
+      localOrigin = u.protocol === 'http:'
+        && (originHost === '127.0.0.1' || originHost === 'localhost' || originHost === '::1')
+        && originPort === PORT;
+    } catch { localOrigin = false; }
+  }
+  if (!local || viaTailnet || !localOrigin) {
+    const e = new Error('Tailnet access can only be changed from the host Mac');
+    e.status = 403;
+    throw e;
+  }
+}
+
 function safeCall(label, fn, fallback) {
   try {
     const v = fn();
@@ -126,6 +155,7 @@ function snapshot() {
     agentDefaults: safeCall('agentDefaults', () => getAgentDefaults(), { provider: 'claude', model: 'claude-opus-5', reasoningEffort: 'high' }),
     plan: safeCall('plan', () => getPlanSnapshot(), { deadlines: {}, cal: { sources: [], routes: {}, events: [] } }),
     decisions: safeCall('decisions', () => allDecisions(), {}),
+    tailnet: safeCall('tailnet', () => tailnet.getStatus(), { state: 'unavailable', available: false }),
   };
 }
 
@@ -133,6 +163,28 @@ function snapshot() {
 
 app.get('/api/state', route((req, res) => {
   res.json(snapshot());
+}));
+
+app.get('/api/tailnet/status', route(async (req, res) => {
+  const status = await tailnet.refresh();
+  broadcast('tailnet:status', status);
+  res.json({ ...status, canManage: (() => {
+    try { assertLocalControl(req); return true; } catch { return false; }
+  })() });
+}));
+
+app.post('/api/tailnet/enable', route(async (req, res) => {
+  assertLocalControl(req);
+  const status = await tailnet.enable();
+  broadcast('tailnet:status', status);
+  res.json(status);
+}));
+
+app.post('/api/tailnet/disable', route(async (req, res) => {
+  assertLocalControl(req);
+  const status = await tailnet.disable();
+  broadcast('tailnet:status', status);
+  res.json(status);
 }));
 
 app.post('/api/tasks', route((req, res) => {
@@ -1165,84 +1217,98 @@ onClientConnect((socketSend) => {
   refreshCodex().catch(() => {});
 });
 
-// surface an already-signed-out install shortly after boot — before anyone
-// burns a turn discovering it
-try {
-  startAuthChecks();
-} catch (err) {
-  console.error('[core] auth checks failed to start:', err && err.message);
-}
-
-try {
-  startCodexChecks();
-} catch (err) {
-  console.error('[core] Codex checks failed to start:', err && err.message);
-}
-
 process.once('exit', () => { try { stopCodex(); } catch { /* best effort */ } });
 
-try {
-  startArtifactWatchers();
-} catch (err) {
-  console.error('[core] startArtifactWatchers failed:', err && err.message);
-}
-
-// Calendar refresh loop (15 min; no-op while no .ics source is connected).
-try {
-  initPlan();
-} catch (err) {
-  console.error('[core] initPlan failed:', err && err.message);
-}
-
-// A crash/SIGKILL skips kaimon's exit hook and orphans its daemon tree —
-// same failure class as the stranded-running sweep below.
-try {
-  sweepKaimonOrphans();
-} catch (err) {
-  console.error('[core] kaimon orphan sweep failed:', err && err.message);
-}
-
-// Is the dashboard itself behind its origin repo? Checked shortly after boot,
-// then daily; Settings shows the result and offers the update.
-try {
-  startUpdateChecks();
-} catch (err) {
-  console.error('[core] update checks failed to start:', err && err.message);
-}
-
-// A restart mid-turn strands tasks at status 'running' with no turn behind
-// them (phantom "Claude is working" UI). Sweep them back to waiting.
-for (const key of Object.keys(PROJECTS)) {
+// Nothing below this function runs until the HTTP server has successfully
+// bound its port. That makes a desktop-start/launchd race harmless: the loser
+// exits before it can reset tasks, start watchers, or touch child processes.
+function startRuntime() {
+  // surface an already-signed-out install shortly after boot — before anyone
+  // burns a turn discovering it
   try {
-    for (const t of listTasks(key)) {
-      if (t && t.status === 'running') {
-        updateTask(key, t.id, { status: 'waiting', logNote: 'server restarted mid-turn — reset to waiting' });
-        console.log(`[core] reset stranded running task ${key}/${t.id}`);
-      }
-    }
+    startAuthChecks();
   } catch (err) {
-    console.error(`[core] startup status sweep failed for ${key}:`, err.message);
+    console.error('[core] auth checks failed to start:', err && err.message);
   }
-}
 
-for (const [key, p] of Object.entries(PROJECTS)) {
-  if (p.texWatch) {
+  try {
+    startCodexChecks();
+  } catch (err) {
+    console.error('[core] Codex checks failed to start:', err && err.message);
+  }
+
+  try {
+    startArtifactWatchers();
+  } catch (err) {
+    console.error('[core] startArtifactWatchers failed:', err && err.message);
+  }
+
+  // Calendar refresh loop (15 min; no-op while no .ics source is connected).
+  try {
+    initPlan();
+  } catch (err) {
+    console.error('[core] initPlan failed:', err && err.message);
+  }
+
+  // A crash/SIGKILL skips kaimon's exit hook and orphans its daemon tree —
+  // same failure class as the stranded-running sweep below.
+  try {
+    sweepKaimonOrphans();
+  } catch (err) {
+    console.error('[core] kaimon orphan sweep failed:', err && err.message);
+  }
+
+  // Is the dashboard itself behind its origin repo? Checked shortly after boot,
+  // then daily; Settings shows the result and offers the update.
+  try {
+    startUpdateChecks();
+  } catch (err) {
+    console.error('[core] update checks failed to start:', err && err.message);
+  }
+
+  // Tailscale state is ambient and non-billed. Seed the top-bar control after
+  // the bind; the cached snapshot remains usable if the CLI is unavailable.
+  tailnet.refresh().then((status) => broadcast('tailnet:status', status)).catch(() => {});
+
+  // A restart mid-turn strands tasks at status 'running' with no turn behind
+  // them (phantom "Claude is working" UI). Sweep them back to waiting.
+  for (const key of Object.keys(PROJECTS)) {
     try {
-      const texAbs = path.isAbsolute(p.texWatch) ? path.resolve(p.texWatch) : path.resolve(p.root, p.texWatch);
-      const result = watchTex(key, texAbs);
-      if (result && result.error) console.error(`[core] watchTex(${key}) failed:`, result.error);
+      for (const t of listTasks(key)) {
+        if (t && t.status === 'running') {
+          updateTask(key, t.id, { status: 'waiting', logNote: 'server restarted mid-turn — reset to waiting' });
+          console.log(`[core] reset stranded running task ${key}/${t.id}`);
+        }
+      }
     } catch (err) {
-      console.error(`[core] watchTex(${key}) failed:`, err && err.message);
+      console.error(`[core] startup status sweep failed for ${key}:`, err.message);
+    }
+  }
+
+  for (const [key, p] of Object.entries(PROJECTS)) {
+    if (p.texWatch) {
+      try {
+        const texAbs = path.isAbsolute(p.texWatch) ? path.resolve(p.texWatch) : path.resolve(p.root, p.texWatch);
+        const result = watchTex(key, texAbs);
+        if (result && result.error) console.error(`[core] watchTex(${key}) failed:`, result.error);
+      } catch (err) {
+        console.error(`[core] watchTex(${key}) failed:`, err && err.message);
+      }
     }
   }
 }
 
 server.on('error', (err) => {
   console.error('[core] server error:', err && err.message);
+  // In particular, EADDRINUSE must not leave a zombie process around. Since
+  // all startup side effects are gated on the listen callback, exiting here
+  // is safe and lets the winning server remain the sole state owner.
+  process.exitCode = 1;
 });
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`[core] Central Planner listening on http://127.0.0.1:${PORT}`);
+  startRuntime();
 });
 
 export { snapshot, broadcast };

@@ -8,14 +8,14 @@ below is a contract change and must edit this file in the same commit.
 
 ## The eight invariants
 
-Verbatim from BLUEPRINT §4.
-
-- **I1.** The shell never starts, kills, restarts, or signals any server
-  process, and never mutates `launchctl` state — Phase 1 contains no code path
-  that sends a signal or spawns a child.
-- **I2.** Phase 1 ships no spawn path. The lifecycle's only verbs are attach,
-  wait, and refuse; the spawn fallback exists only in Phase 1.5, gated on its
-  five preconditions (§7).
+- **I1. One server, evidence first.** A healthy Central Planner is attached; a
+  loaded `local.projectmanager` job is allowed to recover; FOREIGN/TIMEOUT+TCP
+  occupied is refused. Desktop start is reachable only from `REFUSED` plus a
+  read-only launchctl result of not-loaded.
+- **I2. Safe ownership.** The server binds before every startup side effect and
+  exits nonzero on bind failure. At most one desktop child is started per
+  lifecycle generation; the shell records and signals only its current child,
+  never an attached or stale PID.
 - **I3.** Exactly one notifier WebSocket exists at any time, with reconnect
   backoff capped at 5 s→60 s and a 60 s silence watchdog; HTTP probing uses
   only `GET /m/manifest.webmanifest`; `POST /api/heartbeat`,
@@ -30,9 +30,10 @@ Verbatim from BLUEPRINT §4.
 - **I6.** A live SPA is never reloaded by the shell; intervention happens only
   on main-frame, filtered `did-fail-load` (§2); close hides silently, and the
   draft dialog fires only on paths that actually unload (reload, quit).
-- **I7.** `http://127.0.0.1:<port>` in a browser and the phone PWA behave
-  identically before, during, and after the shell runs — unconditionally, since
-  the shell never owns the server.
+- **I7.** Browser and phone clients are peers while the one server runs. An
+  attached launchd/manual server is never stopped by the shell. A desktop-owned
+  server stays alive while the window is hidden and stops on confirmed Cmd+Q;
+  clients then go offline by explicit lifecycle policy.
 - **I8.** At most one lifecycle reconcile loop is active at any moment: every
   trigger (startup, did-fail-load, wake, retry) joins the current generation or
   is dropped; a superseded generation's callbacks are inert.
@@ -44,9 +45,11 @@ States are `serverlink.js` `STATES`, one to one.
 | State | Trigger / evidence | Action | Re-probe |
 | --- | --- | --- | --- |
 | `CONNECTING` | Startup pre-decision; or `TIMEOUT` with raw TCP refusing (transient) | Default splash | 5 s |
+| `STARTING_SERVER` | `REFUSED` + launchd not loaded + no start yet | Start exactly one desktop-owned child; probe without starting another | 250 ms first, then 500 ms |
 | `ATTACH` | Probe `HEALTHY`: 200 + JSON `name === "Central Planner"` | `loadURL http://127.0.0.1:<port>`; open the ONE notifier WS; reconcile missed banners from the snapshot | — (attach ends the generation's loop) |
 | `WAIT_LAUNCHD` | `REFUSED` (ECONNREFUSED only) + `launchctl list local.projectmanager` exit 0 (job loaded) | Splash naming `/tmp/projectmanager.log` — KeepAlive is respawning it; NEVER spawn | 1 s for the first 20 s of a contiguous stretch, then 5 s |
-| `SERVER_ABSENT` | `REFUSED` + job not loaded | Splash with start instructions (`cd app && npm start`, or load the launchd job); NEVER spawn | 5 s |
+| `SERVER_ABSENT` | `REFUSED` + job not loaded but no start dependency is available | Manual-start splash (fallback/testing) | 5 s |
+| `SERVER_FAILED` | Child spawn error or 15 s readiness budget exhausted | Failure splash; stop the owned child on timeout; no repeated start loop in that generation | 5 s probe |
 | `BLOCKED_OCCUPIED` reason `foreign` | Probe `FOREIGN`: any other HTTP answer (wrong name, 404, non-JSON) | Squatter splash naming the port + `lsof` hint | 5 s |
 | `BLOCKED_OCCUPIED` reason `occupied` | Probe `TIMEOUT` + raw TCP accepts (the SIGSTOP'd-server case) | Occupied splash | 5 s |
 
@@ -56,6 +59,11 @@ Footnotes:
 - Consecutive identical states are de-duped — `onState` fires on change only.
 - Every trigger (startup, did-fail-load, wake, retry) joins the single active
   generation; none starts a second loop (I8).
+- The packaged checkout hint is validated, then persisted under userData. A
+  missing/moved checkout uses a native folder chooser; `__dirname/..` is never
+  trusted in a packaged app.
+- Node resolution is explicit (`CP_NODE_BIN`, Homebrew/system candidates), and
+  the child receives the same tool PATH as the launchd service.
 
 ## Probe rules
 
@@ -77,9 +85,11 @@ Forbidden forever, with reasons:
   stay alive; dock click or a notification click re-shows. Electron fires
   `close` before any DOM unload (F5), so no close-path dialog can or should
   exist.
-- **Cmd+Q quits the shell and touches no server, ever** — there is no owned
-  mode in Phase 1, so quit sends no signals of any kind; browser tabs and the
-  phone PWA are unaffected by construction.
+- **Cmd+Q** never signals an attached server. For a desktop-owned child it
+  checks sessions, runs, jobs, texfix, and Tailnet state; warns when work or
+  remote access would be interrupted; after the draft guard accepts the quit,
+  disables Central Planner's Serve mapping, sends SIGTERM, and bounds cleanup
+  with SIGKILL after 3 s.
 - The `will-prevent-unload` draft dialog fires only on paths that actually
   unload the page: **reload (Cmd+R) and quit**.
 - `window-all-closed` never quits — the app is dock-resident.
@@ -112,6 +122,10 @@ An `app/` change touching any of these is a shell change too:
 7. The `beforeunload` draft guard (`app/public/app.js:10063-10066`).
 8. Node ≥ 20.
 9. The 25 s server WS tick the shell's 60 s watchdog times against.
+10. Server startup ordering: `listen()` succeeds before auth/Codex checks,
+    watchers, calendar/update loops, orphan/status sweeps, and tex watches.
+11. Tailnet snapshot/event/API shapes: `tailnet`, `tailnet:status`, and the
+    host-only `/api/tailnet/{status,enable,disable}` routes.
 
 **Version-skew rule (F16/G13):** an `app/` change touching any listed coupling
 updates `desktop/` in the **same commit** *and* triggers a re-pack plus a smoke
@@ -159,6 +173,12 @@ to "Electron"). Check a box and add initials + date when a row passes.
 - [ ] Close hides; dock click restores with state intact; Cmd+Q exits and the
       launchd server PID is unchanged; a parallel Chrome tab and the phone PWA
       are unaffected. (initials/date: ________)
+- [ ] With launchd unloaded and the port refused: Finder launch starts exactly
+      one server, reaches the dashboard, close keeps it live, and Cmd+Q stops
+      only that owned PID. (initials/date: ________)
+- [ ] Tailnet chip: off→live creates the 4242 root proxy; Tailscale stopped
+      shows saved/disconnected rather than live; remote UI is status-only; off
+      preserves unrelated Serve handlers. (initials/date: ________)
 - [ ] Sleep/wake: lid closed ~2 min, reopen — a staged event notifies within
       ~5 s of wake. (initials/date: ________)
 - [ ] `launchctl kickstart -k` mid-use: the loaded SPA is untouched and

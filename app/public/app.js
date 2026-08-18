@@ -121,6 +121,12 @@ export function handleEvent(type, p) {
       if (ui.view === 'settings') renderSettings();
       break;
     }
+    case 'tailnet:status': {
+      if (!p) break;
+      state.tailnet = p;
+      renderNav();
+      break;
+    }
     case 'auth:status': {
       // Claude sign-in state — drives the amber card in the session pane
       if (!p) break;
@@ -770,6 +776,70 @@ export function renderNav() {
       ? `wk <b>${hrs(state.ledger.totals.seconds)}h</b> · <b class="y">${fmtTok(state.ledger.totals.tokens)} tok</b>`
       : `wk <b class="y">${fmtTok(state.ledger.totals.tokens)} tok</b>`;
   }
+  syncTailnetButton();
+}
+
+function localTailnetControl() {
+  return location.hostname === '127.0.0.1' || location.hostname === 'localhost' || location.hostname === '::1';
+}
+
+function syncTailnetButton() {
+  const btn = document.getElementById('tailnetBtn');
+  const label = document.getElementById('tailnetLabel');
+  if (!btn || !label) return;
+  const t = state.tailnet || {};
+  const local = localTailnetControl();
+  const labels = {
+    checking: 'Tailnet…',
+    live: 'Tailnet live',
+    off: 'Tailnet off',
+    disconnected: t.configured ? 'Tailnet saved' : 'Tailnet offline',
+    unavailable: 'No Tailscale',
+    conflict: 'Tailnet busy',
+    error: 'Tailnet error',
+  };
+  const mode = labels[t.state] ? t.state : 'checking';
+  label.textContent = labels[mode];
+  btn.className = `tailnetBtn ${mode}${local ? '' : ' remote'}`;
+  btn.disabled = mode === 'checking';
+  const detail = t.error || (mode === 'live'
+    ? `Private access live${t.url ? ` at ${t.url}` : ''}`
+    : mode === 'off' ? 'Click to make Central Planner available inside your tailnet'
+      : 'Private tailnet access');
+  btn.title = local ? detail : `${detail} · change this from the host Mac`;
+}
+
+async function refreshTailnet() {
+  const r = await apiQuiet('GET', '/api/tailnet/status');
+  if (r) {
+    state.tailnet = r;
+    syncTailnetButton();
+  }
+}
+
+async function toggleTailnet() {
+  if (!localTailnetControl()) {
+    toast('Tailnet access can only be changed from the host Mac');
+    return;
+  }
+  const t = state.tailnet || {};
+  // A saved mapping with Tailscale stopped is not live: clicking reconnects
+  // and republishes it. Only a genuinely live endpoint toggles to off.
+  const turningOff = t.state === 'live';
+  if (!turningOff && !window.confirm(
+    'Make Central Planner available to devices permitted by your Tailscale network?\n\nThis dashboard can run code and use your AI accounts.'
+  )) return;
+  state.tailnet = { ...t, state: 'checking' };
+  syncTailnetButton();
+  const r = await api('POST', turningOff ? '/api/tailnet/disable' : '/api/tailnet/enable');
+  if (r) {
+    state.tailnet = r;
+    syncTailnetButton();
+    if (r.state === 'live') toast(`Tailnet access live${r.url ? ` — ${r.url}` : ''}`);
+    else if (!r.configured) toast('Tailnet access off — localhost is still running');
+  } else {
+    await refreshTailnet();
+  }
 }
 
 /* ───────────────────────── workbench ───────────────────────── */
@@ -852,6 +922,8 @@ function wireGlobal() {
     t.addEventListener('click', () => go(t.dataset.v)));
   document.getElementById('openModal')?.addEventListener('click', () => openModal());
   document.getElementById('gitBtn')?.addEventListener('click', openGitPanel);
+  document.getElementById('tailnetBtn')?.addEventListener('click', toggleTailnet);
+  window.addEventListener('focus', refreshTailnet);
 
   // profile menu — placeholder items for now; functionality comes later
   const pb = document.getElementById('profileBtn');
@@ -913,6 +985,7 @@ function wireGlobal() {
     wireGlobal();
     await loadState();
     renderAll();
+    refreshTailnet();
     connectWS();
     startHeartbeat();
     // deep links: #cats, #ov, #<projectKey>, #new or #new:<category> (Add Task)

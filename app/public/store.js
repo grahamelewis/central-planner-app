@@ -39,6 +39,8 @@ export const state = {
                   // ◆ next up + ⧉ calendar: deadlines per project; cal =
                   // {sources:[{id,name,count,error,fetched}] (NO urls — secret),
                   //  includeAllDay, routes:{uid→{to}}, events:[occurrences], fetched}
+  tailnet: { state: 'checking', available: false, configured: false, connected: false },
+                  // host Tailscale Serve state for the top-bar private-access control
 };
 
 /** @type {UiState} */

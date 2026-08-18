@@ -229,7 +229,12 @@ npm start          # → http://127.0.0.1:4242  (localhost only — never expose
   **⬆ Update now** button (a safe fast-forward pull; it refuses if you have local
   edits or commits, and runs `npm install` when dependencies changed). After an
   update, restart the server and hard-refresh the browser.
+- **Tailnet access**: from the host Mac, the top-bar Tailnet control publishes
+  the localhost server privately through Tailscale Serve. It shows actual CLI
+  state (`live`, saved-but-disconnected, conflict, unavailable), never enables
+  public Funnel, and remote clients cannot change it.
 - Launching/messaging tasks spawns real Claude Code or Codex turns against your own account (billed or plan-limited). Interrupt from the UI.
 - Sessions run with `settingSources: ['project']`, so each repo's `.claude` settings apply.
-- To run the server permanently on a desktop and use it from a laptop anywhere,
-  see `deploy/REMOTE.md` (Tailscale + launchd; never run two servers at once).
+- The desktop shell can start the server on demand. To keep it running even
+  after Cmd+Q or without opening the shell, see `deploy/REMOTE.md` for the
+  always-on launchd mode (never run two servers at once).

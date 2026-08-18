@@ -1,8 +1,9 @@
 // desktop/serverlink.js — the shell's server link: lifecycle + notifier.
-// Attach-only (BLUEPRINT §2/§4, I1–I2): the only verbs here are attach, wait,
-// and refuse. The single launchctl use is the READ-ONLY `launchctl list
-// local.projectmanager` query — nothing in this file starts, signals, or
-// restarts any process, and nothing imports electron: every effectful
+// Process ownership remains outside this pure module: main.js injects start
+// and stop effects. The lifecycle serializes their decisions alongside attach,
+// launchd wait, and occupied-port refusal. The launchctl use here remains the
+// READ-ONLY `launchctl list local.projectmanager` query, and nothing imports
+// electron: every effectful
 // dependency (fetch, net, execFile, fs, ws, timers, clock) is injectable so
 // test/lifecycle.test.mjs runs under plain `node --test` with fakes only.
 // The notifier half (createNotifier: the one WS + native banners) sits at the
@@ -19,9 +20,11 @@ const MIN_VISIBLE = 100; // px of window that must land on some display to keep 
 
 export const STATES = {
   CONNECTING: 'CONNECTING',             // pre-decision / transient TIMEOUT — default splash
+  STARTING_SERVER: 'STARTING_SERVER',   // no server + no launchd: desktop-owned child is booting
   ATTACH: 'ATTACH',                     // healthy server found; caller loadURLs, loop ends
   WAIT_LAUNCHD: 'WAIT_LAUNCHD',         // REFUSED + job loaded: KeepAlive is bringing it back
   SERVER_ABSENT: 'SERVER_ABSENT',       // REFUSED + job not loaded: splash with start instructions
+  SERVER_FAILED: 'SERVER_FAILED',       // owned child failed to spawn or missed its readiness budget
   BLOCKED_OCCUPIED: 'BLOCKED_OCCUPIED', // the §4 diagram's BLOCKED_FOREIGN box; reason: 'foreign' | 'occupied'
 };
 
@@ -148,6 +151,8 @@ export function createLifecycle({
   probe: probeDep,
   tcpAccepts: tcpDep,
   launchdLoaded: launchdDep,
+  startServer: startServerDep,
+  stopServer: stopServerDep = async () => {},
   onState,
   log = () => {},
   setTimeout: setT = globalThis.setTimeout,
@@ -160,6 +165,9 @@ export function createLifecycle({
   let inFlight = false;
   let waitSince = null;  // start of the current contiguous WAIT_LAUNCHD stretch
   let lastState = null;
+  let startAttempted = false;
+  let startSince = null;
+  let startFailed = null;
 
   const stale = (g) => g !== gen || !active;
 
@@ -189,6 +197,10 @@ export function createLifecycle({
       }
       if (cls === 'FOREIGN') {
         waitSince = null;
+        if (startAttempted) {
+          try { await stopServerDep('port became occupied by a foreign HTTP service'); }
+          catch (err) { log(`lifecycle: gen ${g} owned stop failed (${err?.message || err})`); }
+        }
         emit({ name: STATES.BLOCKED_OCCUPIED, reason: 'foreign', port, gen: g });
         return schedule(g, 5000);
       }
@@ -197,8 +209,15 @@ export function createLifecycle({
         if (stale(g)) return;
         log(`lifecycle: gen ${g} tcp ${up ? 'accepts' : 'refuses'}`);
         waitSince = null;
-        if (up) emit({ name: STATES.BLOCKED_OCCUPIED, reason: 'occupied', port, gen: g });
-        else emit({ name: STATES.CONNECTING, port, gen: g }); // transient — stay on the default splash
+        if (up) {
+          emit({ name: STATES.BLOCKED_OCCUPIED, reason: 'occupied', port, gen: g });
+          return schedule(g, 5000);
+        }
+        if (startAttempted && !startFailed) {
+          emit({ name: STATES.STARTING_SERVER, port, gen: g });
+          return schedule(g, 500);
+        }
+        emit({ name: STATES.CONNECTING, port, gen: g }); // transient — stay on the default splash
         return schedule(g, 5000);
       }
       // REFUSED → consult launchd (read-only) for WAIT vs ABSENT
@@ -212,8 +231,40 @@ export function createLifecycle({
         return schedule(g, now() - waitSince < 20000 ? 1000 : 5000);
       }
       waitSince = null;
-      emit({ name: STATES.SERVER_ABSENT, port, gen: g });
-      return schedule(g, 5000);
+      if (typeof startServerDep !== 'function') {
+        emit({ name: STATES.SERVER_ABSENT, port, gen: g });
+        return schedule(g, 5000);
+      }
+      if (startFailed) {
+        emit({ name: STATES.SERVER_FAILED, reason: startFailed, port, gen: g });
+        return schedule(g, 5000);
+      }
+      if (!startAttempted) {
+        startAttempted = true;
+        startSince = now();
+        emit({ name: STATES.STARTING_SERVER, port, gen: g });
+        try {
+          await startServerDep(port);
+        } catch (err) {
+          if (stale(g)) return;
+          startFailed = err?.message || String(err);
+          log(`lifecycle: gen ${g} owned start failed (${startFailed})`);
+          emit({ name: STATES.SERVER_FAILED, reason: startFailed, port, gen: g });
+          return schedule(g, 5000);
+        }
+        if (stale(g)) return;
+        return schedule(g, 250);
+      }
+      if (now() - startSince >= 15000) {
+        startFailed = 'server did not become ready within 15 seconds';
+        try { await stopServerDep(startFailed); }
+        catch (err) { log(`lifecycle: gen ${g} owned stop failed (${err?.message || err})`); }
+        if (stale(g)) return;
+        emit({ name: STATES.SERVER_FAILED, reason: startFailed, port, gen: g });
+        return schedule(g, 5000);
+      }
+      emit({ name: STATES.STARTING_SERVER, port, gen: g });
+      return schedule(g, 500);
     } finally {
       inFlight = false;
     }
@@ -226,6 +277,9 @@ export function createLifecycle({
         gen += 1;
         active = true;
         waitSince = null;
+        startAttempted = false;
+        startSince = null;
+        startFailed = null;
         lastState = null;
         iterate(gen);
       } else if (timer !== null) {

@@ -12,6 +12,22 @@ output); browsers are thin views. So you run ONE server on an always-on
 machine (the "host") and connect to it from any browser — every device sees the
 same thing, live.
 
+## Desktop-controlled access (the easy path)
+
+Open the packaged Central Planner app. If no server or loaded launchd job owns
+the configured port, the desktop app starts one. Then click **Tailnet off** in
+the top bar to create Central Planner's private Tailscale Serve mapping. The
+chip becomes **Tailnet live** and exposes the tailnet HTTPS URL. Turning it off
+removes only Central Planner's mapping; localhost keeps running. If Tailscale
+was stopped but already signed in, the same click reconnects it with its saved
+settings before publishing the dashboard.
+
+The red close button hides the shell, so its owned server and Tailnet access
+remain available. Cmd+Q warns, disables Central Planner's Serve mapping, and
+stops a desktop-owned server. Use the launchd setup below when remote access
+must survive Cmd+Q, an Electron crash, or a host session where the desktop app
+was never opened.
+
 **Trust model — read this.** The app has NO login of its own. Privacy comes
 entirely from the network layer: locally it binds `127.0.0.1` only; with
 `tailscale serve` it's reachable by every device signed into *your* Tailscale
@@ -23,7 +39,7 @@ Tailscale funnel / public share, and never bind the server to `0.0.0.0`.
 run two servers at once.** Both write tasks/ledger into the folder, and a synced
 copy would create conflict files. Pick one host; the others only browse.
 
-## One-time setup
+## Always-on host setup
 
 ### Every device
 1. Install Tailscale: <https://tailscale.com/download> (or `brew install --cask tailscale`).

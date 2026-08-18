@@ -46,7 +46,7 @@
     50% { opacity: 1; transform: scale(1); }
   }
   #wait-launchd .dot { background: var(--warn); }
-  #absent .dot, #occupied .dot { background: var(--bad); animation-duration: 2.4s; }
+  #absent .dot, #server-failed .dot, #occupied .dot { background: var(--bad); animation-duration: 2.4s; }
   footer { color: var(--dim); font-size: 12px; opacity: 0.8; }
 </style>
 </head>
@@ -67,11 +67,25 @@
     <footer>Reconnecting automatically — no action needed here.</footer>
   </section>
 
+  <section id="starting-server">
+    <div class="dot"></div>
+    <h1>Starting Central Planner…</h1>
+    <p>The desktop app is bringing up the local server.</p>
+    <footer>This normally takes only a few seconds.</footer>
+  </section>
+
   <section id="absent">
     <div class="dot"></div>
     <h1>The server isn't running</h1>
     <p><code>cd app &amp;&amp; npm start</code> · or load the launchd service (<code>local.projectmanager</code>).</p>
     <footer>Reconnecting automatically — no action needed here.</footer>
+  </section>
+
+  <section id="server-failed">
+    <div class="dot"></div>
+    <h1>The local server could not start</h1>
+    <p>See Central Planner’s shell and server logs for details, then reopen the app.</p>
+    <footer>The app will never compete with another process holding its port.</footer>
   </section>
 
   <section id="occupied">

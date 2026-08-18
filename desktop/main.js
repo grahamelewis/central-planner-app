@@ -2,10 +2,10 @@
 // Wiring ONLY: every decision that can be unit-tested lives in serverlink.js;
 // this file binds it to real deps. The renderer holds zero privileges (I4):
 // the window is a sandboxed browser tab — no injected scripts, no IPC surface.
-// Nothing here starts, stops, or messages any server process (I1/I2).
 import { app, BrowserWindow, Menu, Notification, dialog, nativeTheme, powerMonitor, screen, session, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   STATES, resolvePort, probe, tcpAccepts, launchdLoaded,
@@ -16,12 +16,15 @@ import {
 const DESKTOP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CONNECTING = path.join(DESKTOP_DIR, 'connecting.html');
 const DEV_ICON = path.join(DESKTOP_DIR, 'icon.png');
+const REPO_HINT = path.join(DESKTOP_DIR, 'repo-location.json');
 const DEFAULT_SIZE = { width: 1280, height: 860 };
 const EXTERNAL_SCHEMES = new Set(['http:', 'https:', 'mailto:']);
 const HASH_FOR = { // both BLOCKED reasons (foreign | occupied) share one splash section
   [STATES.CONNECTING]: '',
+  [STATES.STARTING_SERVER]: 'starting-server',
   [STATES.WAIT_LAUNCHD]: 'wait-launchd',
   [STATES.SERVER_ABSENT]: 'absent',
+  [STATES.SERVER_FAILED]: 'server-failed',
   [STATES.BLOCKED_OCCUPIED]: 'occupied',
 };
 
@@ -33,6 +36,12 @@ let themeTimer = null;       // chrome-theme sync poll (unref'd; Settings-toggle
 let lifecycle = null;
 let notifier = null;         // created on first ATTACH (ensureNotifier); disposed on app 'quit'
 let boundsTimer = null;
+let ownedChild = null;       // set only for a server process this shell spawned
+let ownedExpectedExit = false;
+let ownedStoppedForQuit = false;
+let quitApproved = false;
+let quitCheckPending = false;
+let ownedExitTimes = [];
 let logger = { log: () => {}, path: '' }; // replaced in init(); pre-ready calls no-op
 const log = (line) => logger.log(line);
 
@@ -49,7 +58,8 @@ function registerApp() {
     if (win.isMinimized()) win.restore();
     win.focus();
   });
-  app.on('before-quit', () => { quitting = true; flushBounds(); });
+  app.on('before-quit', onBeforeQuit);
+  app.on('will-quit', onWillQuit);
   // 'quit' only, never before-quit: the draft-guard Stay path aborts a quit
   // and the app keeps running — the notifier must stay alive through it (F5).
   app.on('quit', () => { notifier?.dispose?.(); });
@@ -75,11 +85,236 @@ function init() {
     probe: (port) => probe({ port, log }),
     tcpAccepts: (port) => tcpAccepts({ port }),
     launchdLoaded: () => launchdLoaded({ log }),
+    startServer: (port) => startOwnedServer(port),
+    stopServer: (reason) => stopOwnedServer(reason),
     onState: handleState,
     log,
   });
   lifecycle.trigger('startup');
   powerMonitor.on('resume', () => { lifecycle.trigger('resume'); notifier?.kick?.(); });
+}
+
+// ---------------------------------------------------------------- owned server
+
+function serverLocationFile() { return path.join(app.getPath('userData'), 'server-location.json'); }
+function ownerFile() { return path.join(app.getPath('userData'), 'server-owner.json'); }
+
+function validRepoRoot(root) {
+  if (!root || typeof root !== 'string') return false;
+  try {
+    return fs.statSync(path.join(root, 'app', 'server.js')).isFile()
+      && fs.statSync(path.join(root, 'app', 'package.json')).isFile();
+  } catch { return false; }
+}
+
+function readJson(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
+
+function persistJson(file, value) {
+  try {
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(value, null, 2));
+    fs.renameSync(`${file}.tmp`, file);
+  } catch (err) {
+    log(`server-owner: persist failed (${err.message})`);
+  }
+}
+
+function resolveRepoRoot() {
+  const persisted = readJson(serverLocationFile())?.repoRoot;
+  const packagedHint = readJson(REPO_HINT)?.repoRoot;
+  const devRoot = app.isPackaged ? null : path.resolve(DESKTOP_DIR, '..');
+  for (const [source, candidate] of [
+    ['CP_REPO', process.env.CP_REPO],
+    ['persisted', persisted],
+    ['packaged hint', packagedHint],
+    ['development checkout', devRoot],
+  ]) {
+    if (!validRepoRoot(candidate)) continue;
+    const root = path.resolve(candidate);
+    persistJson(serverLocationFile(), { repoRoot: root });
+    log(`server-owner: repo ${root} (${source})`);
+    return root;
+  }
+
+  const picked = dialog.showOpenDialogSync(win, {
+    title: 'Locate the Central Planner folder',
+    message: 'Choose the folder that contains app/server.js and desktop/.',
+    properties: ['openDirectory'],
+  })?.[0];
+  if (validRepoRoot(picked)) {
+    const root = path.resolve(picked);
+    persistJson(serverLocationFile(), { repoRoot: root });
+    log(`server-owner: repo ${root} (chosen)`);
+    return root;
+  }
+  throw new Error('Central Planner repository could not be located');
+}
+
+function resolveNode() {
+  const candidates = [
+    process.env.CP_NODE_BIN,
+    '/opt/homebrew/bin/node',
+    '/usr/local/bin/node',
+    '/usr/bin/node',
+  ].filter(Boolean);
+  for (const bin of candidates) {
+    try {
+      fs.accessSync(bin, fs.constants.X_OK);
+      const version = execFileSync(bin, ['--version'], { encoding: 'utf8', timeout: 2000 }).trim();
+      const major = Number(/^v?(\d+)/.exec(version)?.[1]);
+      if (major >= 20) return bin;
+      log(`server-owner: ignoring ${bin} (${version || 'unknown version'}; Node 20+ required)`);
+    } catch { /* next */ }
+  }
+  throw new Error('Node.js 20 or newer was not found');
+}
+
+function startOwnedServer(port) {
+  if (ownedChild && ownedChild.exitCode === null) return Promise.resolve();
+  const now = Date.now();
+  ownedExitTimes = ownedExitTimes.filter((t) => now - t < 60000);
+  if (ownedExitTimes.length >= 2) {
+    throw new Error('server exited twice within 60 seconds; automatic restart stopped');
+  }
+  const repoRoot = resolveRepoRoot();
+  const appDir = path.join(repoRoot, 'app');
+  const node = resolveNode();
+  const serverLog = path.join(app.getPath('userData'), 'logs', 'server.log');
+  fs.mkdirSync(path.dirname(serverLog), { recursive: true });
+  const fd = fs.openSync(serverLog, 'a');
+  let child;
+  try {
+    child = spawn(node, ['server.js'], {
+      cwd: appDir,
+      env: {
+        ...process.env,
+        CP_PORT: String(port),
+        PATH: '/opt/homebrew/bin:/opt/homebrew/sbin:/Library/TeX/texbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+      },
+      stdio: ['ignore', fd, fd],
+    });
+  } finally {
+    fs.closeSync(fd);
+  }
+  ownedChild = child;
+  ownedExpectedExit = false;
+  ownedStoppedForQuit = false;
+  log(`server-owner: spawning via ${node} on port ${port}`);
+
+  child.once('exit', (code, signal) => {
+    const expected = ownedExpectedExit;
+    log(`server-owner: pid ${child.pid} exit code=${code} signal=${signal || '-'} expected=${expected}`);
+    if (ownedChild === child) ownedChild = null;
+    const rec = readJson(ownerFile());
+    if (rec?.pid === child.pid) {
+      try { fs.unlinkSync(ownerFile()); } catch { /* already gone */ }
+    }
+    if (!expected && !quitting) {
+      const exitedAt = Date.now();
+      ownedExitTimes = ownedExitTimes.filter((t) => exitedAt - t < 60000);
+      ownedExitTimes.push(exitedAt);
+      lifecycle?.dispose();
+      lifecycle?.trigger('owned-server-exit');
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    child.once('spawn', () => {
+      persistJson(ownerFile(), {
+        pid: child.pid,
+        startedAt: new Date().toISOString(),
+        repoRoot,
+        port,
+      });
+      log(`server-owner: started pid ${child.pid}`);
+      resolve();
+    });
+    child.once('error', (err) => {
+      if (ownedChild === child) ownedChild = null;
+      log(`server-owner: spawn failed (${err.message})`);
+      reject(err);
+    });
+  });
+}
+
+async function stopOwnedServer(reason = 'quit') {
+  const child = ownedChild;
+  if (!child || child.exitCode !== null) return;
+  ownedExpectedExit = true;
+  log(`server-owner: stopping pid ${child.pid} (${reason})`);
+  try { child.kill('SIGTERM'); } catch { return; }
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; clearTimeout(timer); resolve(); } };
+    const timer = setTimeout(() => {
+      try { if (child.exitCode === null) child.kill('SIGKILL'); } catch { /* already gone */ }
+      finish();
+    }, 3000);
+    child.once('exit', finish);
+  });
+}
+
+async function quitImpact() {
+  if (!dashboardOrigin) return { active: 0, tailnet: false };
+  try {
+    const res = await fetch(`${dashboardOrigin}/api/state`, { signal: AbortSignal.timeout(1800) });
+    const s = await res.json();
+    const sessions = Array.isArray(s.sessions) ? s.sessions.length : 0;
+    const runs = Object.values(s.runs || {}).filter((r) => r?.state === 'running').length;
+    const jobs = (s.jobs || []).filter((j) => j?.state === 'running').length;
+    const fixes = Object.values(s.texfix || {}).filter((f) => f?.state === 'running').length;
+    return { active: sessions + runs + jobs + fixes, tailnet: s.tailnet?.configured === true };
+  } catch {
+    return { active: 0, tailnet: false };
+  }
+}
+
+function onBeforeQuit(event) {
+  flushBounds();
+  if (!ownedChild || quitApproved) {
+    quitting = true;
+    return;
+  }
+  event.preventDefault();
+  if (quitCheckPending) return;
+  quitCheckPending = true;
+  quitImpact().then(({ active, tailnet }) => {
+    const impacts = [];
+    if (active) impacts.push(`${active} active job${active === 1 ? '' : 's'} will be interrupted`);
+    if (tailnet) impacts.push('Tailnet access will go offline');
+    const leave = !impacts.length || dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      message: 'Quit Central Planner?',
+      detail: impacts.join('. ') + '.',
+      buttons: ['Stay', 'Quit'],
+      defaultId: 0,
+      cancelId: 0,
+    }) === 1;
+    quitCheckPending = false;
+    if (!leave) { quitting = false; return; }
+    quitApproved = true;
+    quitting = true;
+    app.quit();
+  }).catch(() => {
+    quitCheckPending = false;
+    quitApproved = true;
+    quitting = true;
+    app.quit();
+  });
+}
+
+function onWillQuit(event) {
+  if (!ownedChild || ownedStoppedForQuit) return;
+  event.preventDefault();
+  ownedStoppedForQuit = true;
+  const disableTailnet = dashboardOrigin
+    ? fetch(`${dashboardOrigin}/api/tailnet/disable`, { method: 'POST', signal: AbortSignal.timeout(5000) })
+        .catch((err) => log(`server-owner: tailnet disable on quit failed (${err.message})`))
+    : Promise.resolve();
+  disableTailnet.finally(() => {
+    stopOwnedServer('application quit').finally(() => app.quit());
+  });
 }
 
 // ---------------------------------------------------------------- window
@@ -249,7 +484,10 @@ function onWillPreventUnload(event) {
   if (leave) event.preventDefault();
   // Stay during a Cmd+Q: before-quit already ran, so the flag must reset or the
   // next Cmd+W would really close the window instead of hiding it
-  else quitting = false;
+  else {
+    quitting = false;
+    quitApproved = false;
+  }
   log(`draft-guard: ${leave ? 'leave' : 'stay'}`);
 }
 

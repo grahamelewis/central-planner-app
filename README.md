@@ -42,14 +42,19 @@ npm start
 Open <http://127.0.0.1:4242>. The server binds to localhost and has no public-web
 authentication; do not expose it directly to the internet.
 
+This is the recommended way to run Central Planner. The desktop app can also
+start a server on demand, and `app/deploy/REMOTE.md` sets one up to start at
+login. Whichever you choose, run only one server against this folder at a time.
+
 The current folder already includes installed dependencies so the migrated app
 can continue running immediately. `package-lock.json` remains the reproducible
 source of truth for future installs.
 
 ## Desktop window
 
-The optional Electron shell attaches to the same local server; it never starts a
-second server.
+The optional Electron shell attaches to an existing server, waits for a loaded
+launchd service, or starts one local server when neither exists. It stops only a
+server it started itself; an attached launchd or manual server is left running.
 
 ```bash
 cd desktop
@@ -64,9 +69,23 @@ npm install
 npm run pack
 ```
 
-See `desktop/README.md` for notification, signing, and lifecycle details. For an
-always-on server reached over a private Tailscale network, see
-`app/deploy/REMOTE.md`.
+See `desktop/README.md` for notification, signing, ownership, and quit semantics.
+
+## Private tailnet access
+
+The dashboard's top bar can publish Central Planner to your own Tailscale
+network through Tailscale Serve, and turn it off again. It is off by default,
+the server itself stays bound to `127.0.0.1`, and Funnel — public internet
+exposure — is never used. This is a dashboard feature: it works in a browser
+tab, with or without the desktop app.
+
+Read this before turning it on. Central Planner has no login of its own, so
+every device on your tailnet that can reach the URL gets full control of the
+dashboard — including running code in your project folders and spending money
+through your AI accounts. Keep your tailnet to your own devices. Access can only
+be switched on or off from the host Mac.
+
+`app/deploy/REMOTE.md` covers the always-on host setup.
 
 ## Configuration and first-run setup
 
@@ -88,4 +107,3 @@ npm test
 
 The automated app tests block billed AI dispatch. The application source is under
 `app/`; the desktop shell is under `desktop/`; live user state stays at this root.
-

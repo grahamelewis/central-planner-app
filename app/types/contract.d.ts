@@ -388,6 +388,22 @@ interface UpdateStatus {
   [k: string]: any;
 }
 
+/** lib/tailnet.js status (snapshot `tailnet`, `tailnet:status`). */
+interface TailnetStatus {
+  state?: 'checking' | 'off' | 'live' | 'disconnected' | 'unavailable' | 'conflict' | 'error' | string;
+  available?: boolean;
+  connected?: boolean;
+  configured?: boolean;
+  shared?: boolean;
+  backendState?: string;
+  url?: string;
+  target?: string;
+  error?: string | null;
+  checkedAt?: string | null;
+  canManage?: boolean;
+  [k: string]: any;
+}
+
 /* ───────────────────────── snapshots (Δ change history) ───────────────────────── */
 
 interface SnapFileChange {
@@ -487,6 +503,7 @@ interface StateSnapshot {
   texfix: { [key: string]: TexFixState };
   kaimon: KaimonState;
   update: UpdateStatus;
+  tailnet: TailnetStatus;
   plan: PlanState;
   auth?: AuthState;
   /** GET /api/profile card ({} before first generate). */
@@ -530,6 +547,7 @@ type WsEventMap = {
   'job:status': { project: ProjectKey; job: JobInfo };
   'auth:status': AuthState;
   'update:status': UpdateStatus;
+  'tailnet:status': TailnetStatus;
   'texfix:status': { project: ProjectKey; fix: TexFixState | null };
   'kaimon:status': KaimonState;
   'decisions:update': { project: ProjectKey; decisions: DecisionsState };

@@ -2,7 +2,7 @@
   "name": "central-planner-desktop",
   "private": true,
   "version": "0.1.0",
-  "description": "Central Planner desktop shell — attach-only Electron client of the one local server",
+  "description": "Central Planner desktop shell and safe on-demand owner of the local server",
   "type": "module",
   "main": "main.js",
   "engines": {

@@ -1,11 +1,12 @@
 # Central Planner — desktop shell
 
-An attach-only Electron client of the one local server: real window and dock
-identity, native macOS banners even with the window closed, and
+An Electron client and safe on-demand owner of the one local server: real
+window and dock identity, native macOS banners even with the window closed, and
 `backgroundThrottling:false` so the dashboard's heartbeat and stale-checks run
-at full rate while hidden. The shell contains **no code path that starts,
-signals, or restarts a server** — it attaches, waits, or refuses, nothing else.
-The binding rules live in `CONTRACT.md`; `BLUEPRINT.html` is the design record.
+at full rate while hidden. It attaches to an existing server or loaded launchd
+job; only when both are absent does it start and own one local Node server. The
+binding rules live in `CONTRACT.md`; `BLUEPRINT.html` is the historical Phase-1
+design record.
 
 ## Run / pack / test
 
@@ -25,11 +26,31 @@ balks, right-click → Open once.
 
 ## The one-server rule
 
-The launchd job `local.projectmanager` owns port 4242 with KeepAlive and is the
-only server. The shell attaches to it, waits for it, or refuses the port —
-never spawns a rival. Browser tabs and the phone PWA keep working alongside
-the shell, unconditionally. On a machine with no server at all: `cd app &&
-npm start`, or load the launchd job — the shell's splash says the same.
+The shell probes first. A healthy Central Planner is attached; a loaded
+`local.projectmanager` job is allowed to recover; a foreign/occupied port is
+refused. Only `ECONNREFUSED` plus no loaded job reaches desktop-owned startup.
+The server binds before running startup sweeps/watchers, so a launch race exits
+without mutating state. Close hides and keeps an owned server running. Cmd+Q
+stops only the shell's own child; an attached launchd/manual server is untouched.
+
+The packaged app carries a build-time checkout hint and persists a validated,
+repairable repository location in Electron userData. It still runs the server
+from the checkout—server code and durable state are not copied into the app.
+
+## Tailnet access
+
+The top-bar **Tailnet** control manages one private Tailscale Serve mapping for
+Central Planner. It never invokes Funnel or `serve reset`, refuses to overwrite
+another root handler, and can only be changed from the host Mac. `Tailnet live`
+means Tailscale is connected *and* the mapping targets this server; `Tailnet
+saved` means the mapping exists but Tailscale is currently offline. Remote
+browsers see status only. Clicking a saved/offline chip reconnects Tailscale
+with its existing settings before making Central Planner live.
+
+Close hides, so Tailnet access stays live. Cmd+Q warns when remote access or
+active work would be interrupted; for a desktop-owned server it disables the
+Central Planner Serve mapping and stops that server. Attached launchd/manual
+servers and their remote access are left alone.
 
 ## Notifications
 
@@ -68,6 +89,8 @@ new browser origin, so expect one more one-time view-state reset.
 - `~/Library/Application Support/Central Planner/logs/shell.log` — the packaged
   shell's log. Under `npm start` the userData name differs:
   `~/Library/Application Support/central-planner-desktop/logs/shell.log`.
+- `…/logs/server.log` beside `shell.log` — a desktop-owned server's stdout and
+  stderr.
 
 shell.log records every lifecycle decision with its evidence (probe class,
 launchctl exit, generation), every dropped URL scheme, and every banner fired,

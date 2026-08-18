@@ -132,6 +132,22 @@ body{
 .tab.on .trialTag{ background:var(--ink-inv-1f); color:var(--ink-inv-b0); }
 @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.4} }
 #nav .right{ margin-left:auto; display:flex; gap:8px; align-items:center; }
+#nav .tailnetBtn{
+  display:inline-flex; align-items:center; gap:6px; padding:6px 10px;
+  border:1px solid var(--line); border-radius:99px; background:var(--glass);
+  color:var(--mut); font-family:inherit; font-size:10.5px; font-weight:700; line-height:1;
+  white-space:nowrap; cursor:pointer;
+}
+#nav .tailnetBtn:hover{ border-color:var(--ov55); color:var(--ink); }
+#nav .tailnetBtn:disabled{ cursor:default; opacity:.7; }
+#nav .tailnetBtn .tailnetDot{ width:7px; height:7px; border-radius:50%; background:var(--off); }
+#nav .tailnetBtn.live{ color:var(--green); border-color:rgb(from var(--green) r g b / 32%); }
+#nav .tailnetBtn.live .tailnetDot{ background:var(--green); box-shadow:0 0 0 3px rgb(from var(--green) r g b / 12%); }
+#nav .tailnetBtn.disconnected{ color:var(--yellow); }
+#nav .tailnetBtn.disconnected .tailnetDot{ background:var(--yellow); }
+#nav .tailnetBtn.conflict, #nav .tailnetBtn.error{ color:var(--pink); }
+#nav .tailnetBtn.conflict .tailnetDot, #nav .tailnetBtn.error .tailnetDot{ background:var(--pink); }
+#nav .tailnetBtn.remote{ cursor:default; }
 #nav .chip{
   font-size:11.5px; color:var(--mut); background:var(--glass); border:1px solid var(--line);
   padding:6px 13px; border-radius:99px; white-space:nowrap;

@@ -84,6 +84,7 @@ function ensureIcon() {
 }
 
 async function pack(iconPath) {
+  const repoRoot = path.resolve(DESKTOP, '..');
   const outDirs = await packager({
     dir: DESKTOP,
     out: PACK_TMP,
@@ -97,6 +98,12 @@ async function pack(iconPath) {
     derefSymlinks: true,
     icon: iconPath ?? undefined,
     ignore: (p) => p !== '' && !SHIP.has(p),
+    // The packaged shell lives under Contents/Resources/app, so dirname
+    // arithmetic can never find the external server checkout. Seed a validated,
+    // user-repairable hint instead; main.js persists it in userData on first use.
+    afterCopy: [({ buildPath }) => {
+      fs.writeFileSync(path.join(buildPath, 'repo-location.json'), JSON.stringify({ repoRoot }, null, 2));
+    }],
   });
   return path.join(outDirs[0], `${APP_NAME}.app`);
 }

@@ -174,6 +174,9 @@ export async function startSandbox({ seed, trial = [], kaimonBin, updateRepo, cl
       // developer's real CLI or account from the test sandbox.
       CP_CODEX_BIN: '/nonexistent-codex-cli',
       CP_CODEX_BOOT_MS: '150',
+      // Tailnet controls must never inspect or mutate the developer machine's
+      // real Tailscale Serve configuration from a sandbox.
+      CP_TAILSCALE_BIN: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

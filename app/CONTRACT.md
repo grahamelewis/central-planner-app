@@ -1374,6 +1374,37 @@ The dashboard is installable on all three screens with ONE brand mark
   the full dashboard — no routing change.
 - Reachability is Tailscale per `deploy/REMOTE.md` (`tailscale serve --bg
   4242`); the server never binds beyond 127.0.0.1.
+
+### Desktop ownership + Tailnet control (2026-08-18)
+
+The server's bind is the startup transaction boundary: `server.listen(PORT,
+'127.0.0.1')` must succeed before auth/Codex checks, artifact watchers,
+calendar/update loops, Kaimon and stranded-task sweeps, or configured TeX
+watches run. A bind error sets a nonzero process exit and may mutate no durable
+state. Regression: `test/startup.bind.test.mjs`.
+
+`lib/tailnet.js` owns the private-access status machine and only the root HTTPS
+Serve handler that proxies this process's `127.0.0.1:<PORT>`. Snapshot key:
+`tailnet`; WS event: `tailnet:status`; routes: GET `/api/tailnet/status`, POST
+`/api/tailnet/enable`, POST `/api/tailnet/disable`. Mutations require a loopback
+Host, refuse requests carrying Tailscale identity headers, and reject a
+non-local browser `Origin` (localhost cannot be used as a cross-site control
+endpoint). The controller:
+
+- distinguishes configured Serve intent from Tailscale connectivity (`live`
+  requires both);
+- reconnects a deliberately stopped Tailscale client with no-flag `tailscale
+  up` (saved preferences are preserved) when local enable is requested;
+- never calls Funnel or `serve reset`;
+- refuses a foreign root handler and refuses to disable a shared endpoint;
+- discovers the macOS bundled CLI with `TAILSCALE_BE_CLI=1` as well as normal
+  CLI integration paths; and
+- is pinned off in the server test harness via `CP_TAILSCALE_BIN=''` so tests
+  never read or alter the developer's real Serve configuration.
+
+The root path is deliberate: the SPA, APIs, PWA, artifacts, and WebSocket use
+root-relative URLs. A subpath mapping is unsupported without a separate
+base-path migration.
 Regression: `test/api.pwa.test.mjs` (manifests, icon paths, head identity,
 and the probe-coupling guard).
 

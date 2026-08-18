@@ -53,10 +53,9 @@ function makeClock() {
 }
 
 // Lifecycle harness: scripted probe/tcp/launchd results, spy onState + delays.
-// The injected dep set is EXHAUSTIVE — resolvePort, probe, tcpAccepts,
-// launchdLoaded, onState, log, timers, clock. There is no dep that could
-// start a process, so no decision-matrix input can reach one (I1/I2).
-function harness({ probeResults = [], tcp = [], launchd = [], port = 4242 } = {}) {
+// Process effects are injected; serverlink itself remains pure and serializes
+// decisions without importing child_process spawn.
+function harness({ probeResults = [], tcp = [], launchd = [], port = 4242, startServer, stopServer } = {}) {
   const clock = makeClock();
   const states = [];
   const delays = [];
@@ -68,6 +67,8 @@ function harness({ probeResults = [], tcp = [], launchd = [], port = 4242 } = {}
     probe: async () => { calls.probe += 1; return next(probeResults, 'REFUSED'); },
     tcpAccepts: async () => { calls.tcp += 1; return next(tcp, false); },
     launchdLoaded: async () => { calls.launchd += 1; return next(launchd, false); },
+    startServer,
+    stopServer,
     onState: (s) => states.push(s),
     log: (l) => logs.push(l),
     setTimeout: (fn, ms) => { delays.push(ms); return clock.setTimeout(fn, ms); },
@@ -229,14 +230,89 @@ test('decision matrix: full probe × launchd cross product — launchd only on R
   }
 });
 
-test('no input combination can reach a process start — none exists in the source (I1/I2)', () => {
+test('serverlink stays a pure coordinator: process start is injected by main.js', () => {
   const src = fs.readFileSync(path.join(DESKTOP_DIR, 'serverlink.js'), 'utf8');
-  assert.ok(!/spawn|fork/i.test(src), 'serverlink.js must contain no process-starting call');
+  assert.ok(!/\bspawn\s*\(/.test(src), 'serverlink.js must contain no process-starting effect');
   assert.ok(!/execSync|\bexec\(/.test(src), 'no shell-out beyond execFile');
-  // the one child_process use is the read-only launchctl list query, injectable
+  // the one child_process use remains the read-only launchctl list query
   assert.match(src, /execFile/);
+  assert.match(src, /startServerDep/);
   assert.match(src, /launchctl/);
   assert.ok(!src.includes("from 'electron'") && !src.includes('require('), 'no electron import, pure ESM');
+});
+
+test('REFUSED + no launchd starts exactly one owned server then attaches', async () => {
+  let starts = 0;
+  const h = harness({
+    probeResults: ['REFUSED', 'REFUSED', 'HEALTHY'],
+    launchd: [false, false],
+    startServer: async () => { starts += 1; },
+  });
+  h.lc.trigger('startup');
+  await drain();
+  assert.deepEqual(h.states.map((s) => s.name), [STATES.STARTING_SERVER]);
+  assert.equal(starts, 1);
+  assert.equal(h.delays[0], 250);
+  await h.clock.advance(250);
+  assert.equal(starts, 1, 'a still-booting child is never duplicated');
+  assert.equal(h.delays.at(-1), 500);
+  await h.clock.advance(500);
+  assert.deepEqual(h.states.map((s) => s.name), [STATES.STARTING_SERVER, STATES.ATTACH]);
+  assert.equal(starts, 1);
+});
+
+test('a later generation can replace an owned server that exited after attach', async () => {
+  let starts = 0;
+  const h = harness({
+    probeResults: ['REFUSED', 'HEALTHY', 'REFUSED', 'HEALTHY'],
+    launchd: [false, false],
+    startServer: async () => { starts += 1; },
+  });
+  h.lc.trigger('startup');
+  await drain();
+  await h.clock.advance(250);
+  assert.equal(h.states.at(-1).name, STATES.ATTACH);
+  assert.equal(starts, 1);
+
+  h.lc.trigger('owned-server-exit');
+  await drain();
+  assert.equal(h.states.at(-1).name, STATES.STARTING_SERVER);
+  assert.equal(starts, 2, 'process-start state resets at the generation boundary');
+  await h.clock.advance(250);
+  assert.equal(h.states.at(-1).name, STATES.ATTACH);
+});
+
+test('owned start failure becomes SERVER_FAILED without a retry loop', async () => {
+  let starts = 0;
+  const h = harness({
+    probeResults: ['REFUSED', 'REFUSED'],
+    launchd: [false, false],
+    startServer: async () => { starts += 1; throw new Error('node missing'); },
+  });
+  h.lc.trigger('startup');
+  await drain();
+  assert.deepEqual(h.states.map((s) => s.name), [STATES.STARTING_SERVER, STATES.SERVER_FAILED]);
+  assert.match(h.states.at(-1).reason, /node missing/);
+  await h.clock.advance(5000);
+  assert.equal(starts, 1);
+});
+
+test('owned child readiness budget stops the child after 15 seconds', async () => {
+  let stops = 0;
+  const probes = Array(40).fill('REFUSED');
+  const launches = Array(40).fill(false);
+  const h = harness({
+    probeResults: probes,
+    launchd: launches,
+    startServer: async () => {},
+    stopServer: async () => { stops += 1; },
+  });
+  h.lc.trigger('startup');
+  await drain();
+  await h.clock.advance(15250);
+  assert.equal(stops, 1);
+  assert.equal(h.states.at(-1).name, STATES.SERVER_FAILED);
+  assert.match(h.states.at(-1).reason, /15 seconds/);
 });
 
 // ---------------------------------------------------------------- single-flight
