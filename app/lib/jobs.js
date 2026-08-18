@@ -363,7 +363,11 @@ function etimeMs(s) {
 
 function psSnapshot() {
   return new Promise((resolve) => {
-    execFile('ps', ['-axo', 'pid=,ppid=,pcpu=,rss=,etime=,tty=,args='],
+    // -A, not -ax: POSIX `-a` drops processes with no controlling terminal,
+    // so detached runs and supervisor loops vanish from the table on Linux.
+    // -A selects every process on both BSD/macOS and procps, and produces
+    // byte-identical output to -ax here on macOS.
+    execFile('ps', ['-Ao', 'pid=,ppid=,pcpu=,rss=,etime=,tty=,args='],
       { maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
         if (err) return resolve(null);
         const now = Date.now();
