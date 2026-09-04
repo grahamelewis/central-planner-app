@@ -6,7 +6,7 @@ import { ROOT, PROJECTS } from './config.js';
 import { broadcast } from './events.js';
 import { writeFileAtomic } from './paths.js';
 import { getAgentDefaults } from './agentSettings.js';
-import { canonicalModel } from './models.js';
+import { canonicalModel, coerceEffort } from './models.js';
 export { MODEL_ALIASES, canonicalModel } from './models.js';
 
 // Every task carries an explicit model; legacy tasks with model:null fall back
@@ -49,7 +49,7 @@ function normalizeTask(task) {
   const out = { ...task };
   out.provider = out.provider === 'codex' ? 'codex' : DEFAULT_PROVIDER;
   if (out.provider === 'claude') out.model = canonicalModel(out.model) || DEFAULT_MODEL;
-  if (out.provider === 'codex' && !out.reasoningEffort) out.reasoningEffort = 'high';
+  out.reasoningEffort = coerceEffort(out.provider, out.reasoningEffort);
   // `session` remains the active provider's compatibility alias. The history
   // map retains earlier provider-owned threads when the user crosses the
   // explicit provider boundary and starts a fresh one.
@@ -144,7 +144,7 @@ export function createTask(project, fields) {
   const task = { ...defaults, ...fields };
   task.provider = task.provider === 'codex' ? 'codex' : DEFAULT_PROVIDER;
   if (task.provider === 'claude') task.model = canonicalModel(task.model) || DEFAULT_MODEL;
-  if (task.provider === 'codex' && !task.reasoningEffort) task.reasoningEffort = 'high';
+  task.reasoningEffort = coerceEffort(task.provider, task.reasoningEffort);
   if (!task.providerSessions || typeof task.providerSessions !== 'object' || Array.isArray(task.providerSessions)) {
     task.providerSessions = {};
   }
@@ -187,7 +187,7 @@ export function updateTask(project, id, patch) {
   const task = { ...tasks[idx], ...rest };
   task.provider = task.provider === 'codex' ? 'codex' : DEFAULT_PROVIDER;
   if (task.provider === 'claude') task.model = canonicalModel(task.model) || DEFAULT_MODEL;
-  if (task.provider === 'codex' && !task.reasoningEffort) task.reasoningEffort = 'high';
+  task.reasoningEffort = coerceEffort(task.provider, task.reasoningEffort);
   if (!task.providerSessions || typeof task.providerSessions !== 'object' || Array.isArray(task.providerSessions)) {
     task.providerSessions = {};
   }

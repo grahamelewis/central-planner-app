@@ -11,7 +11,7 @@ import {
   state, ui, themePref, setTheme,
   projKeys, allProjKeys, tasksOf, taskProvider, agentName,
   providerState, providerModels, perOf, taskTabRecall,
-  DEFAULT_MODEL, REASONING_EFFORTS,
+  DEFAULT_MODEL, effortsFor, coerceEffort,
 } from './store.js';
 import { api, apiQuiet } from './net.js';
 import { claudeVerb } from './console.js';
@@ -604,7 +604,7 @@ function servicesSecHtml() {
       <div class="agentDefaultCtl">
         <select id="defaultProvider" aria-label="Default AI service">${providerOptions.map(p => `<option value="${p}" ${defs.provider === p ? 'selected' : ''}>${agentName(p)}</option>`).join('')}</select>
         <select id="defaultModel" aria-label="Default model">${modelOptions}</select>
-        <select id="defaultEffort" aria-label="Default Codex reasoning effort" ${defs.provider === 'codex' ? '' : 'disabled'}>${REASONING_EFFORTS.map(r => `<option value="${r.id}" ${defs.reasoningEffort === r.id ? 'selected' : ''}>${r.label}</option>`).join('')}</select>
+        <select id="defaultEffort" aria-label="Default reasoning effort">${effortsFor(defs.provider).map(r => `<option value="${r.id}" ${defs.reasoningEffort === r.id ? 'selected' : ''}>${r.label}</option>`).join('')}</select>
       </div>
     </div>
   </div>`;
@@ -690,7 +690,11 @@ export function renderSettings() {
   host.querySelector('#defaultProvider')?.addEventListener('change', (e) => {
     const provider = e.target.value;
     const models = providerModels(provider);
-    saveDefaults({ provider, model: models.find(m => m.isDefault)?.id || models[0]?.id || null });
+    saveDefaults({
+      provider,
+      model: models.find(m => m.isDefault)?.id || models[0]?.id || null,
+      reasoningEffort: coerceEffort(provider, state.agentDefaults?.reasoningEffort),
+    });
   });
   host.querySelector('#defaultModel')?.addEventListener('change', (e) => saveDefaults({ model: e.target.value || null }));
   host.querySelector('#defaultEffort')?.addEventListener('change', (e) => saveDefaults({ reasoningEffort: e.target.value }));

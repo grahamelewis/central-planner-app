@@ -5,7 +5,7 @@
 import { enc, esc, toast } from './util.js';
 import {
   state, ui, projKeys, tasksOf, agentName, providerState, providerModels,
-  perOf, REASONING_EFFORTS,
+  perOf, effortsFor, coerceEffort,
 } from './store.js';
 import { api } from './net.js';
 import { catGroup, catGroups, groupColor } from './views.js';
@@ -222,7 +222,7 @@ export function renderModal() {
       }).join('')}</div>
       <div class="modelPick" id="mModels">${(providerModels(f.provider).length ? providerModels(f.provider) : [{ id: '', label: f.provider === 'codex' ? 'Codex default' : 'No models loaded' }]).map(m =>
         `<span class="pillOpt ${f.model === m.id ? 'on' : ''}" data-am="${esc(m.id)}">${esc(m.label || m.id)}</span>`).join('')}</div>
-      ${f.provider === 'codex' ? `<div class="effortPick"><span>Reasoning effort</span>${REASONING_EFFORTS.map(r => `<span class="pillOpt ${f.reasoningEffort === r.id ? 'on' : ''}" data-ae="${r.id}">${r.label}</span>`).join('')}</div>` : ''}
+      <div class="effortPick"><span>Reasoning effort</span>${effortsFor(f.provider).map(r => `<span class="pillOpt ${f.reasoningEffort === r.id ? 'on' : ''}" data-ae="${r.id}">${r.label}</span>`).join('')}</div>
       ${providerState(f.provider).connected ? '' : `<div class="agentOfflineNote">${agentName(f.provider)} is not connected. You can save this task, but must connect it in Settings before launch.</div>`}
     </div>
 
@@ -310,6 +310,7 @@ export function renderModal() {
     f.provider = el.dataset.ap;
     const models = providerModels(f.provider);
     f.model = models.find(m => m.isDefault)?.id || models[0]?.id || '';
+    f.reasoningEffort = coerceEffort(f.provider, f.reasoningEffort);
     renderModal();
   }));
   host.querySelectorAll('[data-am]').forEach(el => el.addEventListener('click', () => {

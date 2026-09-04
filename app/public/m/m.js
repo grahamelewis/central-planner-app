@@ -51,6 +51,9 @@ const taskOf = (p, id) => (state.tasks[p] || []).find(t => t && t.id === id) || 
 const taskProvider = (t) => t?.provider === 'codex' ? 'codex' : 'claude';
 const agentName = (p) => p === 'codex' ? 'Codex' : 'Claude';
 const providerModels = (p) => Array.isArray(state.providers?.[p]?.models) ? state.providers[p].models : [];
+// reasoning-effort ladders (mirrors store.js / lib/models.js)
+const effortsFor = (p) => (p === 'codex' ? ['minimal', 'low', 'medium', 'high', 'xhigh'] : ['low', 'medium', 'high', 'xhigh', 'max']);
+const coerceEffort = (p, e) => (effortsFor(p).includes(e) ? e : e === 'minimal' ? 'low' : e === 'max' ? 'xhigh' : 'high');
 
 let toastTimer = null;
 function toast(msg) {
@@ -602,7 +605,7 @@ function renderAdd() {
       <div class="fld"><div class="flbl">AI service and model</div>
         <div class="pills">${['claude', 'codex'].map(p => `<span class="pill agentPick ${f.provider === p ? 'on' : ''}" data-agent="${p}">${agentName(p)}${state.providers?.[p]?.connected ? ' · connected' : ' · offline'}</span>`).join('')}</div>
         <div class="pills modelPills">${(providerModels(f.provider).length ? providerModels(f.provider) : [{ id: '', label: f.provider === 'codex' ? 'Codex default' : 'default' }]).map(m => `<span class="pill ${f.model === m.id ? 'on' : ''}" data-model="${esc(m.id)}">${esc(m.label || m.id)}</span>`).join('')}</div>
-        ${f.provider === 'codex' ? `<div class="pills effortPills">${['low', 'medium', 'high', 'xhigh'].map(x => `<span class="pill ${f.reasoningEffort === x ? 'on' : ''}" data-effort="${x}">${x}</span>`).join('')}</div>` : ''}
+        <div class="pills effortPills">${effortsFor(f.provider).map(x => `<span class="pill ${f.reasoningEffort === x ? 'on' : ''}" data-effort="${x}">${x}</span>`).join('')}</div>
       </div>
       <div class="fld"><div class="flbl">Notes for ${agentName(f.provider)}</div>
         <textarea id="nNotes" rows="2" placeholder="background, constraints…">${esc(f.notes)}</textarea></div>
@@ -621,6 +624,7 @@ function renderAdd() {
     f.provider = el.dataset.agent;
     const models = providerModels(f.provider);
     f.model = models.find(m => m.isDefault)?.id || models[0]?.id || '';
+    f.reasoningEffort = coerceEffort(f.provider, f.reasoningEffort);
     renderAdd();
   }));
   sheet.querySelectorAll('[data-model]').forEach(el => el.addEventListener('click', () => { f.model = el.dataset.model || ''; renderAdd(); }));

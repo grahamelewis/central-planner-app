@@ -39,6 +39,22 @@ before(async () => {
 
 after(async () => { if (ui) await ui.stop(); });
 
+test('a fresh Claude task shows the same effort pill, defaulting to high with a Claude ladder', opts, async () => {
+  const view = await page.evaluate(() => ({
+    trigger: document.querySelector('.drop[data-drop="model"] .dropBtn')?.textContent,
+    effort: document.querySelector('.drop[data-drop="effort"] .dropBtn')?.textContent,
+  }));
+  assert.match(view.trigger, /Claude/);
+  assert.match(view.effort, /high/);
+  await page.click('.drop[data-drop="effort"] .dropBtn');
+  const items = await page.$$eval('#dropPortal .dropItem', els => els.map(e => e.dataset.val));
+  assert.deepEqual(items, ['low', 'medium', 'high', 'xhigh', 'max']);
+  await page.click('#dropPortal .dropItem[data-val="max"]');
+  await page.waitForFunction(() => document.querySelector('.drop[data-drop="effort"] .dropBtn')?.textContent.includes('max'));
+  const { body: saved } = await sb.fetchJson('GET', '/api/state');
+  assert.equal(saved.tasks.alpha.find(t => t.id === taskId).reasoningEffort, 'max');
+});
+
 test('combined provider/model picker switches a fresh task to Codex and reveals effort', opts, async () => {
   await page.click('.drop[data-drop="model"] .dropBtn');
   await page.click('#dropPortal .dropItem[data-provider="codex"][data-val="gpt-5.6-codex"]');
@@ -48,7 +64,7 @@ test('combined provider/model picker switches a fresh task to Codex and reveals 
     effort: document.querySelector('.drop[data-drop="effort"] .dropBtn')?.textContent,
   }));
   assert.match(view.trigger, /Codex · GPT-5.6 Codex/);
-  assert.match(view.effort, /high/);
+  assert.match(view.effort, /xhigh/, 'max is Claude-only → snaps to xhigh on the Codex ladder');
   const { body: saved } = await sb.fetchJson('GET', '/api/state');
   const task = saved.tasks.alpha.find(t => t.id === taskId);
   assert.equal(task.provider, 'codex');

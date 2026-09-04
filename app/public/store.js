@@ -468,11 +468,34 @@ export const CLAUDE_MODELS = [
 // Kept as a compatibility alias for the existing UI tests and any locally
 // pinned extensions; live rendering uses providerModels().
 export const MODELS = CLAUDE_MODELS;
+/* reasoning effort — one control for both providers. Codex's ladder is
+   minimal→xhigh, Claude's (the Agent SDK `effort` option) low→max; the shared
+   middle rungs carry across a provider switch. Mirrors lib/models.js. */
 /** @type {{ id: string, label: string }[]} */
-export const REASONING_EFFORTS = [
+export const CODEX_EFFORTS = [
   { id: 'minimal', label: 'minimal' },
   { id: 'low', label: 'low' },
   { id: 'medium', label: 'medium' },
   { id: 'high', label: 'high' },
   { id: 'xhigh', label: 'xhigh' },
 ];
+/** @type {{ id: string, label: string }[]} */
+export const CLAUDE_EFFORTS = [
+  { id: 'low', label: 'low' },
+  { id: 'medium', label: 'medium' },
+  { id: 'high', label: 'high' },
+  { id: 'xhigh', label: 'xhigh' },
+  { id: 'max', label: 'max' },
+];
+// Kept as a compatibility alias (the Codex ladder, as before).
+export const REASONING_EFFORTS = CODEX_EFFORTS;
+export const DEFAULT_EFFORT = 'high';
+/** @param {string} provider @returns {{ id: string, label: string }[]} */
+export const effortsFor = (provider) => (provider === 'codex' ? CODEX_EFFORTS : CLAUDE_EFFORTS);
+/** Nearest level the provider accepts (minimal↔low, max↔xhigh); unknown → high. */
+export function coerceEffort(provider, effort) {
+  if (effortsFor(provider).some(r => r.id === effort)) return effort;
+  if (effort === 'minimal') return 'low';
+  if (effort === 'max') return 'xhigh';
+  return DEFAULT_EFFORT;
+}

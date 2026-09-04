@@ -104,7 +104,7 @@ export function getAbstract(project)           // → string (abstracts/<project
   "question": null,
   "provider": "claude|codex",
   "model": "provider model id or null",
-  "reasoningEffort": "minimal|low|medium|high|xhigh",
+  "reasoningEffort": "high",            // Codex: minimal|low|medium|high|xhigh · Claude: low|medium|high|xhigh|max (SDK `effort`)
   "context": {
     "include_abstract": true, "include_last_session": true,
     "include_sibling_tasks": true, "include_category_primer": true,

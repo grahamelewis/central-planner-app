@@ -8,6 +8,7 @@ import path from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { PROJECTS, ROOT } from './config.js';
 import { getTask, updateTask, listTasks, getCategories, getAbstractInfo, DEFAULT_MODEL, DEFAULT_PROVIDER } from './taskStore.js';
+import { coerceEffort } from './models.js';
 import { projectAppendix, staleAbstractNote } from './decisions.js';
 import { logTokens, weekSummary } from './ledger.js';
 import { recordUsage } from './usage.js';
@@ -854,6 +855,7 @@ async function runClaudeTurn(project, id, promptText) {
     const extDirs = externalDirsFor(project, Array.isArray(ctx.files) ? ctx.files : []);
     if (extDirs.length) log(`granting ${extDirs.length} external dir(s) for ${key}: ${extDirs.join(', ')}`);
 
+    const reasoningEffort = coerceEffort('claude', task.reasoningEffort);
     const options = {
       cwd: PROJECTS[project].root,
       resume: (task.session && task.session.sdkSessionId) || undefined,
@@ -864,6 +866,9 @@ async function runClaudeTurn(project, id, promptText) {
       // policy and may still carry null → DEFAULT_MODEL, never the SDK's.
       // Each turn is a fresh query(), so switching applies from the next turn.
       model: task.model || DEFAULT_MODEL,
+      // task-level reasoning effort — the SDK's adaptive-thinking depth knob;
+      // the same user-facing control Codex tasks have, applies from next turn
+      effort: reasoningEffort,
       // warm-REPL tools for Julia projects (gated on a live daemon, so a null
       // here — the common case — leaves the session exactly as it was)
       ...(kaimonServers ? { mcpServers: kaimonServers } : {}),
@@ -999,7 +1004,7 @@ async function runClaudeTurn(project, id, promptText) {
 
       if (msg.type === 'system' && msg.subtype === 'init') {
         sdkSessionId = msg.session_id || sdkSessionId;
-        if (msg.model) emit(`⟐ ${msg.model} · ${permissionMode}\n`);
+        if (msg.model) emit(`⟐ ${msg.model} · effort ${reasoningEffort} · ${permissionMode}\n`);
       } else if (msg.type === 'system' && msg.subtype === 'permission_denied') {
         // 'auto' mode's classifier can deny without ever reaching canUseTool —
         // surface it, or the user only sees an unexplained tool error
@@ -1211,6 +1216,7 @@ async function runClaudeTurn(project, id, promptText) {
     const prev = (task && task.session) || null;
     const session = {
       provider: 'claude',
+      reasoningEffort,
       sdkSessionId: sdkSessionId || (prev && prev.sdkSessionId) || null,
       startedAt: (prev && prev.startedAt) || ts,
       lastTurnAt: now,

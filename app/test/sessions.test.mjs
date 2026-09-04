@@ -124,3 +124,11 @@ describe('SESSION_ENV_OVERRIDES — the session-subprocess env floor', () => {
       'the query() env must spread process.env before the overrides');
   });
 });
+
+describe('reasoning effort reaches the Agent SDK', () => {
+  const src = fs.readFileSync(path.join(APP_DIR, 'lib', 'sessions.js'), 'utf8');
+  test('the Claude query() options carry the task effort, coerced to the Claude ladder', () => {
+    assert.match(src, /const reasoningEffort = coerceEffort\('claude', task\.reasoningEffort\)/);
+    assert.match(src, /model: task\.model \|\| DEFAULT_MODEL,[\s\S]{0,400}effort: reasoningEffort,/);
+  });
+});

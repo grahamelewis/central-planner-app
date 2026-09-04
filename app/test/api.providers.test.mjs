@@ -71,3 +71,19 @@ test('Codex check is safe when the CLI is absent', async () => {
   assert.match(body.error, /not found/i);
   assert.equal(body.loginUrl, undefined, 'OAuth URLs never leak through provider state');
 });
+
+test('a Claude task carries a reasoning effort too: inherits the new-task default, persists max, snaps to xhigh when it crosses to Codex', async () => {
+  const { body: state } = await sb.fetchJson('GET', '/api/state');
+  const { body: task } = await sb.fetchJson('POST', '/api/tasks', {
+    project: 'alpha', title: 'Claude effort task', provider: 'claude', model: 'claude-fable-5-1',
+  });
+  assert.equal(task.provider, 'claude');
+  assert.equal(task.reasoningEffort, state.agentDefaults.reasoningEffort, 'a Claude task takes the same default effort a Codex task would');
+  const { body: deep } = await sb.fetchJson('PATCH', `/api/tasks/alpha/${task.id}`, { reasoningEffort: 'max' });
+  assert.equal(deep.reasoningEffort, 'max');
+  const { body: crossed } = await sb.fetchJson('PATCH', `/api/tasks/alpha/${task.id}`, {
+    provider: 'codex', model: 'gpt-test', startNewProviderThread: true,
+  });
+  assert.equal(crossed.provider, 'codex');
+  assert.equal(crossed.reasoningEffort, 'xhigh', 'max is Claude-only → nearest Codex rung');
+});

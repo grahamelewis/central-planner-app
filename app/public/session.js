@@ -7,7 +7,7 @@ import { enc, esc, OVS_LABEL, fmtTok, toast, confirmBox } from './util.js';
 import {
   state, ui, tailBufs, transcripts, pendingPerms, composerDrafts, queuedMsgs,
   tasksOf, taskProvider, agentName, providerState, providerModels,
-  providerExplicitlyBlocked, perOf, DEFAULT_MODEL, REASONING_EFFORTS,
+  providerExplicitlyBlocked, perOf, DEFAULT_MODEL, effortsFor, coerceEffort,
 } from './store.js';
 import { api } from './net.js';
 import { pumps, pumpConsole, seedTailBuf } from './console.js';
@@ -179,15 +179,17 @@ export function providerModelSelHtml(task) {
  */
 export function modelSelHtml(task) { return providerModelSelHtml(task); }
 
+/* one effort control for both providers — same pill, same menu; only the
+   ladder differs (Codex may also report a per-model subset) */
 export function reasoningSelHtml(task) {
-  if (taskProvider(task) !== 'codex') return '';
-  const model = providerModels('codex').find(m => m.id === task.model);
-  const supported = Array.isArray(model?.supportedReasoningEfforts) && model.supportedReasoningEfforts.length
+  const provider = taskProvider(task);
+  const model = providerModels(provider).find(m => m.id === task.model);
+  const supported = provider === 'codex' && Array.isArray(model?.supportedReasoningEfforts) && model.supportedReasoningEfforts.length
     ? model.supportedReasoningEfforts.map(r => ({ id: r.id || r.reasoningEffort, label: r.id || r.reasoningEffort })).filter(r => r.id)
-    : REASONING_EFFORTS;
+    : effortsFor(provider);
   const current = task.reasoningEffort || model?.defaultReasoningEffort || 'high';
   return dropHtml('effort', 'effort', 'Reasoning effort', current, supported,
-    'Codex reasoning effort — applies from the next turn');
+    `${agentName(provider)} reasoning effort — applies from the next turn`);
 }
 
 /* permission prompting, decoupled from oversight: the oversight appendix
@@ -254,6 +256,8 @@ export async function setTaskEngine(key, task, provider, modelId) {
     if (!confirmedBoundary) return;
   }
   const patch = { provider, model: modelId || null };
+  // keep the effort where both ladders share it; otherwise the nearest rung
+  if (crossing) patch.reasoningEffort = coerceEffort(provider, task.reasoningEffort);
   // Selecting the other provider is itself the explicit user action. The
   // extra dialog appears when known history makes the consequence material;
   // always send the server-side boundary acknowledgement so a transcript not
@@ -282,7 +286,7 @@ export async function setTaskModel(key, task, modelId) {
 }
 
 /**
- * PATCH the task's Codex reasoning effort.
+ * PATCH the task's reasoning effort (either provider).
  * @param {string} key project key
  * @param {Task} task
  * @param {string} effort
@@ -294,7 +298,7 @@ export async function setTaskReasoning(key, task, effort) {
   const local = tasksOf(key).find(t => t.id === task.id) || task;
   Object.assign(local, saved);
   renderWB(key);
-  toast(`next Codex turn uses ${effort} reasoning effort`);
+  toast(`next ${agentName(taskProvider(task))} turn uses ${effort} reasoning effort`);
 }
 
 /**
