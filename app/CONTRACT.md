@@ -51,7 +51,7 @@ export const WEEKLY_HOUR_TARGET = 35;
 // lib/usage.js has a reading, and no meter at all when it doesn't.
 export const USAGE_LIMITS = {
   sessionHours: 5, sessionTokens: 1e7, weeklyTokens: 1.5e8,
-  topModel: 'claude-fable-5', topModelWeeklyTokens: 3e7,
+  topModel: 'claude-fable-5-1', topModelWeeklyTokens: 3e7,
 };
 ```
 

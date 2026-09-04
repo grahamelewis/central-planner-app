@@ -460,7 +460,7 @@ export const extraRel = (fi) => (typeof fi === 'string' && fi.startsWith('x:')) 
 export const DEFAULT_MODEL = 'claude-opus-5';
 /** @type {ModelInfo[]} */
 export const CLAUDE_MODELS = [
-  { id: 'claude-fable-5', label: 'Fable 5' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
   { id: 'claude-opus-5', label: 'Opus 5', isDefault: true },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },

@@ -14,7 +14,7 @@
     "sessionHours": 5,
     "sessionTokens": 10000000,
     "weeklyTokens": 150000000,
-    "topModel": "claude-fable-5",
+    "topModel": "claude-fable-5-1",
     "topModelWeeklyTokens": 30000000
   },
   "notifications": {

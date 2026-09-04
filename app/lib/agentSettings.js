@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { ROOT } from './config.js';
 import { writeFileAtomic } from './paths.js';
+import { canonicalModel } from './models.js';
 
 const CONFIG_FILE = path.join(ROOT, 'config.json');
 const FALLBACK = Object.freeze({
@@ -29,7 +30,7 @@ function normalize(raw) {
   const a = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const provider = PROVIDERS.has(a.defaultProvider) ? a.defaultProvider : FALLBACK.provider;
   const model = typeof a.defaultModel === 'string' && a.defaultModel.trim()
-    ? a.defaultModel.trim()
+    ? canonicalModel(a.defaultModel.trim())
     : (provider === 'claude' ? FALLBACK.model : null);
   const reasoningEffort = typeof a.defaultReasoningEffort === 'string' && a.defaultReasoningEffort.trim()
     ? a.defaultReasoningEffort.trim()

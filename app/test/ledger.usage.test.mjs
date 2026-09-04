@@ -16,7 +16,7 @@ const LIMITS = {
   sessionHours: 5,
   sessionTokens: 1000,
   weeklyTokens: 10_000,
-  topModel: 'claude-fable-5',
+  topModel: 'claude-fable-5-1',
   topModelWeeklyTokens: 2000,
 };
 
@@ -125,7 +125,7 @@ describe('usageWindows — the two weekly windows', () => {
   test('the per-model window counts only that model; all-models counts both', () => {
     const now = Date.now();
     writeLedger([
-      tok(agoISO(now, HOUR), 400, 'claude-fable-5'),
+      tok(agoISO(now, HOUR), 400, 'claude-fable-5-1'),
       tok(agoISO(now, 2 * HOUR), 600, 'claude-opus-5'),
     ]);
     const r = build(LIMITS).usageWindows(now);
@@ -143,7 +143,7 @@ describe('usageWindows — the two weekly windows', () => {
 
   test('both weekly rows share the Monday boundary and always carry a reset', () => {
     const now = Date.now();
-    writeLedger([tok(agoISO(now, HOUR), 10, 'claude-fable-5')]);
+    writeLedger([tok(agoISO(now, HOUR), 10, 'claude-fable-5-1')]);
     const r = build(LIMITS).usageWindows(now);
     assert.equal(byKey(r, 'wk').resetAt, byKey(r, 'fable').resetAt);
     assert.ok(Date.parse(byKey(r, 'wk').resetAt) > now);
@@ -153,7 +153,7 @@ describe('usageWindows — the two weekly windows', () => {
 describe('usageWindows — pct', () => {
   test('rounds, and clamps at 100 rather than reporting over-budget', () => {
     const now = Date.now();
-    writeLedger([tok(agoISO(now, HOUR), 5000, 'claude-fable-5')]); // 5x the 1000 session budget
+    writeLedger([tok(agoISO(now, HOUR), 5000, 'claude-fable-5-1')]); // 5x the 1000 session budget
     const s = byKey(build(LIMITS).usageWindows(now), '5h');
     assert.equal(s.pct, 100);
     assert.equal(s.spent, 5000, 'spend itself is still reported truthfully');

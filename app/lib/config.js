@@ -88,7 +88,7 @@ export const USAGE_LIMITS = (() => {
     sessionTokens: num(o.sessionTokens, 10_000_000),
     weeklyTokens: num(o.weeklyTokens, 150_000_000),
     // the model with its own weekly cap, and that cap
-    topModel: typeof o.topModel === 'string' ? o.topModel : 'claude-fable-5',
+    topModel: typeof o.topModel === 'string' ? o.topModel : 'claude-fable-5-1',
     topModelWeeklyTokens: num(o.topModelWeeklyTokens, 30_000_000),
   };
 })();

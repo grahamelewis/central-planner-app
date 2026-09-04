@@ -177,7 +177,7 @@ export function usageWindows(nowMs = Date.now()) {
   };
 }
 
-/** 'claude-fable-5' → 'fable' — the short tag the meter shows. */
+/** 'claude-fable-5-1' → 'fable' — the short tag the meter shows. */
 function topLabel(model) {
   const m = /^claude-([a-z]+)/.exec(String(model || ''));
   return m ? m[1] : 'top';
