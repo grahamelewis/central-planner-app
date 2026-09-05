@@ -6,12 +6,14 @@ import path from 'path';
 import { spawn } from 'child_process';
 import express from 'express';
 
-import { PORT, APP_DIR, PROJECTS, ARTIFACT_GLOBS, USER_NAME } from './lib/config.js';
+import { PORT, APP_DIR, PROJECTS, ARTIFACT_GLOBS, USER_NAME, NOTIFY_TURN_END } from './lib/config.js';
 import { createProject, updateProject, projectStatus } from './lib/projectStore.js';
 import { initWss, broadcast, onClientConnect } from './lib/events.js';
 import { allTasks, listTasks, createTask, updateTask, deleteTask, getTask, getCategories, getAbstract } from './lib/taskStore.js';
 import { isPathGranted } from './lib/extpins.js';
-import { logTime, weekSummary, dailyActivity } from './lib/ledger.js';
+import { logTime, logTokens, weekSummary, dailyActivity } from './lib/ledger.js';
+import { memorySettings } from './lib/memorySettings.js';
+import { configureTaskMemory } from './lib/taskMemory.js';
 import { launchTask, sendMessage, retryLastTurn, interrupt, activeSessions, getTranscript, resolvePermission, hasActiveTurn, forgetTask, settleSession } from './lib/sessions.js';
 import { getAuthStatus, checkAuth, startLogin, startAuthChecks } from './lib/auth.js';
 import { getProvidersSnapshot } from './lib/providers.js';
@@ -46,6 +48,11 @@ process.on('unhandledRejection', (err) => {
 });
 
 const app = express();
+const taskMemory = configureTaskMemory({
+  getTask, getTranscript, isActive: hasActiveTurn,
+  notify: (project, id) => broadcast('memory:update', { project, id }),
+  logUsage: (project, id, usage, model) => logTokens(project, id, usage.inputTokens, usage.outputTokens, usage.estimatedCostUsd, model, { action: 'memory' }),
+});
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(APP_DIR, 'public')));
 // PDF.js (the in-app PDF renderer for live tex previews) — served from the
@@ -137,6 +144,7 @@ function snapshot() {
   }
   return {
     user: { name: USER_NAME },
+    notifications: { turnEnd: NOTIFY_TURN_END },
     projects,
     categories: safeCall('categories', () => getCategories(), {}),
     abstracts,
@@ -160,6 +168,29 @@ function snapshot() {
 }
 
 // ---- REST routes -----------------------------------------------------------
+
+app.get('/api/memory/settings', route((req, res) => {
+  res.json({ ...memorySettings.publicSettings(), reservedTodayUsd: taskMemory.spentToday() });
+}));
+app.patch('/api/memory/settings', route((req, res) => {
+  res.json(memorySettings.update(req.body));
+}));
+app.get('/api/tasks/:project/:id/memory', route((req, res) => {
+  assertProjectKey(req.params.project);
+  res.json(taskMemory.view(req.params.project, req.params.id));
+}));
+app.get('/api/tasks/:project/:id/memory/evidence/:revision/:source', route((req, res) => {
+  assertProjectKey(req.params.project);
+  res.json(taskMemory.evidence(req.params.project, req.params.id, Number(req.params.revision), req.params.source, Number(req.query.offset || 0)));
+}));
+app.post('/api/tasks/:project/:id/memory/update', route((req, res) => {
+  assertProjectKey(req.params.project);
+  if (process.env.CP_NO_BILLED === '1') return res.status(403).json({ error: 'Billed memory calls are disabled in this environment.' });
+  if (!memorySettings.get().enabled) return res.status(409).json({ error: 'Enable task memory in Settings first.' });
+  if (hasActiveTurn(req.params.project, req.params.id)) return res.status(409).json({ error: 'Wait for the current task turn to finish.' });
+  const queued = taskMemory.enqueue(req.params.project, req.params.id);
+  res.status(202).json({ queued });
+}));
 
 app.get('/api/state', route((req, res) => {
   res.json(snapshot());
@@ -314,6 +345,7 @@ app.delete('/api/tasks/:project/:id', route((req, res) => {
   if (hasActiveTurn(project, id)) {
     return res.status(409).json({ error: 'a turn is running — interrupt it before deleting' });
   }
+  taskMemory.forget(project, id); // cancel queued work, remove checkpoints; keep budget reservations
   deleteTask(project, id);   // throws 404 if unknown; broadcasts task:delete
   forgetTask(project, id);   // transcript file + in-memory session state
   purgeTask(project, id);    // change history + blobs

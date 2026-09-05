@@ -21,7 +21,8 @@
     "//": "ntfy.sh push. Topic is the ONLY secret — make it random. Empty disables pushes. ntfyDetail:true sends task text to the PUBLIC broker.",
     "ntfyTopic": "",
     "ntfyClickBase": "",
-    "ntfyDetail": false
+    "ntfyDetail": false,
+    "turnEnd": true
   },
   "artifactGlobs": {
     "//": "Optional — directories the artifact/file scanners skip. Omit to use the built-in defaults.",

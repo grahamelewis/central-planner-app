@@ -22,6 +22,7 @@ import {
   getClosed, persistClosed, extrasOf, persistExtras, extraRel,
 } from './store.js';
 import { api } from './net.js';
+import { openTaskMemory } from './memory.js';
 import {
   ensureTranscript, ensureFile, saveFile, closeTab, openExtraTab, ensureDir,
   dirKidsHtml, ensureCard, pickPin, pinFile, removeExternalPin, pinResultsHtml,
@@ -937,6 +938,7 @@ export function renderWB(key) {
       <div class="sh">Task goal</div>
       <div class="abstract">${task ? esc(task.description || task.title || '') : 'no task selected'}</div>
       ${task ? `<div class="taskActs">
+        <button class="tact" id="taskMemoryBtn" title="Inspect background checkpoints; conversations are unchanged">◫ memory</button>
         ${!task.archived && task.status !== 'done'
         ? `<span class="tact complete" id="completeTask" title="have ${agentName(taskProvider(task))} write its handoff report, then mark the task done &amp; archive it (a billed turn)">✓ complete</span>`
         : ''}
@@ -1575,6 +1577,7 @@ function wireViewerReorder(root, key) {
 }
 
 function wireWB(root, key, task, files) {
+  root.querySelector('#taskMemoryBtn')?.addEventListener('click', () => openTaskMemory(key, task.id, task.title));
   const per = perOf(key);
   wireViewerReorder(root, key);
   mountPdfPane(key, root); // live tex preview — re-attach, reload only on new builds

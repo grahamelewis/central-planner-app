@@ -1,7 +1,7 @@
 // lib/notify.js — push notifications via ntfy.sh.
 // Fire-and-forget: a notification must never block or fail a session turn.
 // Phone setup: install the ntfy app and subscribe to NTFY_TOPIC.
-import { NTFY_TOPIC, NTFY_CLICK_BASE, NTFY_DETAIL } from './config.js';
+import { NTFY_TOPIC, NTFY_CLICK_BASE, NTFY_DETAIL, NOTIFY_TURN_END } from './config.js';
 
 const logErr = (...a) => console.error('[notify]', ...a);
 
@@ -9,7 +9,8 @@ const logErr = (...a) => console.error('[notify]', ...a);
  * Send a push. taskRef = { project, id } adds a deep link into the phone app
  * when NTFY_CLICK_BASE is configured.
  */
-export function notify(title, body, { tags = '', priority = 'default', taskRef = null } = {}) {
+export function notify(title, body, { tags = '', priority = 'default', taskRef = null, turnEnd = false } = {}) {
+  if (turnEnd && !NOTIFY_TURN_END) return;
   if (!NTFY_TOPIC) return;
   // JSON publish format — plain headers are byte-strings and choke on
   // unicode (em-dashes, emoji); the JSON body is full UTF-8

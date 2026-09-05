@@ -789,6 +789,26 @@ function notifierHarness({ focused = () => false, statePath, onClick, ws, WSImpl
 const mkTask = (over = {}) =>
   ({ id: 't1', title: 'My task', status: 'waiting', question: null, handoff: null, ...over });
 
+test('notifier: turn-end mute suppresses snapshot and live alerts, preserves approvals, and prevents replay', () => {
+  const h = notifierHarness();
+  try {
+    h.notifier.start(); const s = h.sockets[0]; s.open();
+    const task = mkTask({ question: 'A question', handoff: { summary: 'done' } });
+    s.frame('state', { notifications: { turnEnd: false }, tasks: { p: [task] } });
+    s.frame('task:update', { project: 'p', task: mkTask({ question: 'Another question' }) });
+    s.frame('session:status', { project: 'p', id: 't1', error: 'boom' });
+    s.frame('session:status', { project: 'p', id: 't1', error: 'auth expired', authNeeded: true });
+    assert.equal(h.banners.length, 0);
+    assert.ok(h.logs.some(l => l.includes('turn-end alerts disabled')));
+    s.frame('session:permission', { project: 'p', id: 't1', requestId: 42 });
+    assert.equal(h.banners.length, 1);
+    s.frame('state', { notifications: { turnEnd: true }, tasks: { p: [task] } });
+    assert.equal(h.banners.length, 1, 'muted identities do not replay');
+    s.frame('task:update', { project: 'p', task: mkTask({ question: 'A fresh question' }) });
+    assert.equal(h.banners.length, 2);
+  } finally { h.cleanup(); }
+});
+
 // ---------------------------------------------------------------- notifier event map
 
 test('notifier: F1 regression, pinned forever — question/handoff on session:status are IGNORED', () => {

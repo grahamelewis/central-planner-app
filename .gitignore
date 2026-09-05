@@ -30,6 +30,7 @@ desktop/dist/
 /ledger/
 /snapshots/
 /transcripts/
+/memory/
 /abstracts/
 /decisions/
 /categories.json

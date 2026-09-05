@@ -59,6 +59,15 @@ Planner** — after launching the **packed** app, not `npm start` (dev banners
 attribute to "Electron", a different identity). Banners are best-effort by
 design; ntfy phone push stays the durable channel.
 
+Set `notifications.turnEnd` to `false` in the server's `config.json` to mute
+turn-end question, handoff, failure, and sign-in alerts in both ntfy and this
+desktop shell. Approval-request alerts remain enabled. Restart the server to
+load the preference. Older packaged shells need rebuilding to honor it:
+`npm run pack -- --stage` prepares a signed bundle in a new `dist/update-*/`
+folder without touching the currently running app. Quit the old app before
+opening the staged bundle. Muted events are still deduplicated so they do not
+replay when alerts are re-enabled.
+
 ### No banner? Two different failures, two different fixes (G7)
 
 Check `shell.log` first:

@@ -2984,3 +2984,36 @@ html[data-theme="light"] #pdDate{ color-scheme:light; }
   text-decoration-color:rgb(from var(--red) r g b / 65%);
 }
 .mdock .sugMark::after{ content:none; }
+/* Task memory — inspection-only pilot, separate from the working conversation. */
+.memoryNote { color:var(--dim); font-size:12px; line-height:1.65; margin:10px 0; }
+.memoryBadge { display:inline-block; border:1px solid var(--line); border-radius:20px; padding:4px 9px; font-size:10px; font-weight:600; color:var(--green); vertical-align:middle; }
+.memoryForm { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 20px; margin:18px 0; }
+.memoryForm label,.memoryVersion { display:flex; flex-direction:column; gap:7px; color:var(--dim); font-size:12px; min-width:0; }
+.memoryForm input:not([type=checkbox]),.memoryForm select,.memoryVersion select { background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:9px; width:100%; min-width:0; font:inherit; }
+.memoryForm .memoryEnable { flex-direction:row; align-items:center; grid-column:1/-1; }
+.memoryActions { display:flex; align-items:center; flex-wrap:wrap; gap:12px; font-size:12px; margin:14px 0; }
+.memoryForm .memoryActions { grid-column:1/-1; }
+.memoryForm #memoryModelCost { grid-column:1/-1; margin:0; }
+.memoryDialog { width:min(820px,calc(100vw - 32px)); max-height:88dvh; overflow:auto; margin:auto; padding:24px; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:14px; box-shadow:0 24px 100px #0005; }
+.memoryDialog::backdrop { background:#0007; backdrop-filter:blur(3px); }
+.memoryDialog header { display:flex; justify-content:space-between; align-items:start; gap:16px; margin-bottom:18px; }
+.memoryDialog h2 { font-size:22px; margin:0; }
+.memoryDialog header p { color:var(--dim); margin:6px 0; overflow-wrap:anywhere; }
+.memoryNotice,.memoryEmpty { padding:16px; border:1px solid var(--line); border-radius:9px; line-height:1.6; font-size:13px; }
+.memoryStats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin:20px 0; }
+.memoryStats div { border:1px solid var(--line); padding:12px; border-radius:8px; min-width:0; }
+.memoryStats b { display:block; font-size:18px; overflow-wrap:anywhere; }
+.memoryStats span { display:block; font-size:10px; color:var(--dim); margin-top:5px; }
+.memorySections { line-height:1.7; font-size:13px; overflow-wrap:anywhere; }
+.memorySections section { padding:14px 0; border-bottom:1px solid var(--line); }
+.memorySections h3 { font-size:14px; margin:0 0 8px; }
+.memorySections ul { margin:0; padding-left:20px; }
+.memorySections li { margin:7px 0; white-space:pre-wrap; }
+.memoryJobs { margin-top:20px; font-size:12px; line-height:1.6; }
+.memoryJobs summary { cursor:pointer; }
+.memoryJobs article { padding:12px 0; border-bottom:1px solid var(--line); }
+.memoryJobs p { margin:4px 0; }
+.memoryError { color:var(--red); }
+#memoryEvidence pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; padding:14px; background:var(--glass); border-radius:8px; max-height:280px; overflow:auto; }
+#taskMemoryBtn { font:inherit; background:none; border:0; padding:0; }
+@media(max-width:600px) { .memoryForm { grid-template-columns:1fr; } .memoryStats { grid-template-columns:repeat(2,minmax(0,1fr)); } .memoryDialog { padding:18px; } }

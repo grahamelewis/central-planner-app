@@ -29,6 +29,99 @@ npm start          # → http://127.0.0.1:4242  (localhost only — never expose
 
 ## Concepts
 
+### Task memory: checkpoint-only pilot
+
+Settings → **Task memory** configures a separate background model. The pilot is
+**disabled by default**, with a zero daily budget. Two connections are offered:
+
+- **Claude · this login / subscription** (optional). The writer runs one tool-less,
+  single-turn Agent SDK query on the same Claude login the task sessions use, so
+  it is billed to your plan exactly like a task turn (the SDK's cost estimate is
+  recorded, and the daily/per-request budgets are planning ceilings against it).
+  It loads no project files, no settings sources and no CLAUDE.md — only the
+  writer instructions and the JSON payload. Requires Claude to be connected under
+  AI services.
+- **OpenAI API · separately billed** (default). A direct API call with `OPENAI_API_KEY` in
+  the server's environment (restart after setting it); it does not reuse Codex
+  subscription authentication. Never place the key in task text, repository
+  files, or checkpoints.
+
+Model access is not assumed: an unavailable model produces a visible failure, with
+no automatic fallback. The default model is `gpt-5.6-luna` at low effort.
+Claude Sonnet 5, Haiku 4.5 (no effort ladder), and Opus 5 remain available on the
+Claude connection; Terra and GPT-5 Nano are the OpenAI alternatives. The default
+per-request cap is $0.10, with a zero daily budget until explicitly configured.
+Settings shows planning rates and the cost at
+the configured token ceilings; a higher-priced model may require a higher
+per-request budget. No paid model comparison has been run. The settings are
+independent of the main task agent and apply to the next job, not an in-flight
+request.
+
+After a successful Claude or Codex turn, the worker queues one bounded update
+from the previous checkpoint and new dashboard transcript text. It does **not**
+read arbitrary project files or the provider's full hidden history. Structured
+milestone notes included in the conversation are available as source text; this
+stage does not add new instructions to the lead agent. Oversized entries are
+processed as ordered fragments with an exact cursor and prefix hash, never
+silently skipped. Large backlogs may require additional updates from the panel
+or later completed turns. Queued work is coalesced and requests run serially.
+
+Use **◫ memory** under a task's goal to inspect its findings, constraints,
+uncertainties, next steps, evidence, previous versions, job status, and usage.
+Click an evidence ID to read its covered transcript excerpt. **Update checkpoint**
+queues a billed update when memory is enabled and the task is idle. Merely opening
+Settings or the panel never calls a model. The desktop panel is responsive; the
+separate `/m/` phone app does not yet have these controls.
+
+This stage **never resets, compacts, switches, or injects anything into working
+agent conversations**. It also never modifies accepted project rules or handoffs.
+Validation checks structure, size, source IDs, task identity, and source/revision
+freshness—not factual fidelity. Test actual continuation quality before building
+automatic context replacement.
+
+Operational details:
+
+- Durable records are `CP_ROOT/memory/<sha256(project, task ID, created)>.json`.
+  Each contains identifiable task metadata, checkpoint versions, coverage hashes,
+  and job history. This directory is gitignored at the default data root.
+- Writes use atomic replacement; malformed stores and symlinks fail closed.
+  Task deletion removes its checkpoint record and cancels pending work. In-flight
+  requests cannot recreate deleted records. Budget reservations remain.
+- `memory/budget.json` records a conservative reservation **before** every request.
+  UTC daily and per-request limits use published planning rates, not provider
+  enforcement. Timeouts, crashes, refusals, and invalid outputs retain their full
+  reservation. Also configure an OpenAI project spending limit. Do not run multiple
+  server processes against the same `CP_ROOT`; like task storage, this is a
+  single-writer design.
+- Input admission uses UTF-8 byte length plus a framing allowance as a conservative
+  token bound. Output caps include reasoning. Requests have a 90-second timeout,
+  no tools, no retries, no persistent API conversation, and `store:false` (not a
+  promise of zero provider-side retention).
+- Failed/incomplete/stale candidates never replace the last good checkpoint.
+  A new completed task turn can queue fresh work; failures do not retry themselves.
+  After restart, unfinished jobs appear interrupted and are not automatically
+  replayed. A changed covered transcript prefix blocks further synthesis pending
+  manual investigation; this pilot does not silently rebuild a new baseline.
+- Usage is stored per job and copied into the shared ledger with `action:memory`
+  and `costEstimated:true`. Estimated cost includes a conservative cache-write
+  premium. Missing usage stays unknown; its budget reservation is still retained.
+- `CP_NO_BILLED=1` blocks both transports and the manual update route. Unit tests
+  inject synthetic responses in the transports' shared normalized shape;
+  browser/API tests use temporary state, no key, and no Claude login.
+
+API endpoints: `GET/PATCH /api/memory/settings`,
+`GET /api/tasks/:project/:id/memory`,
+`GET /api/tasks/:project/:id/memory/evidence/:revision/:source?offset=0`, and
+`POST /api/tasks/:project/:id/memory/update` (202, queues only).
+
+Sources checked 2026-09-04:
+[Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs),
+[Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna),
+[API pricing](https://developers.openai.com/api/docs/pricing), and
+[Codex authentication](https://developers.openai.com/codex/auth/).
+
+### Existing dashboard concepts
+
 - **Task** = unit of work. Oversight: `auto` (runs to completion), `propose` (plan mode),
   `coop` (interactive turns), `manual` (no agent). Category primer + living abstract +
   upstream handoffs + pinned files + notes are assembled into the launch prompt.

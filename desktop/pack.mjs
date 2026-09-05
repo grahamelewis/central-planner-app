@@ -19,6 +19,8 @@ const DESKTOP = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.join(DESKTOP, 'dist');
 // Packager writes here first; same volume as dist/ so renameSync never crosses devices.
 const PACK_TMP = path.join(DIST, '.pack');
+// --stage prepares a signed replacement without touching the running bundle.
+const STAGE = process.argv.includes('--stage');
 const APP_NAME = 'Central Planner';
 const BUNDLE_ID = 'com.centralplanner.desktop';
 
@@ -110,7 +112,8 @@ async function pack(iconPath) {
 
 // Flatten packager's <out>/<name>-darwin-<arch>/ layout to dist/<name>.app.
 function flatten(appInTmp) {
-  const target = path.join(DIST, `${APP_NAME}.app`);
+  const destination = STAGE ? fs.mkdtempSync(path.join(DIST, 'update-')) : DIST;
+  const target = path.join(destination, `${APP_NAME}.app`);
   try {
     fs.rmSync(target, { recursive: true, force: true });
   } catch (err) {

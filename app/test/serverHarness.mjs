@@ -152,6 +152,7 @@ export async function startSandbox({ seed, trial = [], kaimonBin, updateRepo, cl
       // belt-and-braces on top of CP_NO_BILLED: even if a guard is missed,
       // the sandboxed server holds no API credential to bill with
       ANTHROPIC_API_KEY: '',
+      OPENAI_API_KEY: '', // memory worker must never inherit a real credential
       CP_ROOT: root,
       CP_PORT: String(port),
       CP_PROJECTS_JSON: JSON.stringify(projects),

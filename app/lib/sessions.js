@@ -4,6 +4,7 @@
 // Each call to query() is one TURN; the agent runs its loop to completion.
 
 import fs from 'fs';
+import { queueTaskMemory } from './taskMemory.js';
 import path from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { PROJECTS, ROOT } from './config.js';
@@ -1294,20 +1295,21 @@ async function runClaudeTurn(project, id, promptText) {
     if (authFail) {
       notify(`✗ ${title} — Claude sign-in needed`,
         'The turn could not reach Claude: your login has expired. Sign in from the dashboard to continue.',
-        { tags: 'x', priority: 'high', taskRef: { project, id } });
+        { tags: 'x', priority: 'high', taskRef: { project, id }, turnEnd: true });
     } else if (resultError) {
-      notify(`✗ ${title} — turn failed`, resultError, { tags: 'x', priority: 'high', taskRef: { project, id } });
+      notify(`✗ ${title} — turn failed`, resultError, { tags: 'x', priority: 'high', taskRef: { project, id }, turnEnd: true });
     } else if (handoff) {
       // only the user-initiated ✓ complete wrap-up produces a handoff now —
       // this is a completion receipt, not a proposal awaiting review
       notify(`📋 ${title} — handoff recorded`, (handoff && handoff.summary) || 'handoff recorded',
-        { tags: 'clipboard', taskRef: { project, id } });
+        { tags: 'clipboard', taskRef: { project, id }, turnEnd: true });
     } else if (question) {
-      notify(`❓ ${title} — Claude is asking`, question, { tags: 'question', priority: 'high', taskRef: { project, id } });
+      notify(`❓ ${title} — Claude is asking`, question, { tags: 'question', priority: 'high', taskRef: { project, id }, turnEnd: true });
     }
     log(`turn done ${key}: status=${status} in=${usageIn} out=${usageOut} cost=$${costUsd.toFixed ? costUsd.toFixed(4) : costUsd}`);
   } catch (err) {
     logErr(`post-turn bookkeeping failed for ${key}:`, err && err.message ? err.message : err);
+    failedTurns.add(key); // do not checkpoint a turn whose persistence failed
     try {
       broadcast('session:status', { project, id, status: 'waiting', error: String(err && err.message || err) });
     } catch { /* never crash */ }
@@ -1664,14 +1666,15 @@ async function runCodexTurn(project, id, promptText) {
       ...(authFail ? { authNeeded: true } : {}),
     });
     const title = task?.title || id;
-    if (authFail) notify(`✗ ${title} — Codex sign-in needed`, 'Reconnect Codex from the dashboard to continue.', { tags: 'x', priority: 'high', taskRef: { project, id } });
-    else if (resultError) notify(`✗ ${title} — turn failed`, resultError, { tags: 'x', priority: 'high', taskRef: { project, id } });
-    else if (handoff) notify(`📋 ${title} — handoff recorded`, handoff.summary || 'handoff recorded', { tags: 'clipboard', taskRef: { project, id } });
-    else if (question) notify(`❓ ${title} — Codex is asking`, question, { tags: 'question', priority: 'high', taskRef: { project, id } });
+    if (authFail) notify(`✗ ${title} — Codex sign-in needed`, 'Reconnect Codex from the dashboard to continue.', { tags: 'x', priority: 'high', taskRef: { project, id }, turnEnd: true });
+    else if (resultError) notify(`✗ ${title} — turn failed`, resultError, { tags: 'x', priority: 'high', taskRef: { project, id }, turnEnd: true });
+    else if (handoff) notify(`📋 ${title} — handoff recorded`, handoff.summary || 'handoff recorded', { tags: 'clipboard', taskRef: { project, id }, turnEnd: true });
+    else if (question) notify(`❓ ${title} — Codex is asking`, question, { tags: 'question', priority: 'high', taskRef: { project, id }, turnEnd: true });
     refreshCodex({ force: true }).catch(() => {});
     log(`Codex turn done ${key}: in=${usageIn} out=${usageOut}`);
   } catch (err) {
     logErr(`Codex post-turn bookkeeping failed for ${key}:`, err?.message || err);
+    failedTurns.add(key);
     try { broadcast('session:status', { project, id, provider: 'codex', status: 'waiting', error: String(err?.message || err) }); } catch { /* */ }
   }
 }
@@ -1694,11 +1697,15 @@ function startTurn(project, id, promptText) {
     .catch((err) => {
       // runTurn handles its own errors; this is a last-resort guard
       logErr(`unhandled turn failure for ${key}:`, err && err.message ? err.message : err);
+      failedTurns.add(key);
       try {
         broadcast('session:status', { project, id, status: 'waiting', error: String(err && err.message || err) });
       } catch { /* swallow */ }
     })
-    .finally(() => { activeTurns.delete(key); });
+    .finally(() => {
+      activeTurns.delete(key);
+      if (!failedTurns.has(key)) queueTaskMemory(project, id);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1728,11 +1735,15 @@ export async function launchTask(project, id) {
   runTurn(project, id, prompt)
     .catch((err) => {
       logErr(`unhandled turn failure for ${key}:`, err && err.message ? err.message : err);
+      failedTurns.add(key);
       try {
         broadcast('session:status', { project, id, status: 'waiting', error: String(err && err.message || err) });
       } catch { /* swallow */ }
     })
-    .finally(() => { activeTurns.delete(key); });
+    .finally(() => {
+      activeTurns.delete(key);
+      if (!failedTurns.has(key)) queueTaskMemory(project, id);
+    });
 }
 
 export function sendMessage(project, id, text) {

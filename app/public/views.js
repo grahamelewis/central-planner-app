@@ -14,6 +14,7 @@ import {
   DEFAULT_MODEL, effortsFor, coerceEffort,
 } from './store.js';
 import { api, apiQuiet } from './net.js';
+import { mountMemorySettings } from './memory.js';
 import { claudeVerb } from './console.js';
 import {
   deadlineMs, unfiledSeries, NU_DAYS, NU_MONS, gcalTemplateUrl, nuSafeUrl,
@@ -642,6 +643,7 @@ export function renderSettings() {
   host.innerHTML = `
     <h1>Settings</h1>
     ${servicesSecHtml()}
+    <div class="setSec" id="memorySettings"><h3>Task memory</h3><p>Loading memory settings…</p></div>
     <div class="setSec">
       <h3>Appearance</h3>
       <div class="setRow">
@@ -717,6 +719,7 @@ export function renderSettings() {
     const r = await api('POST', '/api/providers/codex/logout');
     if (r) { state.providers.codex = { id: 'codex', name: 'Codex', ...r }; renderSettings(); }
   });
+  mountMemorySettings(host);
   voiceSecWire(host);
   // update actions — the server broadcasts update:status transitions
   // (checking/updating/result), which re-render this view live

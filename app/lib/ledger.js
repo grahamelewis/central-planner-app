@@ -61,7 +61,7 @@ export function logTime(project, seconds) {
   broadcast('ledger:update', weekSummary());
 }
 
-export function logTokens(project, taskId, tokensIn, tokensOut, costUsd, model) {
+export function logTokens(project, taskId, tokensIn, tokensOut, costUsd, model, details = {}) {
   assertProject(project);
   appendLine({
     ts: new Date().toISOString(),
@@ -72,6 +72,7 @@ export function logTokens(project, taskId, tokensIn, tokensOut, costUsd, model) 
     out: Number(tokensOut) || 0,
     costUsd: Number(costUsd) || 0,
     model: typeof model === 'string' && model ? model : null,
+    ...(details.action === 'memory' ? { action: 'memory', costEstimated: true } : {}),
   });
   broadcast('ledger:update', weekSummary());
 }

@@ -27,6 +27,7 @@ export const CHROME = process.env.CP_CHROME || '/Applications/Google Chrome.app/
  */
 export async function armPage(page) {
   // ---- safety: billed routes never reach the server ----
+  await page.route('**/api/tasks/*/*/memory/update', (r) => r.fulfill({ status: 403, json: { error: 'blocked in ui tests' } }));
   await page.route('**/api/tasks/*/*/message', (r) => r.fulfill({ json: { ok: true } }));
   await page.route('**/api/tasks/*/*/launch', (r) => r.fulfill({ json: { ok: true } }));
   await page.route('**/api/tasks/*/*/retry', (r) => r.fulfill({ json: { ok: true } }));

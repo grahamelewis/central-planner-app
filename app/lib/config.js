@@ -126,3 +126,6 @@ export const NTFY_CLICK_BASE = ntfy.ntfyClickBase || '';
 // false (default): notifications carry only the task title + event type.
 // true: include question text / handoff summaries / tool details in the body.
 export const NTFY_DETAIL = ntfy.ntfyDetail === true;
+// Questions, handoffs, errors and sign-in notices at turn end can be muted
+// independently of approval requests. Also sent to the desktop notifier.
+export const NOTIFY_TURN_END = ntfy.turnEnd !== false;

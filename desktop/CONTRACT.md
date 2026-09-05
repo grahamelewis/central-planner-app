@@ -126,6 +126,10 @@ An `app/` change touching any of these is a shell change too:
     watchers, calendar/update loops, orphan/status sweeps, and tex watches.
 11. Tailnet snapshot/event/API shapes: `tailnet`, `tailnet:status`, and the
     host-only `/api/tailnet/{status,enable,disable}` routes.
+12. `state.notifications.turnEnd` controls native turn-end banners. Explicit
+    false mutes questions, handoffs, errors, and sign-in notices; permission
+    banners remain enabled. Missing preference preserves legacy behavior.
+    Muted identities are persisted as consumed, including snapshot reseeds.
 
 **Version-skew rule (F16/G13):** an `app/` change touching any listed coupling
 updates `desktop/` in the **same commit** *and* triggers a re-pack plus a smoke
@@ -156,6 +160,8 @@ to "Electron"). Check a box and add initials + date when a row passes.
       a visible macOS banner. (initials/date: ________)
 - [ ] Notification gate, window hidden: a staged `task:update` question
       transition produces a visible banner. (initials/date: ________)
+- [ ] With `notifications.turnEnd:false`, questions/handoffs/errors/sign-in
+      events stay silent; an approval request still banners. (initials/date: ________)
 - [ ] Notification click focuses/re-shows the window. (initials/date: ________)
 - [ ] No banner when the window is focused on that banner's project — and the
       suppression is logged in shell.log. (initials/date: ________)

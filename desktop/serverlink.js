@@ -427,6 +427,7 @@ export function createNotifier({
   const notified = new Map();    // identity → ts; Map insertion order IS age order
   const permBanners = new Map(); // String(requestId) → live banner, closed on :resolved
   const titles = new Map();      // `${project}:${id}` → task title, seeded by every frame
+  let turnEndNotifications = true; // legacy servers omit the preference
 
   // -- persistence: {v:1, entries:[[identity, ts], ...]} — atomic tmp+rename;
   //    failures are logged, never thrown (shellLog culture).
@@ -581,6 +582,7 @@ export function createNotifier({
   // sitting at 'waiting' with an unnotified question/handoff fire. Pending
   // approvals are absent from the snapshot — accepted best-effort (R6).
   function onSnapshot(payload) {
+    if (typeof payload?.notifications?.turnEnd === 'boolean') turnEndNotifications = payload.notifications.turnEnd;
     const tasks = payload && payload.tasks;
     if (!tasks || typeof tasks !== 'object') return;
     for (const [project, list] of Object.entries(tasks)) {
@@ -668,6 +670,10 @@ export function createNotifier({
     notified.set(identity, now());
     while (notified.size > NOTIFY_CAP) notified.delete(notified.keys().next().value);
     persistState();
+    if (!turnEndNotifications && !identity.startsWith('perm:')) {
+      log(`notify: suppressed ${identity} (turn-end alerts disabled)`);
+      return null;
+    }
     if (isFocusedOnProject(project)) {
       log(`notify: suppressed ${identity} (focused on ${project})`); // still logged (R8)
       return null;
