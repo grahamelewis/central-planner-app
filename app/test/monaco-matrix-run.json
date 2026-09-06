@@ -1,325 +1,236 @@
 {
  "artifact": "A14 monaco evidence-matrix recorded run (CONTRACT Phase 3, Ladder & exit gates)",
  "matrix": "monaco-matrix.md",
- "sha": "8801955a7c4ff7d22944ce58c18b2e44f634521b",
+ "sha": "3d372a7e30631d654d6ed523a2cff623fa262f54",
  "dirty": true,
- "date": "2026-08-17T15:29:58.330Z",
+ "date": "2026-09-06T20:56:45.646Z",
  "node": "v25.6.1",
- "durationMs": 1084419,
+ "durationMs": 297801,
  "files": [
   {
-   "file": "ui.monaco-settings.test.mjs",
-   "durationMs": 11805,
-   "pass": 5,
-   "fail": 0,
-   "skip": 0
-  },
-  {
    "file": "ui.texrun.test.mjs",
-   "durationMs": 15078,
-   "pass": 9,
+   "durationMs": 10991,
+   "pass": 8,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.monaco-core.test.mjs",
-   "durationMs": 47129,
-   "pass": 13,
+   "durationMs": 13879,
+   "pass": 11,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.monaco-stale.test.mjs",
-   "durationMs": 140249,
+   "durationMs": 12773,
    "pass": 9,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.monaco-save.test.mjs",
-   "durationMs": 47027,
-   "pass": 12,
+   "durationMs": 15553,
+   "pass": 11,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.filechanged.test.mjs",
-   "durationMs": 11542,
-   "pass": 5,
+   "durationMs": 3213,
+   "pass": 1,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.texauto.test.mjs",
-   "durationMs": 15126,
-   "pass": 8,
+   "durationMs": 10453,
+   "pass": 7,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.monaco-merge.test.mjs",
-   "durationMs": 319897,
+   "durationMs": 13799,
    "pass": 9,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.extedit.test.mjs",
-   "durationMs": 13575,
-   "pass": 5,
-   "fail": 0,
-   "skip": 0
-  },
-  {
-   "file": "api.extedit.test.mjs",
-   "durationMs": 777,
+   "durationMs": 7560,
    "pass": 4,
    "fail": 0,
    "skip": 0
   },
   {
-   "file": "ui.mdview.test.mjs",
-   "durationMs": 15461,
-   "pass": 10,
-   "fail": 0,
-   "skip": 0
-  },
-  {
-   "file": "hl.test.mjs",
-   "durationMs": 183,
-   "pass": 40,
-   "fail": 0,
-   "skip": 0
-  },
-  {
-   "file": "ui.texfix.test.mjs",
-   "durationMs": 20011,
-   "pass": 7,
+   "file": "api.extedit.test.mjs",
+   "durationMs": 874,
+   "pass": 4,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.monaco-texfix.test.mjs",
-   "durationMs": 46970,
+   "durationMs": 47031,
    "pass": 7,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "texfixAnchors.test.mjs",
-   "durationMs": 173,
+   "durationMs": 231,
    "pass": 15,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.monaco-jumps.test.mjs",
-   "durationMs": 19347,
-   "pass": 7,
-   "fail": 0,
-   "skip": 0
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "durationMs": 13072,
-   "pass": 18,
+   "durationMs": 12293,
+   "pass": 6,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.monaco-problems.test.mjs",
-   "durationMs": 14001,
-   "pass": 5,
+   "durationMs": 4905,
+   "pass": 4,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.build-status.test.mjs",
-   "durationMs": 46816,
-   "pass": 9,
+   "durationMs": 17590,
+   "pass": 8,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "latex.providers.test.mjs",
-   "durationMs": 176,
+   "durationMs": 194,
    "pass": 41,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.monaco-completions.test.mjs",
-   "durationMs": 46160,
-   "pass": 12,
-   "fail": 0,
-   "skip": 0
-  },
-  {
-   "file": "ui.monaco-commands.test.mjs",
-   "durationMs": 45485,
+   "durationMs": 15760,
    "pass": 10,
    "fail": 0,
    "skip": 0
   },
   {
+   "file": "ui.monaco-commands.test.mjs",
+   "durationMs": 11590,
+   "pass": 9,
+   "fail": 0,
+   "skip": 0
+  },
+  {
    "file": "ui.tex-subdir.test.mjs",
-   "durationMs": 16158,
-   "pass": 4,
+   "durationMs": 9296,
+   "pass": 3,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.dragtab.test.mjs",
-   "durationMs": 10004,
-   "pass": 5,
-   "fail": 0,
-   "skip": 0
-  },
-  {
-   "file": "ui.monaco-latex.test.mjs",
-   "durationMs": 7999,
+   "durationMs": 5463,
    "pass": 4,
    "fail": 0,
    "skip": 0
   },
   {
-   "file": "ui.editor-wrap.test.mjs",
-   "durationMs": 5074,
-   "pass": 7,
-   "fail": 0,
-   "skip": 0
-  },
-  {
-   "file": "ui.editor-hl.test.mjs",
-   "durationMs": 6124,
-   "pass": 5,
+   "file": "ui.monaco-latex.test.mjs",
+   "durationMs": 4268,
+   "pass": 4,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.focus.test.mjs",
-   "durationMs": 11323,
+   "durationMs": 11534,
    "pass": 8,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.vsplit.test.mjs",
-   "durationMs": 11307,
-   "pass": 6,
+   "durationMs": 6448,
+   "pass": 5,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.voice.test.mjs",
-   "durationMs": 10318,
-   "pass": 5,
-   "fail": 0,
+   "durationMs": 6043,
+   "pass": 4,
+   "fail": 1,
    "skip": 0
   },
   {
-   "file": "ui.tex.test.mjs",
-   "durationMs": 4341,
-   "pass": 5,
-   "fail": 0,
-   "skip": 0
-  },
-  {
-   "file": "ui.monaco-m7.test.mjs",
-   "durationMs": 47551,
+   "file": "ui.mdview.test.mjs",
+   "durationMs": 9966,
    "pass": 9,
    "fail": 0,
    "skip": 0
   },
   {
-   "file": "ui.extratabs.test.mjs",
-   "durationMs": 12332,
+   "file": "ui.monaco-m7.test.mjs",
+   "durationMs": 10928,
    "pass": 6,
    "fail": 0,
    "skip": 0
   },
   {
-   "file": "ui.settings.test.mjs",
-   "durationMs": 5043,
+   "file": "ui.extratabs.test.mjs",
+   "durationMs": 7646,
+   "pass": 5,
+   "fail": 0,
+   "skip": 0
+  },
+  {
+   "file": "ui.monaco-only.test.mjs",
+   "durationMs": 8550,
    "pass": 5,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "ui.monaco-boot.test.mjs",
-   "durationMs": 45878,
-   "pass": 14,
+   "durationMs": 17888,
+   "pass": 12,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "api.eolledger.test.mjs",
-   "durationMs": 484,
+   "durationMs": 621,
    "pass": 8,
    "fail": 0,
    "skip": 0
   },
   {
    "file": "latex-corpus.test.mjs",
-   "durationMs": 383,
+   "durationMs": 419,
    "pass": 40,
    "fail": 0,
    "skip": 0
   }
  ],
  "modes": {
-  "legacy": {
-   "pass": 12,
-   "fail": 0,
-   "skip": 0
-  },
   "monaco": {
-   "pass": 12,
+   "pass": 11,
    "fail": 0,
    "skip": 0
   },
   "untagged": {
-   "pass": 367,
-   "fail": 0,
+   "pass": 266,
+   "fail": 1,
    "skip": 0
   }
  },
  "perTest": [
-  {
-   "file": "ui.monaco-settings.test.mjs",
-   "title": "COLD PAGE: module eval clean; Settings flips legacy→monaco→legacy through setImpl with a draft alive (T7/T8 handoff), preference persisted",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-settings.test.mjs",
-   "title": "A15 pin in the row: on a coarse-only device the Monaco option is locked and inert — no preference write, no boot, the note explains",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-settings.test.mjs",
-   "title": "forcedLegacy in the row: a failed boot shows the session-only state + retry; ↻ re-arms via rebootMonaco and the next code render boots READY",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-settings.test.mjs",
-   "title": "KEEP pilot — P1 dirty chip + tab dot: genuine typing dirties, ⌘S writes disk and cleans [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-settings.test.mjs",
-   "title": "KEEP pilot — P1 dirty chip + tab dot: genuine typing dirties, ⌘S writes disk and cleans [impl=monaco]",
-   "status": "pass",
-   "mode": "monaco",
-   "type": "test"
-  },
   {
    "file": "ui.texrun.test.mjs",
    "title": "foot ▶/⊘ share one fixed box — a starting run shifts nothing",
@@ -367,13 +278,6 @@
    "title": "the live-watch pane grows the ▶ too — save-now semantics in its tooltip",
    "status": "pass",
    "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.texrun.test.mjs",
-   "title": "save chip dual: constant box, dot flips on typing, a chip click saves to disk [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
    "type": "test"
   },
   {
@@ -442,20 +346,6 @@
   {
    "file": "ui.monaco-core.test.mjs",
    "title": "EDITCONTEXT PIN: the default surface is editContext:false and the IME case holds on it",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-core.test.mjs",
-   "title": "toggle off → legacy DOM intact, zero vendor fetches, boot never starts",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-core.test.mjs",
-   "title": "toggle handoff with a draft alive: monaco → legacy shows it, legacy typing wins on re-entry, ⌘Z reaches the disk baseline",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
@@ -615,41 +505,6 @@
    "type": "test"
   },
   {
-   "file": "ui.monaco-save.test.mjs",
-   "title": "S2.1 re-anchor: files.saveFile under the legacy impl is byte-identical (no token; native confirm on 409)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.filechanged.test.mjs",
-   "title": "a clean editor reloads Claude's edit in place — scroll kept",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.filechanged.test.mjs",
-   "title": "a non-overlapping draft folds the disk edit in — no warning, one unsaved draft",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.filechanged.test.mjs",
-   "title": "an overlapping edit pins the draft behind ⚠ disk; save runs the 409 reload flow",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.filechanged.test.mjs",
-   "title": "file:changed dual: clean reload in place; non-overlap merges into the draft; overlap pins ⚠ disk [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
-   "type": "test"
-  },
-  {
    "file": "ui.filechanged.test.mjs",
    "title": "file:changed dual: clean reload in place; non-overlap merges into the draft; overlap pins ⚠ disk [impl=monaco]",
    "status": "pass",
@@ -696,13 +551,6 @@
    "title": "merge3 edge cases (engine seam)",
    "status": "pass",
    "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.texauto.test.mjs",
-   "title": "turn-end dual: ▶-created deck tab + session file:changed → exactly one queued compile; clean editor reloads [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
    "type": "test"
   },
   {
@@ -798,13 +646,6 @@
   },
   {
    "file": "ui.extedit.test.mjs",
-   "title": "P4 dual: external pin edits + ⌘S through the grant; file:changed reloads; 409-cancel and 403 destroy nothing [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
-   "type": "test"
-  },
-  {
-   "file": "ui.extedit.test.mjs",
    "title": "P4 dual: external pin edits + ⌘S through the grant; file:changed reloads; 409-cancel and 403 destroy nothing [impl=monaco]",
    "status": "pass",
    "mode": "monaco",
@@ -834,447 +675,6 @@
   {
    "file": "api.extedit.test.mjs",
    "title": "bad payloads and unknown tasks are refused cleanly",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "▤ preview renders the pinned .md: typography, math, code — no raw markdown",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "doc engine: single ~ stays literal, ~~ strikes, inline HTML still renders",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "relative images and links resolve against the file folder; links open in new tabs",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "typing in the editor live-updates the pane IN PLACE — scroll and element kept",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "✎ source in the viewer bar jumps to the editor",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "a ＋-added .md renders from disk and refreshes on file:changed",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "switching viewer tabs keeps the pane mounted (no re-render on return)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "hostile markdown is sanitized: no script/style/handlers/javascript: URLs",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "P20 dual: typing live-updates the ▤ pane in place — debounce, drafts-as-source, scroll kept [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
-   "type": "test"
-  },
-  {
-   "file": "ui.mdview.test.mjs",
-   "title": "P20 dual: typing live-updates the ▤ pane in place — debounce, drafts-as-source, scroll kept [impl=monaco]",
-   "status": "pass",
-   "mode": "monaco",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText returns null for an unknown extension",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(jl) round-trips text exactly (strip tags + unescape === input)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(jl) emits no unescaped < or & outside span tags",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(py) round-trips text exactly (strip tags + unescape === input)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(py) emits no unescaped < or & outside span tags",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(r) round-trips text exactly (strip tags + unescape === input)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(r) emits no unescaped < or & outside span tags",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(sh) round-trips text exactly (strip tags + unescape === input)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(sh) emits no unescaped < or & outside span tags",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(md) round-trips text exactly (strip tags + unescape === input)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(md) emits no unescaped < or & outside span tags",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(json) round-trips text exactly (strip tags + unescape === input)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(json) emits no unescaped < or & outside span tags",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(tex) round-trips text exactly (strip tags + unescape === input)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(tex) emits no unescaped < or & outside span tags",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(sql) round-trips text exactly (strip tags + unescape === input)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlText(sql) emits no unescaped < or & outside span tags",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "jl: a sequence of edits stays consistent with full render",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "py: a sequence of edits stays consistent with full render",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "r: a sequence of edits stays consistent with full render",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "sh: a sequence of edits stays consistent with full render",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "md: a sequence of edits stays consistent with full render",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "json: a sequence of edits stays consistent with full render",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "tex: a sequence of edits stays consistent with full render",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "sql: a sequence of edits stays consistent with full render",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "multiline construct toggling ripples correctly (jl block comment)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "markdown fence toggling ripples correctly",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "keywords match in ANY case; strings, comments, numbers colored",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "/* */ block comment carries across lines and closes",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "inline $…$ gets a wash with differentiated tokens",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "\\alpha outside math is a plain command, inside math a symbol",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "align* carries math across lines; \\end closes it",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "escaped \\$ does not toggle math; % comments still win",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "incremental repaint stays byte-identical while a math env opens and closes",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "leading indentation stays outside the math wash; no orphan stub before \\end",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "an indented inline $…$ keeps the wash tight around the math",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "a raw $ inside \\begin{verbatim} does not open a math zone",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "\\verb|$x$| is literal; real math after it still washes",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "an unclosed inline $ ends at the line break instead of washing the file",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "incremental repaint stays byte-identical while verbatim opens and closes",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "hlFor / hlText basics",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "suite"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "paintHL: incremental render === fresh full render",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "suite"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "sql tokens",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "suite"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "tex math zones",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "suite"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "tex wash edges",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "suite"
-  },
-  {
-   "file": "hl.test.mjs",
-   "title": "tex verbatim + unclosed math containment",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "suite"
-  },
-  {
-   "file": "ui.texfix.test.mjs",
-   "title": "THE bug: Claude stays visibly working after the user fixes the build",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.texfix.test.mjs",
-   "title": "suggestions arrive: red mark + a readable pane superimposed under it",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.texfix.test.mjs",
-   "title": "Apply on the pane lands in the draft and resolves — WITHOUT moving the view",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.texfix.test.mjs",
-   "title": "multi-line replacements are shown IN FULL; Dismiss leaves the text alone",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.texfix.test.mjs",
-   "title": "a suggestion the user already fixed goes stale quietly (grace period)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.texfix.test.mjs",
-   "title": "the URL hash still follows the view across reloads",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.texfix.test.mjs",
-   "title": "the success card takes a bow: ~4.5s of glory, a smooth fade, then retired for good",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
@@ -1504,139 +904,6 @@
    "type": "test"
   },
   {
-   "file": "ui.monaco-jumps.test.mjs",
-   "title": "legacy control: strip click jumps the TEXTAREA caret; boot stays IDLE, zero vendor fetches, zero command fires",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "PDF pane renders page boxes with canvases and a text layer",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "problems strip: warning chips, expand, click jumps the editor",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "rebuilds keep the reader's place (no reload flicker path)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "forward SyncTeX (⌘J) flashes the located box in the PDF",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "inverse SyncTeX: double-click in the PDF jumps the editor",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "\\ref{ completion lists labels; accept inserts key and closes the brace",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "\\cite{ completion lists bib keys with titles",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "accepting an env completion emits BALANCED braces (the auto-paired } flow)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "Enter after \\begin{env} auto-inserts the matching \\end",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "⌘/ toggles % comments",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "§ outline lists sections with clean titles and jumps on click",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "Enter auto-indents: text under \\item lines up with \\item",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "Enter after an already-closed \\begin indents one level deeper (no second \\end)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "Backspace in leading whitespace dedents one level (\\item depth → \\begin depth)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "Backspace steps nested indents level by level, and odd indents to the stop",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "⇧Enter stays a plain unindented newline",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "the caret pauses (no blink, dimmed) when the window loses focus",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-editor.test.mjs",
-   "title": "auto-pairs: braces wrap selections and closers overtype",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
    "file": "ui.monaco-problems.test.mjs",
    "title": "problem rows land as texlog markers (badbox→Hint) with .lnErr/.lnWarn tint parity; rows route per model; empty rows sweep",
    "status": "pass",
@@ -1660,13 +927,6 @@
   {
    "file": "ui.monaco-problems.test.mjs",
    "title": "a cleanReload txn re-arms markers/tints synchronously against the new text; disposeModel clears texlog markers",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-problems.test.mjs",
-   "title": "legacy impl: the strip and texMarkLines tints behave as today; NO monaco problems machinery arms",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
@@ -1718,13 +978,6 @@
    "title": "PDF reload storms reuse one worker and pane destruction releases it",
    "status": "pass",
    "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.build-status.test.mjs",
-   "title": "run-card dual: a failing .tex run renders the ✗ card; the error-row click jumps the editor to the line [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
    "type": "test"
   },
   {
@@ -2093,13 +1346,6 @@
   },
   {
    "file": "ui.monaco-completions.test.mjs",
-   "title": "closeBrace overtype parity: \\ref accept inside the auto-paired } lands text AND caret identically [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-completions.test.mjs",
    "title": "closeBrace overtype parity: \\ref accept inside the auto-paired } lands text AND caret identically [impl=monaco]",
    "status": "pass",
    "mode": "monaco",
@@ -2136,13 +1382,6 @@
   {
    "file": "ui.monaco-completions.test.mjs",
    "title": "the .bib exclusion: no completion provider on 'bibtex' — trigger chars open nothing",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-completions.test.mjs",
-   "title": "legacy-untouched control: impl=legacy keeps the .texCompl popup and has NO suggest machinery",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
@@ -2211,13 +1450,6 @@
    "type": "test"
   },
   {
-   "file": "ui.monaco-commands.test.mjs",
-   "title": "legacy control: the textarea keeps its own auto-\\end and ⌘/; no monaco command ever fires",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
    "file": "ui.tex-subdir.test.mjs",
    "title": "▶ on draft.tex then slides.tex: two coexisting pdf tabs, both live",
    "status": "pass",
@@ -2229,13 +1461,6 @@
    "title": "the pdf tabs persist like ＋-added displays (reload keeps both)",
    "status": "pass",
    "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.tex-subdir.test.mjs",
-   "title": "▶ dual: draft.tex then slides.tex get coexisting pdf tabs; selection never reorders the strip [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
    "type": "test"
   },
   {
@@ -2264,13 +1489,6 @@
    "title": "clicking the target task greets you with the dropped file selected",
    "status": "pass",
    "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.dragtab.test.mjs",
-   "title": "drag dual: dropping c.tex on the target task pins it once, without switching task or editor [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
    "type": "test"
   },
   {
@@ -2304,90 +1522,6 @@
   {
    "file": "ui.monaco-latex.test.mjs",
    "title": "cp themes: defined before createEditor, palette from live CSS vars, re-applied on an OS scheme flip",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-wrap.test.mjs",
-   "title": "a .tex editor soft-wraps: no horizontal scroll, layers agree",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-wrap.test.mjs",
-   "title": "one number per logical line; the wrapped line owns a taller gutter cell",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-wrap.test.mjs",
-   "title": "the caret lands on the correct visual row inside a wrapped line",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-wrap.test.mjs",
-   "title": "the current-line band tints every wrapped row, full width",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-wrap.test.mjs",
-   "title": "selecting the wrapped line draws one band per visual row",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-wrap.test.mjs",
-   "title": "growing the long line re-sizes its gutter cell",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-wrap.test.mjs",
-   "title": "code files are untouched: wrap stays off, long lines scroll right",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-hl.test.mjs",
-   "title": "jump-flash band: content box centered in the row (symmetric half-leading)",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-hl.test.mjs",
-   "title": "selection: native band transparent; custom .selBand row-aligned with the glyphs",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-hl.test.mjs",
-   "title": "multi-line selection: one band per row; empty rows keep a nub; collapse clears",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-hl.test.mjs",
-   "title": "the editor keeps its place across a ≋ console round-trip",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.editor-hl.test.mjs",
-   "title": "background events never move a focused editor (the mid-typing top-bump)",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
@@ -2478,13 +1612,6 @@
   },
   {
    "file": "ui.vsplit.test.mjs",
-   "title": "vsplit dual: the divider floor keeps sessbar + composer whole under either editor impl [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
-   "type": "test"
-  },
-  {
-   "file": "ui.vsplit.test.mjs",
    "title": "vsplit dual: the divider floor keeps sessbar + composer whole under either editor impl [impl=monaco]",
    "status": "pass",
    "mode": "monaco",
@@ -2500,7 +1627,7 @@
   {
    "file": "ui.voice.test.mjs",
    "title": "a turn ending speaks the answer with ZERO setup: pill + karaoke in the console",
-   "status": "pass",
+   "status": "fail",
    "mode": "untagged",
    "type": "test"
   },
@@ -2526,38 +1653,66 @@
    "type": "test"
   },
   {
-   "file": "ui.tex.test.mjs",
-   "title": "composer: \\varepsilon + Tab → ε, mid-sentence and with sub/superscripts",
+   "file": "ui.mdview.test.mjs",
+   "title": "▤ preview renders the pinned .md: typography, math, code — no raw markdown",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
   },
   {
-   "file": "ui.tex.test.mjs",
-   "title": "composer: unknown \\name keeps the text and the focus",
+   "file": "ui.mdview.test.mjs",
+   "title": "doc engine: single ~ stays literal, ~~ strikes, inline HTML still renders",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
   },
   {
-   "file": "ui.tex.test.mjs",
-   "title": "editor: .jl files complete like the Julia REPL; plain Tab still indents",
+   "file": "ui.mdview.test.mjs",
+   "title": "relative images and links resolve against the file folder; links open in new tabs",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
   },
   {
-   "file": "ui.tex.test.mjs",
-   "title": "editor: .tex files never convert — Tab is indentation only",
+   "file": "ui.mdview.test.mjs",
+   "title": "typing in the editor live-updates the pane IN PLACE — scroll and element kept",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
   },
   {
-   "file": "ui.tex.test.mjs",
-   "title": "Add Task fields convert too",
+   "file": "ui.mdview.test.mjs",
+   "title": "✎ source in the viewer bar jumps to the editor",
    "status": "pass",
    "mode": "untagged",
+   "type": "test"
+  },
+  {
+   "file": "ui.mdview.test.mjs",
+   "title": "a ＋-added .md renders from disk and refreshes on file:changed",
+   "status": "pass",
+   "mode": "untagged",
+   "type": "test"
+  },
+  {
+   "file": "ui.mdview.test.mjs",
+   "title": "switching viewer tabs keeps the pane mounted (no re-render on return)",
+   "status": "pass",
+   "mode": "untagged",
+   "type": "test"
+  },
+  {
+   "file": "ui.mdview.test.mjs",
+   "title": "hostile markdown is sanitized: no script/style/handlers/javascript: URLs",
+   "status": "pass",
+   "mode": "untagged",
+   "type": "test"
+  },
+  {
+   "file": "ui.mdview.test.mjs",
+   "title": "P20 dual: typing live-updates the ▤ pane in place — debounce, drafts-as-source, scroll kept [impl=monaco]",
+   "status": "pass",
+   "mode": "monaco",
    "type": "test"
   },
   {
@@ -2597,28 +1752,7 @@
   },
   {
    "file": "ui.monaco-m7.test.mjs",
-   "title": "setImpl: T7 flush bumps draftRev synchronously; legacy typing cannot bump (deviation pin); T8 re-entry bumps at the boundary and newer wins; draft saved in legacy → clean re-entry replaces the stale buffer",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-m7.test.mjs",
-   "title": "T8 clean case (reverted in legacy, disk unchanged): re-entry cleanReloads the retained model — discarded text unreachable, chip saved, the next keystroke materializes only itself",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-m7.test.mjs",
    "title": "boot-failure recovery: dirty files → injected failed boot (drafts to legacy) → cleared + rebooted to READY → models recreated from the surviving drafts, drafts WIN, ⌘Z reaches the disk baseline",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-m7.test.mjs",
-   "title": "T8 without a trustworthy baseline: re-entry attach on a retained legacy-owned model with fileCache gone → the draft wins onto DIRTY_SENTINEL; the resolved cache reseeds the real baseline beneath it",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
@@ -2653,49 +1787,42 @@
   },
   {
    "file": "ui.extratabs.test.mjs",
-   "title": "◇ dual: a browser open becomes a persisted focused extra; a pinned file opens its pin tab instead [impl=legacy]",
-   "status": "pass",
-   "mode": "legacy",
-   "type": "test"
-  },
-  {
-   "file": "ui.extratabs.test.mjs",
    "title": "◇ dual: a browser open becomes a persisted focused extra; a pinned file opens its pin tab instead [impl=monaco]",
    "status": "pass",
    "mode": "monaco",
    "type": "test"
   },
   {
-   "file": "ui.settings.test.mjs",
-   "title": "default is system: dark OS → no data-theme, dark canvas",
+   "file": "ui.monaco-only.test.mjs",
+   "title": "Monaco only: Settings has no choice; saved null cannot select Legacy",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
   },
   {
-   "file": "ui.settings.test.mjs",
-   "title": "system tracks prefers-color-scheme live",
+   "file": "ui.monaco-only.test.mjs",
+   "title": "Monaco only: Settings has no choice; saved legacy cannot select Legacy",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
   },
   {
-   "file": "ui.settings.test.mjs",
-   "title": "profile menu → Settings → Light: applies, persists, survives reload",
+   "file": "ui.monaco-only.test.mjs",
+   "title": "Monaco only: Settings has no choice; saved monaco cannot select Legacy",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
   },
   {
-   "file": "ui.settings.test.mjs",
-   "title": "Dark forces dark even on a light OS; System returns to following it",
+   "file": "ui.monaco-only.test.mjs",
+   "title": "touch desktop UI attempts Monaco instead of selecting a retired editor",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
   },
   {
-   "file": "ui.settings.test.mjs",
-   "title": "an available update badges the profile button and fills the Updates card",
+   "file": "ui.monaco-only.test.mjs",
+   "title": "failed boot offers read-only text, copy and retry; dirty text survives without page reload",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
@@ -2766,20 +1893,6 @@
   {
    "file": "ui.monaco-boot.test.mjs",
    "title": "init-throw (test seam in wiring) → FALLBACK(init) with a real stack",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-boot.test.mjs",
-   "title": "toggle default: editor:impl unset → legacy editor, dock hidden/empty, zero vendor fetches",
-   "status": "pass",
-   "mode": "untagged",
-   "type": "test"
-  },
-  {
-   "file": "ui.monaco-boot.test.mjs",
-   "title": "A15 coarse pin: (pointer:coarse) and (not (any-pointer:fine)) → legacy regardless of stored monaco",
    "status": "pass",
    "mode": "untagged",
    "type": "test"
@@ -3160,38 +2273,38 @@
  "manualEvidence": [
   {
    "row": "P16",
-   "date": "2026-08-17",
-   "note": "the viewport-keep FEEL — real writing mid-document while a session floods file:changed/run:status renders, judged by eye for caret/scroll/composition stillness on physical hardware. Procedure: long .tex open, type continuously through ≥3 render storms, then flip focus mode twice; any perceptible jump is a Sev-2. Runs during the S2b soak; a test can prove coordinates, not feel.",
+   "date": "2026-09-06",
+   "note": "PENDING: the viewport-keep FEEL — real writing mid-document while a session floods file:changed/run:status renders, judged by eye for caret/scroll/composition stillness on physical hardware. Procedure: long .tex open, type continuously through ≥3 render storms, then flip focus mode twice; any perceptible jump is a Sev-2. Runs during the S2b soak; a test can prove coordinates, not feel.",
    "status": "s2b-gated"
   },
   {
    "row": "E4",
-   "date": "2026-08-17",
-   "note": "genuine-input find/replace E2E — ⌘F opens Monaco's find widget, type/replace-all/Escape, buffer and undo verified; legacy control is browser-native find (no in-editor widget to test). No automated citation exists yet; owned by S2b's genuine-input E2E block.",
+   "date": "2026-09-06",
+   "note": "PENDING: genuine-input find/replace E2E — ⌘F opens Monaco's find widget, type/replace-all/Escape, buffer and undo verified; retired control was browser-native find (no in-editor widget to test). No automated citation exists yet; owned by S2b's genuine-input E2E block.",
    "status": "s2b-gated"
   },
   {
    "row": "G3",
-   "date": "2026-08-17",
-   "note": "physical macOS IME composition on the kept host (A7) — Pinyin/Japanese composed on real hardware through a render storm and an impl toggle; the I2-IME CDP cases prove the composition events, not the OS IME panel.",
+   "date": "2026-09-06",
+   "note": "PENDING: physical macOS IME composition on the kept host (A7) — Pinyin/Japanese composed on real hardware through a render storm and an pane retry; the I2-IME CDP cases prove the composition events, not the OS IME panel.",
    "status": "s2b-gated"
   },
   {
    "row": "G3",
-   "date": "2026-08-17",
-   "note": "iPad PWA re-verification (I9/A15) — the coarse-pointer pin holds on the physical device, legacy editor + A15 feature floor intact; re-run during the S2b soak.",
+   "date": "2026-09-06",
+   "note": "PENDING: iPad PWA re-verification (I9/A15) — Monaco interaction on physical touch hardware; re-run during the S2b soak. The former coarse-pointer Legacy pin is removed.",
    "status": "s2b-gated"
   },
   {
    "row": "G3",
-   "date": "2026-08-17",
-   "note": "A16 measured budgets on the packaged /vendor/monaco route — cold/warm transfer bytes, ready-to-first-edit, p50/p95 input latency, long tasks, worker/heap growth + model churn, representative 200k-char documents (CP_PERF=1 standing case); budgets are set and measured at S2b's gate, never asserted from estimates.",
+   "date": "2026-09-06",
+   "note": "PENDING: A16 measured budgets on the packaged /vendor/monaco route — cold/warm transfer bytes, ready-to-first-edit, p50/p95 input latency, long tasks, worker/heap growth + model churn, representative 200k-char documents (CP_PERF=1 standing case); budgets are set and measured at S2b's gate, never asserted from estimates.",
    "status": "s2b-gated"
   },
   {
    "row": "G3",
-   "date": "2026-08-17",
-   "note": "A17 accessibility gate — high-contrast decision, dynamic editor ariaLabel, command/key access to every widget action, live announcements (suggestions/problems/save state), keyboard-only coverage, VoiceOver smoke, prefers-reduced-motion.",
+   "date": "2026-09-06",
+   "note": "PENDING: A17 accessibility gate — high-contrast decision, dynamic editor ariaLabel, command/key access to every widget action, live announcements (suggestions/problems/save state), keyboard-only coverage, VoiceOver smoke, prefers-reduced-motion.",
    "status": "s2b-gated"
   }
  ],
