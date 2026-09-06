@@ -7,7 +7,8 @@
 
 import { hlFor, hlText, paintHL } from './hl.js';
 import { creepTarget, CREEP_EASE } from './pdfPane.js';
-import { texEditorAttach, texJumpFlash, texMarkLines, texOutlineMenu, TEX_EXTS } from './texEditor.js';
+import { texEditorAttach, texJumpFlash, texMarkLines } from './texEditor.js';
+import { texOutlineMenu, TEX_EXTS } from './latex/texUi.js';
 import {
   enc, esc, OVS_LABEL, statusDot, SHOW_HOURS, hrs, fmtTok, extOf,
   isPdfFile, isHtmlFile, isDataFile, pinKindOf, pinLabelOf, PIN_ICON, isExtRel,
