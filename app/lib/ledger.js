@@ -72,7 +72,8 @@ export function logTokens(project, taskId, tokensIn, tokensOut, costUsd, model, 
     out: Number(tokensOut) || 0,
     costUsd: Number(costUsd) || 0,
     model: typeof model === 'string' && model ? model : null,
-    ...(details.action === 'memory' ? { action: 'memory', costEstimated: true } : {}),
+    ...(details.action === 'memory' ? { action: 'memory', costEstimated: details.costSource !== 'subscription',
+      ...(['subscription', 'planning-rates', 'provider-estimate'].includes(details.costSource) ? { costSource: details.costSource } : {}) } : {}),
   });
   broadcast('ledger:update', weekSummary());
 }

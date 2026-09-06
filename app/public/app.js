@@ -20,6 +20,7 @@ import {
   refreshTranscript, sessionFileChanged, ensureDir, refreshFeed,
 } from './files.js';
 import { pumps, pumpConsole } from './console.js';
+import { noteRunStatus, noteRunActivity, seedRunActivities, syncRunActivities } from './runActivity.js';
 import { syncRunJobCard, fadeJobCard } from './jobs.js';
 import {
   renderTexProblems, noteTurnTex, queueAutoTexRuns, pumpAutoRun,
@@ -88,12 +89,19 @@ export function handleEvent(type, p) {
       if (!p || !p.task) break;
       const arr = state.tasks[p.project] || (state.tasks[p.project] = []);
       const i = arr.findIndex(t => t && t.id === p.task.id);
+      if (p.task.status !== 'running' || arr[i]?.status !== 'running') {
+        noteRunStatus({ project: p.project, id: p.task.id, status: 'reset' });
+      }
       if (i >= 0) arr[i] = p.task; else arr.push(p.task);
       if (p.task.status === 'done') refreshFeed(p.project); // "✓ done:" feed row
       renderNav();
       if (ui.view === 'ov') renderOverview();
       else if (ui.view === 'manage') renderManage();
       else if (ui.view === p.project) renderWB(p.project);
+      break;
+    }
+    case 'session:activity': {
+      if (p?.project && p.id) noteRunActivity(p);
       break;
     }
     case 'session:stream': {
@@ -226,6 +234,7 @@ export function handleEvent(type, p) {
     }
     case 'session:status': {
       if (!p) break;
+      if (p.status) noteRunStatus(p);
       if (perOf(p.project).interrupting === p.id) perOf(p.project).interrupting = null;
       if (p.status && p.status !== 'running') {
         delete agentsLive[`${p.project}/${p.id}`];
@@ -423,6 +432,7 @@ export function handleEvent(type, p) {
       if (!p || !p.project) break;
       const pk = `${p.project}/${p.id}`;
       (pendingPerms[pk] = pendingPerms[pk] || []).push({ requestId: p.requestId, tool: p.tool, input: p.input });
+      syncRunActivities();
       toast(`⏳ approval needed — ${p.tool} (${state.projects[p.project]?.name || p.project})`);
       if (ui.view === p.project) renderWB(p.project);
       break;
@@ -434,6 +444,7 @@ export function handleEvent(type, p) {
         pendingPerms[pk] = pendingPerms[pk].filter(x => x.requestId !== p.requestId);
         if (!pendingPerms[pk].length) delete pendingPerms[pk];
       }
+      syncRunActivities();
       if (ui.view === p.project) renderWB(p.project);
       break;
     }
@@ -573,6 +584,7 @@ function applyState(p) {
   state.providers = p.providers || {};
   state.agentDefaults = p.agentDefaults || state.agentDefaults;
   state.sessions = Array.isArray(p.sessions) ? p.sessions : [];
+  seedRunActivities(state.sessions);
   // fleet board + ✎ strip: the snapshot is authoritative, exactly like jobs
   // below — a reload or ws reconnect mid-turn re-seeds the live strips, and
   // rosters from turns that ended while we were away disappear. This is the

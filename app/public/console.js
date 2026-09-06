@@ -1,7 +1,7 @@
 // console.js — the console rendering pipeline, split verbatim out of app.js
 // (phase 2): markdown+KaTeX engines, tex-macro harvest, fence enhancer,
 // segment parser, updateConsole + reveal pump, permission cards, transcript
-// seeding, claude verbs.
+// seeding, running activity.
 
 import { enc, esc, pinKindOf, isExtRel, toast, diffHtml } from './util.js';
 import {
@@ -14,18 +14,7 @@ import { ensureFile } from './files.js';
 import { syncJobCards } from './jobs.js';
 import { getAddedViewers, showProposalInPanel } from './viewers.js';
 import { renderWB } from './workbench.js';
-
-/* claude-code-style activity verbs while a turn runs */
-const CLAUDE_VERBS = ['Pondering', 'Forging', 'Brewing', 'Scheming', 'Conjuring', 'Deriving',
-  'Sleuthing', 'Wrangling', 'Distilling', 'Percolating', 'Crunching', 'Untangling', 'Marinating',
-  'Hatching', 'Simmering', 'Cogitating', 'Noodling', 'Riffing', 'Whirring', 'Musing'];
-export const claudeVerb = () => CLAUDE_VERBS[Math.floor(Math.random() * CLAUDE_VERBS.length)];
-setInterval(() => {
-  const els = document.querySelectorAll('.claudeVerb');
-  if (!els.length) return;
-  const v = claudeVerb() + '…';
-  els.forEach(el => { el.textContent = v; });
-}, 3500);
+import { runActivityHtml, syncRunActivities } from './runActivity.js';
 
 /* ── console rendering: markdown + LaTeX, web-claude style ──
    The stream buffer is parsed into typed segments (you / thinking / answer /
@@ -744,22 +733,16 @@ export function updateConsole(box, k, upto) {
     card.remove();
   }
 
-  // live activity verb at the stream's end — only while a turn truly runs.
+  // Live activity at the stream's end — only while a turn truly runs.
   // (Created/patched here; PLACED by the shared tail-order pass below.)
-  const interrupting = running && perOf(project).interrupting === taskId;
   let verbEl = box.querySelector(':scope > .csVerb');
   if (running) {
     if (!verbEl) {
       verbEl = document.createElement('div');
       verbEl.className = 'csVerb';
+      verbEl.innerHTML = runActivityHtml(project, t);
     }
-    const want = interrupting ? 'int' : 'run';
-    if (verbEl._st !== want) {
-      verbEl._st = want;
-      verbEl.innerHTML = interrupting
-        ? '<span class="live" style="background:var(--yellow)"></span> interrupting…'
-        : `<span class="live"></span> <span class="claudeVerb">${claudeVerb()}…</span>`;
-    }
+    syncRunActivities();
   } else if (verbEl) {
     verbEl.remove();
     verbEl = null;

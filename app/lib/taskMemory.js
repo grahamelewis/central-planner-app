@@ -7,6 +7,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { ROOT } from './config.js';
 import { writeFileAtomic } from './paths.js';
 import { memorySettings, MEMORY_MODELS, memoryError } from './memorySettings.js';
+import { requestCodexMemory } from './codexMemory.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const FIELDS = ['findings', 'constraints', 'uncertainties', 'nextSteps'];
@@ -25,20 +26,11 @@ const INSTRUCTIONS = `Maintain a concise task checkpoint, not a new investigatio
 //   input_tokens_details: { cached_tokens }, output_tokens_details: { reasoning_tokens } },
 //   output: [{ type: 'message', content: [{ type: 'output_text', text }] | [{ type: 'refusal' }] }],
 //   costUsd? }  — costUsd is the provider's own estimate when it offers one.
-export async function requestMemory(body, connection = 'openai-api') {
+export async function requestMemory(body, connection = 'codex-subscription') {
   if (process.env.CP_NO_BILLED === '1') throw memoryError('Billed memory calls are disabled in this environment.', 403);
   if (connection === 'claude-sdk') return requestClaudeSdk(body);
-  if (connection !== 'openai-api') throw memoryError('Unknown memory connection.', 409);
-  const key = process.env.OPENAI_API_KEY?.trim();
-  if (!key) throw memoryError('OPENAI_API_KEY is not configured on the server.', 409);
-  // Fixed endpoint, no redirects, no tools, no retry, no persisted API thread.
-  const res = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(90000),
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw memoryError(`OpenAI memory request failed (HTTP ${res.status}); no automatic retry.`, 502);
-  return res.json();
+  if (connection === 'codex-subscription') return requestCodexMemory(body);
+  throw memoryError('Unknown memory connection. OpenAI memory requires the Codex subscription connection.', 409);
 }
 
 // One tool-less, single-turn Agent SDK query on the dashboard's own Claude
@@ -139,11 +131,15 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
     const day = now().toISOString().slice(0, 10);
     return budget().reservations.filter(r => r.day === day).reduce((sum, r) => sum + r.ceilingUsd, 0);
   }
+  function jobsToday() {
+    const day = now().toISOString().slice(0, 10);
+    return budget().reservations.filter(r => r.day === day && r.connection === 'codex-subscription').length;
+  }
   // Bill pessimistically even on timeouts/crashes. Reservations are not released
   // using an estimated actual cost, so a restart cannot erase uncertain charges.
   function reserve(job) {
     const b = budget();
-    b.reservations.push({ id: job.id, day: now().toISOString().slice(0, 10), ceilingUsd: job.reservedUsd });
+    b.reservations.push({ id: job.id, day: now().toISOString().slice(0, 10), ceilingUsd: job.reservedUsd, connection: job.configuration.connection });
     writeFileAtomic(safePath('budget.json'), JSON.stringify(b) + '\n');
   }
   function source(project, id) {
@@ -235,10 +231,12 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
     const record = load(info), previous = record.revisions.at(-1) || null;
     const prepared = prepare(s, previous, source(project, id));
     if (!prepared) return;
+    const subscription = s.connection === 'codex-subscription';
     const model = MEMORY_MODELS.find(m => m.id === s.model);
-    if (!model) throw memoryError('Unknown memory model.', 409);
-    const ceiling = (prepared.inputCeiling * model.input * model.cacheWrite + s.maxOutputTokens * model.output) / 1e6;
-    if (ceiling > s.maxJobUsd || spentToday() + ceiling > s.dailyBudgetUsd) throw memoryError('Memory budget reached; no request sent.', 409);
+    if (!subscription && !model) throw memoryError('Unknown memory model.', 409);
+    const ceiling = subscription ? 0 : (prepared.inputCeiling * model.input * model.cacheWrite + s.maxOutputTokens * model.output) / 1e6;
+    if (subscription && jobsToday() >= s.dailyJobLimit) throw memoryError('Memory budget reached: daily subscription job limit; no request sent.', 409);
+    if (!subscription && (ceiling > s.maxJobUsd || spentToday() + ceiling > s.dailyBudgetUsd)) throw memoryError('Memory budget reached; no request sent.', 409);
     const job = { id: randomUUID(), status: 'running', startedAt: now().toISOString(), configuration: s,
       baseRevision: previous?.revision || 0, reservedUsd: ceiling, inputTokenCeiling: prepared.inputCeiling };
     reserve(job); // must be durable before dispatch
@@ -250,11 +248,11 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
       if (u && Number.isFinite(u.input_tokens) && Number.isFinite(u.output_tokens) && u.input_tokens >= 0 && u.output_tokens >= 0) {
         // Prefer the provider's own cost estimate (the Agent SDK reports one);
         // otherwise price at the planning rates with the cache-write premium.
-        const rated = (u.input_tokens * model.input * model.cacheWrite + u.output_tokens * model.output) / 1e6;
+        const rated = subscription ? 0 : (u.input_tokens * model.input * model.cacheWrite + u.output_tokens * model.output) / 1e6;
         const reported = Number.isFinite(response.costUsd) && response.costUsd >= 0 ? response.costUsd : null;
         job.usage = { inputTokens: u.input_tokens, outputTokens: u.output_tokens,
           cachedInputTokens: u.input_tokens_details?.cached_tokens || 0, reasoningTokens: u.output_tokens_details?.reasoning_tokens || 0,
-          estimatedCostUsd: reported ?? rated, costSource: reported === null ? 'planning-rates' : 'provider-estimate' };
+          estimatedCostUsd: subscription ? 0 : reported ?? rated, costSource: subscription ? 'subscription' : reported === null ? 'planning-rates' : 'provider-estimate' };
         try { logUsage(project, id, job.usage, s.model); } catch { job.ledgerWarning = 'Usage saved here, but the shared ledger could not be updated.'; }
       }
       if (response.status !== 'completed') throw memoryError('Memory response was incomplete; previous checkpoint retained.', 502);
@@ -339,7 +337,7 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
     if (running.has(info.key)) deleted.add(info.key);
     try { fs.unlinkSync(info.file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
-  return { view, evidence, enqueue, run, drain, spentToday, forget,
+  return { view, evidence, enqueue, run, drain, spentToday, jobsToday, forget,
     close() { closed = true; clearTimeout(timer); queue.clear(); },
   };
 }

@@ -10,7 +10,7 @@ import { creepTarget, CREEP_EASE } from './pdfPane.js';
 import { texEditorAttach, texJumpFlash, texMarkLines, texOutlineMenu, TEX_EXTS } from './texEditor.js';
 import {
   enc, esc, OVS_LABEL, statusDot, SHOW_HOURS, hrs, fmtTok, extOf,
-  isPdfFile, isDataFile, pinKindOf, pinLabelOf, PIN_ICON, isExtRel,
+  isPdfFile, isHtmlFile, isDataFile, pinKindOf, pinLabelOf, PIN_ICON, isExtRel,
   toast, confirmBox, unifiedDiffHtml, fmtAgo, texComplete,
 } from './util.js';
 import {
@@ -689,14 +689,16 @@ export function renderWB(key) {
   if (pdfEntry) viewers.push({ kind: 'pdf', key: 'pdf', label: '◫ ' + (pdfEntry.pdf ? String(pdfEntry.pdf).split('/').pop() : 'live pdf') });
   state.artifacts.filter(a => a.project === key && a.kind === 'html').slice(0, 8)
     .forEach(a => viewers.push({ kind: 'html', key: a.rel, label: '⌗ ' + a.name }));
-  // pinned .pdf files belong to the show panel, not the code pane
+  // Pinned PDFs and HTML remain available even outside the recent-artifact
+  // window. HTML also keeps its source tab; external pins remain text-only.
   const watchRel = pdfEntry?.pdf ? relOf(key, pdfEntry.pdf) : null;
   (task && Array.isArray(task.context?.files) ? task.context.files : [])
-    .filter(isPdfFile)
+    .filter(f => isPdfFile(f) || isHtmlFile(f))
     .forEach(f => {
       const rel = relOf(key, f);
       if (!rel || rel === watchRel || viewers.some(v => v.key === rel)) return;
-      viewers.push({ kind: 'pdfart', key: rel, label: '◫ ' + String(f).split('/').pop() });
+      const pdf = isPdfFile(f);
+      viewers.push({ kind: pdf ? 'pdfart' : 'html', key: rel, label: (pdf ? '◫ ' : '⌗ ') + String(f).split('/').pop() });
     });
   // displays added by hand via ＋ or a .tex ▶ (dedup against artifacts/pinned
   // pdfs). MUST come before the selected-key fallback below: an added tab that
@@ -989,7 +991,7 @@ export function renderWB(key) {
         const dirOpen = frel != null && per.openDirs?.has(frel);
         const selCls = kind === 'folder' ? (dirOpen ? 'sel' : '') : (fi === i ? 'sel' : '');
         let row = `<div class="scRow ${selCls} ${isClosed ? 'closed' : ''}" data-fi="${i}" draggable="true"
-          title="${isClosed ? 'closed — click to reopen' : kind === 'data' ? 'data pin — schema card, not contents' : kind === 'folder' ? 'click to browse the folder' : 'drag to reorder'}"><span class="nm">${icon} ${esc(pinLabelOf(f))}</span><span class="lang">${chip}</span></div>`;
+          title="${isHtmlFile(f) ? 'open source in edit and rendered HTML in view' : isClosed ? 'closed — click to reopen' : kind === 'data' ? 'data pin — schema card, not contents' : kind === 'folder' ? 'click to browse the folder' : 'drag to reorder'}"><span class="nm">${icon} ${esc(pinLabelOf(f))}</span><span class="lang">${chip}</span></div>`;
         if (dirOpen) row += dirKidsHtml(key, frel, 1);
         return row;
       }).join('')
@@ -1840,6 +1842,9 @@ function wireWB(root, key, task, files) {
       const rel = relOf(key, String(files[+v]).replace(/\/+$/, ''));
       if (rel != null && kind === 'code' && drafts[`${key}::${rel}`] == null) delete fileCache[`${key}::${rel}`];
       if (rel != null && kind === 'data') delete fileCache[`${key}::card::${rel}`];
+      // Only the pinned sidebar row couples the two panes. Clicking a source
+      // tab must not steal a preview the user selected independently.
+      if (rel != null && isHtmlFile(rel) && el.classList.contains('scRow')) selectViewer(key, rel);
     }
     renderWB(key);
   }));

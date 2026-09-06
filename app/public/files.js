@@ -3,7 +3,7 @@
 // dir browser, pin picker, WYSIWYG html edit, editor chrome patching.
 
 import {
-  enc, esc, isPdfFile, isDataFile, pinKindOf, isExtRel, toast, merge3,
+  enc, esc, isPdfFile, isHtmlFile, isDataFile, pinKindOf, isExtRel, toast, merge3,
 } from './util.js';
 import {
   state, ui, transcripts, tailBufs, fileCache, drafts, draftBase, diskStale,
@@ -431,8 +431,8 @@ export function openExtraTab(key, rel) {
     }
     if (drafts[`${key}::${rel}`] == null) delete fileCache[`${key}::${rel}`];
   } else {
-    // note: pdf/html/data files never reach here — the folder-browser click
-    // routes them to the show panel; this path is code/text files only
+    // Folder-browser HTML/PDF/data opens in the show panel, but callers can
+    // also request source tabs (including external files and overflow pins).
     const extras = extrasOf(key);
     if (!extras.includes(rel)) { extras.push(rel); persistExtras(key); }
     per.fileTab = 'x:' + rel;
@@ -607,7 +607,17 @@ export async function pinFile(key, task, rel) {
       ensureDir(key, frel);
     }
   } else if (order.length <= 12) per.fileTab = order.length - 1;
-  else toast('pinned — beyond the 12 visible tabs, see the sidebar'); // don't focus a different file
+  else if (!isHtmlFile(rel)) toast('pinned — beyond the 12 visible tabs, see the sidebar'); // don't focus a different file
+  // HTML is both source and a readable document. Open both on an explicit
+  // pin, but leave subsequent editor/viewer tab selections independent.
+  if (!ext && isHtmlFile(rel)) {
+    const htmlRel = relOf(key, rel);
+    if (htmlRel != null) {
+      selectViewer(key, htmlRel);
+      // Pins beyond the editor's visible-tab limit still need a source tab.
+      if (order.length > 12) openExtraTab(key, htmlRel);
+    }
+  }
   per.pinOpen = false;
   per.pinQ = '';
   renderWB(key);

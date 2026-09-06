@@ -30,7 +30,7 @@ const ignoreDirSet = new Set(ARTIFACT_GLOBS.ignoreDirs || []);
 
 function kindOf(p) {
   const ext = path.extname(p).toLowerCase();
-  if (ext === '.html') return 'html';
+  if (ext === '.html' || ext === '.htm') return 'html';
   if (ext === '.pdf') return 'pdf';
   return null;
 }

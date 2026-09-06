@@ -18,8 +18,9 @@ function fixture(t, options = {}) {
   const root = mkTmp('cp-memory-');
   const state = { task: { id: 'one', created: '2026-09-04T00:00:00Z', session: { threadId: 'untouched' } }, active: false,
     events: [{ role: 'user', text: 'The baseline is 0.5, not 5. Do not change production.', ts: 'a' }], calls: [], logs: [] };
-  const settings = createMemorySettings(root, { OPENAI_API_KEY: 'fake-unit-test-key' }, { claudeConnected: () => options.claude === true });
-  settings.update({ connection: 'openai-api', model: 'gpt-5.6-luna', enabled: true, dailyBudgetUsd: 1, ...options.settings });
+  const settings = createMemorySettings(root, {}, { claudeConnected: () => options.claude === true,
+    codexStatus: () => ({ connected: true, account: { type: 'chatgpt' }, models: ['gpt-5.6-luna', 'gpt-5.6-terra'].map(id => ({ id, supportedReasoningEfforts: [{ id: 'low' }, { id: 'medium' }] })) }) });
+  settings.update({ connection: 'codex-subscription', model: 'gpt-5.6-luna', enabled: true, dailyBudgetUsd: 1, ...options.settings });
   const deps = { root, settings, getTask: () => state.task, getTranscript: () => state.events, isActive: () => state.active,
     request: async body => { state.calls.push(body); return options.request ? options.request(body, state) : response(checkpoint()); },
     logUsage: (...args) => state.logs.push(args), now: () => new Date('2026-09-04T12:00:00Z') };
@@ -33,14 +34,14 @@ test('settings are opt-in, isolated, validated, and secret-free', t => {
   fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ agents: { defaultModel: 'keep' }, user: { name: 'keep' } }));
   const s = createMemorySettings(root, {}, { claudeConnected: () => false });
   assert.deepEqual(s.get(), MEMORY_DEFAULTS);
-  assert.equal(MEMORY_DEFAULTS.connection, 'openai-api'); assert.equal(MEMORY_DEFAULTS.model, 'gpt-5.6-luna');
-  assert.throws(() => s.update({ enabled: true, dailyBudgetUsd: 1 }), /OPENAI_API_KEY/);
+  assert.equal(MEMORY_DEFAULTS.connection, 'codex-subscription'); assert.equal(MEMORY_DEFAULTS.model, 'gpt-5.6-luna');
+  assert.throws(() => s.update({ enabled: true, dailyBudgetUsd: 1 }), /Sign in to Codex/);
   assert.throws(() => s.update({ connection: 'claude-sdk', model: 'claude-sonnet-5', enabled: true, dailyBudgetUsd: 1 }), /Sign in to Claude/);
-  assert.throws(() => s.update({ connection: 'openai-api', model: 'gpt-5.6-luna', enabled: true, dailyBudgetUsd: 1 }), /OPENAI_API_KEY/);
+  assert.throws(() => s.update({ connection: 'openai-api', model: 'gpt-5.6-luna', enabled: true, dailyBudgetUsd: 1 }), /removed/);
   for (const patch of [{ model: 'unknown' }, { reasoningEffort: 'max' }, { model: 'claude-sonnet-5' } /* wrong connection */, { connection: 'claude-sdk' } /* OpenAI model on Claude */, { dailyBudgetUsd: -1 }, { maxInputTokens: '24000' }, { apiKey: 'secret' }, { enabled: 'yes' }, []]) assert.throws(() => s.update(patch));
-  s.update({ connection: 'openai-api', model: 'gpt-5.6-terra', dailyBudgetUsd: 2 });
+  s.update({ connection: 'codex-subscription', model: 'gpt-5.6-terra', dailyBudgetUsd: 2 });
   assert.equal(s.publicSettings().credentialConfigured, false);
-  assert.deepEqual(s.publicSettings().connections.map(c => [c.id, c.credentialConfigured]), [['claude-sdk', false], ['openai-api', false]]);
+  assert.deepEqual(s.publicSettings().connections.map(c => [c.id, c.credentialConfigured]), [['claude-sdk', false], ['codex-subscription', false]]);
   const signedIn = createMemorySettings(root, {}, { claudeConnected: () => true });
   assert.equal(signedIn.publicSettings().connections.find(c => c.id === 'claude-sdk').credentialConfigured, true);
   signedIn.update({ connection: 'claude-sdk', model: 'claude-haiku-4-5', reasoningEffort: 'none', enabled: true, dailyBudgetUsd: 1 });
@@ -54,6 +55,42 @@ test('settings are opt-in, isolated, validated, and secret-free', t => {
   assert.equal(fs.readFileSync(path.join(root, 'config.json'), 'utf8'), '{malformed');
 });
 
+test('legacy API settings migrate disabled; API-key sign-in cannot enable subscription memory', t => {
+  const root = mkTmp('cp-memory-migrate-'); t.after(() => rmTmp(root));
+  fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ memory: { ...MEMORY_DEFAULTS, connection: 'openai-api', enabled: true } }));
+  const s = createMemorySettings(root, { OPENAI_API_KEY: 'unused' }, { claudeConnected: () => false,
+    codexStatus: () => ({ connected: true, account: { type: 'apiKey' }, models: [] }) });
+  assert.equal(s.get().enabled, false); assert.equal(s.get().connection, 'codex-subscription');
+  assert.equal(s.publicSettings().credentialConfigured, false);
+  assert.throws(() => s.update({ enabled: true }), /Sign in to Codex/);
+});
+
+test('account-specific model persists and remains disableable after disconnect', t => {
+  const root = mkTmp('cp-memory-model-'); t.after(() => rmTmp(root));
+  let connected = true;
+  const s = createMemorySettings(root, {}, { claudeConnected: () => false, codexStatus: () => ({ connected,
+    account: connected ? { type: 'chatgpt' } : null,
+    models: [{ id: 'account-model', supportedReasoningEfforts: [{ id: 'high' }] }] }) });
+  s.update({ model: 'account-model', reasoningEffort: 'high', enabled: true });
+  assert.equal(s.get().dailyBudgetUsd, 0, 'subscription needs no API budget');
+  connected = false;
+  assert.equal(s.get().model, 'account-model');
+  assert.equal(s.publicSettings().models.find(m => m.id === 'account-model').available, false);
+  s.update({ enabled: false }); assert.equal(s.get().enabled, false);
+  assert.throws(() => s.update({ enabled: true }), /Sign in to Codex/);
+});
+
+test('subscription daily slots survive failures and restart without dollar estimates', async t => {
+  const { state, service, deps } = fixture(t, { settings: { dailyJobLimit: 1, dailyBudgetUsd: 0 }, request: async () => { throw new Error('quota'); } });
+  await service.run('alpha', 'one');
+  assert.equal(service.view('alpha', 'one').jobs[0].status, 'failed');
+  assert.equal(service.jobsToday(), 1); assert.equal(service.spentToday(), 0);
+  service.close();
+  const restarted = createMemoryService(deps); t.after(() => restarted.close());
+  await assert.rejects(restarted.run('alpha', 'one'), /daily.*limit/i);
+  assert.equal(state.calls.length, 1);
+});
+
 test('publishes a versioned checkpoint, records usage, and leaves the working conversation untouched', async t => {
   const { state, service } = fixture(t);
   const before = JSON.stringify({ task: state.task, events: state.events });
@@ -64,6 +101,7 @@ test('publishes a versioned checkpoint, records usage, and leaves the working co
   assert.deepEqual(view.current.content, checkpoint());
   assert.equal(view.pending, false); assert.equal(view.totals.inputTokens, 1000);
   assert.equal(view.jobs[0].usage.reasoningTokens, 100); assert.equal(state.logs.length, 1);
+  assert.equal(view.jobs[0].usage.costSource, 'subscription'); assert.equal(view.jobs[0].usage.estimatedCostUsd, 0);
   assert.equal(JSON.stringify({ task: state.task, events: state.events }), before);
   const body = state.calls[0];
   assert.equal(body.model, 'gpt-5.6-luna'); assert.equal(body.reasoning.effort, 'low');
@@ -86,7 +124,7 @@ test('next revision includes the prior brief and only the new delta; versions su
   const restarted = createMemoryService(deps); t.after(() => restarted.close());
   const view = restarted.view('alpha', 'one');
   assert.equal(view.revisions.length, 2); assert.equal(view.current.revision, 2);
-  assert.equal(view.current.model, 'gpt-5.6-terra'); assert.ok(restarted.spentToday() > 0);
+  assert.equal(view.current.model, 'gpt-5.6-terra'); assert.equal(restarted.jobsToday(), 2);
 });
 
 test('large Unicode entries are chunked with exact prefix coverage and no skipped text', async t => {
@@ -118,7 +156,7 @@ for (const [name, bad] of [
     await service.run('alpha', 'one');
     const view = service.view('alpha', 'one');
     assert.equal(view.current.revision, 1); assert.equal(view.jobs[0].status, 'failed');
-    assert.ok(view.jobs[0].reservedUsd > 0); assert.equal(n, 2);
+    assert.equal(service.jobsToday(), 2); assert.equal(n, 2);
   });
 }
 
@@ -127,13 +165,13 @@ test('transport errors are sanitized; uncertain charges still consume the daily 
   await service.run('alpha', 'one');
   const view = service.view('alpha', 'one');
   assert.equal(view.current, null); assert.doesNotMatch(JSON.stringify(view), /secret-api-key/);
-  settings.update({ dailyBudgetUsd: service.spentToday() });
+  settings.update({ dailyJobLimit: service.jobsToday() });
   await assert.rejects(service.run('alpha', 'one'), /budget reached/);
   assert.equal(state.calls.length, 1);
 });
 
 test('per-request budget blocks dispatch and disabled memory queues nothing', async t => {
-  const { service, settings, state } = fixture(t, { settings: { maxJobUsd: 0.001 } });
+  const { service, settings, state } = fixture(t, { claude: true, settings: { connection: 'claude-sdk', model: 'claude-sonnet-5', maxJobUsd: 0.001 } });
   await assert.rejects(service.run('alpha', 'one'), /budget reached/);
   assert.equal(state.calls.length, 0); assert.equal(service.spentToday(), 0);
   settings.update({ enabled: false }); assert.equal(service.enqueue('alpha', 'one'), false);
@@ -215,7 +253,7 @@ test('deleting during a request cannot recreate its memory file', async t => {
   await service.run('alpha', 'one');
   assert.equal(service.view('alpha', 'one').jobs.length, 0);
   assert.equal(service.view('alpha', 'one').current, null);
-  assert.ok(service.spentToday() > 0);
+  assert.equal(service.jobsToday(), 1);
 });
 
 test('a completed turn arriving during consolidation queues one follow-up with fresh data', async t => {

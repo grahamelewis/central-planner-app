@@ -15,7 +15,7 @@ import {
 } from './store.js';
 import { api, apiQuiet } from './net.js';
 import { mountMemorySettings } from './memory.js';
-import { claudeVerb } from './console.js';
+import { runActivityHtml } from './runActivity.js';
 import {
   deadlineMs, unfiledSeries, NU_DAYS, NU_MONS, gcalTemplateUrl, nuSafeUrl,
   nuHost,
@@ -55,7 +55,7 @@ export function renderOverview() {
     const tok = per ? fmtTok((per.tokensIn || 0) + (per.tokensOut || 0)) : '0';
     const sub = wait
       ? esc(t.question ? 'asked: ' + t.question : 'turn finished — waiting for you')
-      : `<span class="claudeVerb">${claudeVerb()}…</span> · turn ${t.session?.turns ?? 1}`;
+      : runActivityHtml(k, t);
     return `<div class="agentCard" data-go="${esc(k)}" data-tid="${esc(t.id)}">
       <div class="av ${wait ? 'y' : avCls[i % 4]}">${wait ? '?' : '⚙'}</div>
       <div><div class="nm">${esc(state.projects[k]?.name || k)} · ${esc(t.title)} <span class="providerTag ${taskProvider(t)}">${agentName(taskProvider(t))}</span></div>

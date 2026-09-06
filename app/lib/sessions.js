@@ -23,6 +23,7 @@ import { externalDirsFor, externalPinLines, isExternalPin, isPathGranted } from 
 import { sessionJobStart, sessionJobProgress, sessionJobEnd, endSessionJobsFor } from './jobs.js';
 import { classifyAuthError, noteTurnError as noteAuthError, noteTurnSuccess as noteAuthSuccess } from './auth.js';
 import { getCodexClient, refreshCodex } from './codexAppServer.js';
+import { createActivityTracker } from './sessionActivity.js';
 
 // tool calls whose input names a file Claude is about to modify
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -803,7 +804,13 @@ async function runClaudeTurn(project, id, promptText) {
   const entry = registry.get(key) || { project, id, provider: 'claude', startedAt: ts, status: 'running' };
   entry.provider = 'claude';
   entry.status = 'running';
+  entry.turnStartedAt = ts;
+  entry.activity = { label: 'Working' };
   registry.set(key, entry);
+  const activity = createActivityTracker((current) => {
+    entry.activity = current;
+    broadcast('session:activity', { project, id, turnStartedAt: ts, activity: current });
+  });
 
   let usageIn = 0;
   let usageOut = 0;
@@ -839,7 +846,7 @@ async function runClaudeTurn(project, id, promptText) {
 
     // mark running + broadcast on turn start
     try { updateTask(project, id, { status: 'running' }); } catch (err) { logErr(err.message); }
-    broadcast('session:status', { project, id, status: 'running' });
+    broadcast('session:status', { project, id, status: 'running', turnStartedAt: ts });
     persistTranscript(key, task); // the user's message survives even a crash mid-turn
 
     // Kaimon warm REPL: a fragment ONLY for a Julia project whose dashboard-
@@ -1027,10 +1034,12 @@ async function runClaudeTurn(project, id, promptText) {
         if (!ev || msg.parent_tool_use_id != null) continue; // subagent inner streams: shown via tool/result lines
         if (ev.type === 'content_block_start') {
           const bt = ev.content_block && ev.content_block.type;
+          if (bt === 'thinking' || bt === 'text') activity.phase(bt === 'text');
           if (bt === 'thinking') { inThinking = true; emit('\n∴ thinking…\n'); }
           else if (inThinking && bt === 'text') { inThinking = false; emit('\n— answer —\n'); }
         } else if (ev.type === 'content_block_delta' && ev.delta) {
           if (ev.delta.type === 'text_delta' && typeof ev.delta.text === 'string') {
+            activity.phase(true);
             emit(ev.delta.text);
           } else if (ev.delta.type === 'thinking_delta' && typeof ev.delta.thinking === 'string') {
             emit(ev.delta.thinking);
@@ -1046,6 +1055,7 @@ async function runClaudeTurn(project, id, promptText) {
         const blocks = (msg.message && msg.message.content) || [];
         for (const block of Array.isArray(blocks) ? blocks : []) {
           if (block && block.type === 'tool_use') {
+            if (!msg.parent_tool_use_id) activity.start(block.id, block.name, block.input);
             // a Task tool call spawns a subagent — announce it as an agent
             // launch instead of a generic [tool:] line (main thread only;
             // nested spawns keep the plain ↳ treatment)
@@ -1084,6 +1094,7 @@ async function runClaudeTurn(project, id, promptText) {
         const blocks = (msg.message && msg.message.content) || [];
         for (const block of Array.isArray(blocks) ? blocks : []) {
           if (block && block.type === 'tool_result') {
+            if (!msg.parent_tool_use_id) activity.end(block.tool_use_id);
             // the command behind a job card (if any) is over
             if (block.tool_use_id) sessionJobEnd(block.tool_use_id, { error: !!block.is_error });
             // an edit tool succeeded — the file just changed on disk; open
@@ -1151,6 +1162,8 @@ async function runClaudeTurn(project, id, promptText) {
     resultError = err && err.message ? err.message : String(err);
     logErr(`turn error for ${key}:`, resultError);
   } finally {
+    activity.clear();
+    entry.turnStartedAt = null;
     activeTurns.delete(key);
     interruptedDuringPrep.delete(key);
     // the turn's agents are gone with the turn — clear the live roster
@@ -1372,7 +1385,13 @@ async function runCodexTurn(project, id, promptText) {
   const entry = registry.get(key) || { project, id, provider: 'codex', startedAt: ts, status: 'running' };
   entry.provider = 'codex';
   entry.status = 'running';
+  entry.turnStartedAt = ts;
+  entry.activity = { label: 'Working' };
   registry.set(key, entry);
+  const activity = createActivityTracker((current) => {
+    entry.activity = current;
+    broadcast('session:activity', { project, id, turnStartedAt: ts, activity: current });
+  });
 
   const client = getCodexClient();
   let threadId = null;
@@ -1403,17 +1422,22 @@ async function runCodexTurn(project, id, promptText) {
     if (!threadId || p.threadId !== threadId) return;
     if (turnId && p.turnId && p.turnId !== turnId) return;
     if (message.method === 'item/agentMessage/delta' && typeof p.delta === 'string') {
+      activity.phase(true);
       const framed = codexTextFrame(textStreamKey, 'agent', p.itemId, agentPhases.get(p.itemId));
       textStreamKey = framed.key;
       if (framed.prefix) emit(framed.prefix);
       emit(p.delta);
     } else if (message.method === 'item/reasoning/summaryTextDelta' && typeof p.delta === 'string') {
+      activity.phase(false);
       const framed = codexTextFrame(textStreamKey, 'reasoning', p.itemId, null);
       textStreamKey = framed.key;
       if (framed.prefix) emit(framed.prefix);
       emit(p.delta);
     } else if (message.method === 'item/started' && p.item) {
       const item = p.item;
+      if (['commandExecution', 'fileChange', 'mcpToolCall', 'collabAgentToolCall', 'webSearch'].includes(item.type)) {
+        activity.start(item.id, item.type === 'webSearch' ? 'WebSearch' : item.type, { command: item.command });
+      }
       if (item.type === 'agentMessage') {
         agentPhases.set(item.id, item.phase || null);
       } else if (item.type === 'commandExecution' && !emittedTools.has(item.id)) {
@@ -1439,6 +1463,7 @@ async function runCodexTurn(project, id, promptText) {
       }
     } else if (message.method === 'item/completed' && p.item) {
       const item = p.item;
+      activity.end(item.id);
       if (item.type === 'agentMessage' && typeof item.text === 'string') {
         finalText = item.text;
       } else if (item.type === 'commandExecution') {
@@ -1502,7 +1527,7 @@ async function runCodexTurn(project, id, promptText) {
     const ctx = task.context || {};
     const exec = codexExecutionSettings(task);
     try { updateTask(project, id, { status: 'running' }); } catch (err) { logErr(err.message); }
-    broadcast('session:status', { project, id, provider: 'codex', status: 'running' });
+    broadcast('session:status', { project, id, provider: 'codex', status: 'running', turnStartedAt: ts });
     persistTranscript(key, task);
 
     const extDirs = externalDirsFor(project, Array.isArray(ctx.files) ? ctx.files : []);
@@ -1597,6 +1622,8 @@ async function runCodexTurn(project, id, promptText) {
     resultError = resultError || (err && err.message ? err.message : String(err));
     logErr(`Codex turn error for ${key}:`, resultError);
   } finally {
+    activity.clear();
+    entry.turnStartedAt = null;
     client.off('notification', onNotification);
     client.off('serverRequest', onServerRequest);
     client.off('exit', onExit);
@@ -1849,8 +1876,10 @@ export function forgetTask(project, id) {
 }
 
 export function activeSessions() {
-  return Array.from(registry.values()).map(({ project, id, provider, startedAt, status, agents, edits }) => ({
+  return Array.from(registry.values()).map(({ project, id, provider, startedAt, status, agents, edits, turnStartedAt, activity }) => ({
     project, id, provider: provider || 'claude', startedAt, status,
+    turnStartedAt: status === 'running' ? turnStartedAt || null : null,
+    activity: status === 'running' ? activity || null : null,
     // live subagent roster + ✎ edit aggregate of the current turn (empty
     // between turns) — lets a freshly-loaded dashboard rebuild the strip
     agents: agents || [],

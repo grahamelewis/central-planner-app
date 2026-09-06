@@ -51,7 +51,7 @@ const app = express();
 const taskMemory = configureTaskMemory({
   getTask, getTranscript, isActive: hasActiveTurn,
   notify: (project, id) => broadcast('memory:update', { project, id }),
-  logUsage: (project, id, usage, model) => logTokens(project, id, usage.inputTokens, usage.outputTokens, usage.estimatedCostUsd, model, { action: 'memory' }),
+  logUsage: (project, id, usage, model) => logTokens(project, id, usage.inputTokens, usage.outputTokens, usage.estimatedCostUsd, model, { action: 'memory', costSource: usage.costSource }),
 });
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(APP_DIR, 'public')));
@@ -170,7 +170,7 @@ function snapshot() {
 // ---- REST routes -----------------------------------------------------------
 
 app.get('/api/memory/settings', route((req, res) => {
-  res.json({ ...memorySettings.publicSettings(), reservedTodayUsd: taskMemory.spentToday() });
+  res.json({ ...memorySettings.publicSettings(), reservedTodayUsd: taskMemory.spentToday(), jobsToday: taskMemory.jobsToday() });
 }));
 app.patch('/api/memory/settings', route((req, res) => {
   res.json(memorySettings.update(req.body));

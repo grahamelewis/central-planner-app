@@ -89,6 +89,8 @@ export function isoWeek(d) {
 }
 
 export const isPdfFile = (f) => String(f || '').toLowerCase().endsWith('.pdf');
+/** @param {unknown} f */
+export const isHtmlFile = (f) => /\.html?$/i.test(String(f || ''));
 
 /* pin kinds: code (read on demand) · data (schema card) · folder (tree map) · pdf (viewer) */
 export const DATA_EXTS_C = ['csv', 'tsv', 'parquet', 'dta', 'rds', 'rdata', 'feather', 'xlsx', 'xls'];

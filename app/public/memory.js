@@ -12,24 +12,25 @@ export async function mountMemorySettings(host) {
   if (!box.isConnected) return;
   if (!s) { box.textContent = 'Memory settings could not be loaded. Reopen Settings to retry.'; return; }
   box.innerHTML = `<h3>Task memory <span class="memoryBadge">Checkpoint-only pilot</span></h3>
-    <p class="memoryNote">A separate background model prepares inspectable checkpoints after completed turns. It never replaces a conversation, changes the main agent, or injects memory into its prompt. On the Claude connection it runs one tool-less turn on the same login as your task sessions, so it counts against your plan rather than a separate bill.</p>
+    <p class="memoryNote">A separate background model prepares inspectable checkpoints after completed turns. It never replaces a conversation or injects memory into its prompt. OpenAI uses your ChatGPT / Codex subscription, not an API key. It shares your Codex usage allowance with normal tasks; no API-billing fallback. Claude keeps its existing SDK login.</p>
     <form id="memorySettingsForm" class="memoryForm">
       <label>Connection<select name="connection">${s.connections.map(c => `<option value="${esc(c.id)}"${c.id === s.connection ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</select></label>
       <label>Memory model<select name="model"></select></label>
       <label>Reasoning effort<select name="reasoningEffort"></select></label>
-      <label>Daily budget (USD, UTC day)<input name="dailyBudgetUsd" type="number" min="0" max="100" step="0.01" value="${s.dailyBudgetUsd}" required></label>
-      <label>Maximum per request (USD)<input name="maxJobUsd" type="number" min="0.001" max="5" step="0.001" value="${s.maxJobUsd}" required></label>
+      <label data-subscription-limit>Maximum memory jobs per UTC day<input name="dailyJobLimit" type="number" min="1" max="100" step="1" value="${s.dailyJobLimit}" required></label>
+      <label data-claude-limit>Daily estimated usage budget (USD, UTC day)<input name="dailyBudgetUsd" type="number" min="0" max="100" step="0.01" value="${s.dailyBudgetUsd}" required></label>
+      <label data-claude-limit>Maximum estimated usage per request (USD)<input name="maxJobUsd" type="number" min="0.001" max="5" step="0.001" value="${s.maxJobUsd}" required></label>
       <label>Input token ceiling<input name="maxInputTokens" type="number" min="12000" max="64000" step="1" value="${s.maxInputTokens}" required></label>
-      <label>Output token ceiling<input name="maxOutputTokens" type="number" min="1000" max="12000" step="1" value="${s.maxOutputTokens}" required></label>
+      <label>Output token acceptance limit<input name="maxOutputTokens" type="number" min="1000" max="12000" step="1" value="${s.maxOutputTokens}" required></label>
       <label>Checkpoint character limit<input name="briefMaxChars" type="number" min="1000" max="10000" step="1" value="${s.briefMaxChars}" required></label>
       <p class="memoryNote" id="memoryModelCost"></p>
-      <label class="memoryEnable"><input name="enabled" type="checkbox"${s.enabled ? ' checked' : ''}> Enable automatic, billed checkpoint updates</label>
-      <div class="memoryActions"><button class="gbtn" type="submit">Save memory settings</button><span role="status">${s.enabled ? 'Enabled' : 'Disabled'} · ${dollars(s.reservedTodayUsd)} reserved today</span></div>
+      <label class="memoryEnable"><input name="enabled" type="checkbox"${s.enabled ? ' checked' : ''}> Enable automatic checkpoint updates (uses your plan)</label>
+      <div class="memoryActions"><button class="gbtn" type="submit">Save memory settings</button><span role="status">${s.enabled ? 'Enabled' : 'Disabled'} · ${s.jobsToday || 0} subscription jobs reserved today</span></div>
     </form>
     <p class="memoryNote" id="memoryCredential"></p>
     <p class="memoryNote">${s.billingBlocked ? 'Paid calls are blocked in this test environment.' : ''}</p>
-    <p class="memoryNote">Budgets reserve the full request ceiling before sending, including uncertain or failed requests. They are conservative local estimates at rates dated ${esc(s.pricesAsOf)}, not provider-enforced billing limits. Set an OpenAI project spending limit too. No automatic retries or higher-cost model fallback.</p>
-    <p class="memoryNote">Input uses UTF-8 bytes plus a framing allowance as a conservative token ceiling. Output includes reasoning tokens. Changes apply to the next job; an in-flight request may still finish after disabling.</p>`;
+    <p class="memoryNote">Subscription jobs reserve one daily slot before dispatch; failed or uncertain attempts keep that slot, including across restarts. This is a local usage guard, not a guarantee about remaining plan credits. Claude retains its estimated-dollar guard. No API fallback.</p>
+    <p class="memoryNote">Input limits bound the supplied checkpoint and transcript payload; Codex adds its own runtime instructions. Codex runs in an isolated temporary folder with read-only permissions, no user config, and execution features disabled. Its output limit is checked after completion, not a provider-enforced generation cap. A 90-second timeout bounds each worker. Changes apply to the next job; an in-flight request may still finish after disabling.</p>`;
   const form = /** @type {HTMLFormElement} */ (box.querySelector('form'));
   const connectionSelect = /** @type {HTMLSelectElement} */ (form.elements.namedItem('connection'));
   const modelSelect = /** @type {HTMLSelectElement} */ (form.elements.namedItem('model'));
@@ -37,18 +38,24 @@ export async function mountMemorySettings(host) {
   const credentialNote = {
     'claude-sdk': ok => ok ? 'Claude login is connected; the writer bills to the same plan as task sessions (model access is checked when a request runs).'
       : 'Claude is not signed in. Connect Claude under AI services above before enabling memory on this connection.',
-    'openai-api': ok => ok ? 'Server API key is configured (account/model access is checked when a request runs).'
-      : 'No server API key configured. Set OPENAI_API_KEY in the server environment and restart; never paste it into a task or checkpoint.',
+    'codex-subscription': ok => ok ? 'ChatGPT / Codex subscription connected. Account and model access are checked again before every memory job.'
+      : 'Connect Codex with ChatGPT under AI services above. An API key does not enable this connection.',
   };
   const updateModels = () => {
     const connection = s.connections.find(c => c.id === connectionSelect.value) || s.connections[0];
     const models = s.models.filter(m => m.connection === connection.id);
     const keep = models.some(m => m.id === modelSelect.value) ? modelSelect.value : (models.some(m => m.id === s.model) ? s.model : models[0].id);
-    modelSelect.innerHTML = models.map(m => `<option value="${esc(m.id)}"${m.id === keep ? ' selected' : ''}>${esc(m.label)}</option>`).join('');
+    modelSelect.innerHTML = models.map(m => `<option value="${esc(m.id)}"${m.id === keep ? ' selected' : ''}${m.available === false ? ' disabled' : ''}>${esc(m.label)}</option>`).join('');
     box.querySelector('#memoryCredential').textContent = credentialNote[connection.id](connection.credentialConfigured);
+    form.querySelectorAll('[data-claude-limit]').forEach(el => { el.hidden = connection.id !== 'claude-sdk'; });
+    form.querySelector('[data-subscription-limit]').hidden = connection.id !== 'codex-subscription';
   };
   const updateCost = () => {
     const model = s.models.find(m => m.id === modelSelect.value);
+    if (!model || model.connection === 'codex-subscription') {
+      form.querySelector('#memoryModelCost').textContent = 'Uses your Codex subscription allowance; no separately billed OpenAI API request. Available models come from your connected Codex account.';
+      return;
+    }
     const input = Number(/** @type {HTMLInputElement} */ (form.elements.namedItem('maxInputTokens')).value);
     const output = Number(/** @type {HTMLInputElement} */ (form.elements.namedItem('maxOutputTokens')).value);
     const ceiling = (input * model.input * model.cacheWrite + output * model.output) / 1e6;
@@ -56,7 +63,7 @@ export async function mountMemorySettings(host) {
   };
   const updateEfforts = () => {
     const current = effortSelect.value || s.reasoningEffort;
-    const model = s.models.find(m => m.id === modelSelect.value);
+    const model = s.models.find(m => m.id === modelSelect.value) || { efforts: [s.reasoningEffort] };
     effortSelect.innerHTML = model.efforts.map(e => `<option value="${e}">${e === 'none' ? 'none (no extended thinking)' : e}</option>`).join('');
     effortSelect.value = model.efforts.includes(current) ? current : (model.efforts.includes('low') ? 'low' : model.efforts[0]);
     updateCost();
@@ -68,13 +75,13 @@ export async function mountMemorySettings(host) {
   form.addEventListener('submit', async event => {
     event.preventDefault();
     const data = new FormData(form);
-    const patch = { connection: String(data.get('connection')), model: String(data.get('model')),
+    const patch = { connection: String(data.get('connection')), model: modelSelect.value,
       reasoningEffort: String(data.get('reasoningEffort')), enabled: data.has('enabled') };
-    for (const field of ['dailyBudgetUsd', 'maxJobUsd', 'maxInputTokens', 'maxOutputTokens', 'briefMaxChars']) patch[field] = Number(data.get(field));
+    for (const field of ['dailyJobLimit', 'dailyBudgetUsd', 'maxJobUsd', 'maxInputTokens', 'maxOutputTokens', 'briefMaxChars']) patch[field] = Number(data.get(field));
     if (patch.enabled && !s.enabled) {
       const where = patch.connection === 'claude-sdk'
         ? 'Task transcript excerpts will be sent to Claude on your own login and counted against your plan, like task turns.'
-        : 'Task transcript excerpts will be sent to the OpenAI API and billed separately from your Codex subscription.';
+        : 'Task transcript excerpts will be sent through your ChatGPT-signed-in Codex account and consume its subscription allowance. API-key billing is blocked.';
       const yes = await confirmBox(`Enable background task-memory calls?<br><small>${where} This pilot only saves checkpoints; it does not reset conversations.</small>`, 'Enable memory');
       if (!yes) return;
     }
@@ -119,12 +126,12 @@ export async function openTaskMemory(project, id, title) {
       <div class="memoryActions"><span class="memoryBadge">${esc(data.status)}</span><button class="gbtn" id="memoryRefresh">Refresh</button>
       <button class="gbtn" id="memoryUpdate"${inProgress || !data.settings.enabled || data.settings.billingBlocked || !data.pending ? ' disabled' : ''}>Update checkpoint</button></div>
       <p class="memoryNote">${!data.settings.enabled ? 'Enable Task memory in Settings to create checkpoints.' : data.settings.billingBlocked ? 'Paid calls are blocked in this test environment.' : data.pending ? 'New or changed material remains. Each job reads a bounded chunk; large backlogs may need several updates.' : 'Checkpoint covers the available transcript.'} Conversations remain unchanged.</p>
-      <div class="memoryStats"><div><b>${fmtTok(data.totals.inputTokens)}</b><span>input tokens</span></div><div><b>${fmtTok(data.totals.outputTokens)}</b><span>output tokens</span></div><div><b>${dollars(data.totals.estimatedCostUsd)}</b><span>estimated usage cost</span></div><div><b>${dollars(data.totals.reservedUsd)}</b><span>reserved across jobs</span></div></div>
+      <div class="memoryStats"><div><b>${fmtTok(data.totals.inputTokens)}</b><span>input tokens</span></div><div><b>${fmtTok(data.totals.outputTokens)}</b><span>output tokens</span></div><div><b>${data.settings.connection === 'codex-subscription' ? 'Codex plan' : dollars(data.totals.estimatedCostUsd)}</b><span>${data.settings.connection === 'codex-subscription' ? 'subscription usage, not API billing' : 'estimated usage cost'}</span></div><div><b>${data.jobs.length}</b><span>recorded jobs</span></div></div>
       ${selected ? `<label class="memoryVersion">Checkpoint version<select id="memoryVersion">${data.revisions.map(r => `<option value="${r.revision}"${selected.revision === r.revision ? ' selected' : ''}>v${r.revision} · ${esc(new Date(r.createdAt).toLocaleString())}</option>`).join('')}</select></label>
         <p class="memoryNote">${esc(selected.model)} · ${esc(selected.reasoningEffort)} effort · ${selected.coverage.cursor.index} complete transcript entries${selected.coverage.cursor.offset ? ` + ${selected.coverage.cursor.offset} characters of the next entry` : ''}</p>
         <div class="memorySections">${Object.entries(labels).map(([key, label]) => `<section><h3>${label}</h3>${selected.content[key].length ? `<ul>${selected.content[key].map(text => `<li>${esc(text)}</li>`).join('')}</ul>` : '<p class="memoryNote">None recorded.</p>'}</section>`).join('')}
         <section><h3>Evidence references</h3>${selected.content.evidence.length ? `<ul>${selected.content.evidence.map(e => `<li><button class="gbtn memorySource" data-source="${esc(e.source)}">${esc(e.source)}</button> — ${esc(e.claim)}</li>`).join('')}</ul><div id="memoryEvidence" aria-live="polite"></div>` : '<p class="memoryNote">None recorded.</p>'}</section></div>` : '<div class="memoryEmpty"><h3>No checkpoint yet</h3><p>After setup, completed task turns will queue a background update. Existing tasks can use “Update checkpoint” while idle.</p></div>'}
-      <details class="memoryJobs"${data.jobs[0]?.error ? ' open' : ''}><summary>Recent update jobs (${data.jobs.length})</summary>${data.jobs.map(j => `<article><b>${esc(j.status)}</b> · ${esc(new Date(j.startedAt).toLocaleString())}${j.configuration ? ` · ${esc(j.configuration.model)}` : ''}<p>${j.usage ? `${fmtTok(j.usage.inputTokens)} in / ${fmtTok(j.usage.outputTokens)} out · ` : ''}${j.durationMs != null ? `${(j.durationMs / 1000).toFixed(1)}s · ` : ''}${dollars(j.reservedUsd)} reserved</p>${j.error ? `<p class="memoryError">${esc(j.error)}</p>` : j.status === 'interrupted' ? '<p>Server stopped during this request. Its reservation is retained; it will not retry automatically.</p>' : ''}</article>`).join('') || '<p>No updates have run.</p>'}</details>`;
+      <details class="memoryJobs"${data.jobs[0]?.error ? ' open' : ''}><summary>Recent update jobs (${data.jobs.length})</summary>${data.jobs.map(j => `<article><b>${esc(j.status)}</b> · ${esc(new Date(j.startedAt).toLocaleString())}${j.configuration ? ` · ${esc(j.configuration.model)}` : ''}<p>${j.usage ? `${fmtTok(j.usage.inputTokens)} in / ${fmtTok(j.usage.outputTokens)} out · ` : ''}${j.durationMs != null ? `${(j.durationMs / 1000).toFixed(1)}s · ` : ''}${j.configuration?.connection === 'codex-subscription' ? '1 subscription job reserved' : dollars(j.reservedUsd) + ' reserved'}</p>${j.error ? `<p class="memoryError">${esc(j.error)}</p>` : j.status === 'interrupted' ? '<p>Server stopped during this request. Its reservation is retained; it will not retry automatically.</p>' : ''}</article>`).join('') || '<p>No updates have run.</p>'}</details>`;
     panel.querySelector('#memoryRefresh').addEventListener('click', refresh);
     panel.querySelectorAll('.memorySource').forEach(button => button.addEventListener('click', async () => {
       const source = /** @type {HTMLElement} */ (button).dataset.source;

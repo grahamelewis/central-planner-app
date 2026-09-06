@@ -32,7 +32,7 @@ npm start          # → http://127.0.0.1:4242  (localhost only — never expose
 ### Task memory: checkpoint-only pilot
 
 Settings → **Task memory** configures a separate background model. The pilot is
-**disabled by default**, with a zero daily budget. Two connections are offered:
+**disabled by default**. Two connections are offered:
 
 - **Claude · this login / subscription** (optional). The writer runs one tool-less,
   single-turn Agent SDK query on the same Claude login the task sessions use, so
@@ -41,19 +41,24 @@ Settings → **Task memory** configures a separate background model. The pilot i
   It loads no project files, no settings sources and no CLAUDE.md — only the
   writer instructions and the JSON payload. Requires Claude to be connected under
   AI services.
-- **OpenAI API · separately billed** (default). A direct API call with `OPENAI_API_KEY` in
-  the server's environment (restart after setting it); it does not reuse Codex
-  subscription authentication. Never place the key in task text, repository
-  files, or checkpoints.
+- **OpenAI · my ChatGPT / Codex subscription** (default). A separate ephemeral
+  `codex exec` worker uses Codex's existing ChatGPT sign-in. Connect Codex under
+  AI services using ChatGPT, not an API key. Every job checks the account and
+  available models, forces ChatGPT authentication, and removes API-key environment
+  variables from the worker. There is no Platform API fallback. It consumes the
+  same Codex allowance as your tasks. Existing `openai-api` settings migrate to
+  this connection with memory disabled until you explicitly enable it.
 
 Model access is not assumed: an unavailable model produces a visible failure, with
 no automatic fallback. The default model is `gpt-5.6-luna` at low effort.
 Claude Sonnet 5, Haiku 4.5 (no effort ladder), and Opus 5 remain available on the
-Claude connection; Terra and GPT-5 Nano are the OpenAI alternatives. The default
-per-request cap is $0.10, with a zero daily budget until explicitly configured.
-Settings shows planning rates and the cost at
-the configured token ceilings; a higher-priced model may require a higher
-per-request budget. No paid model comparison has been run. The settings are
+Claude connection. OpenAI choices and efforts come from your connected Codex
+account's model catalog; the saved default must be available before enabling.
+The subscription connection defaults to at most **12 memory attempts per UTC day**,
+not a dollar budget. This local guard does not measure remaining plan credits.
+Claude retains its $0.10 per-request estimated ceiling and zero daily estimated
+budget until configured; Settings shows its planning rates.
+No paid model comparison has been run. The settings are
 independent of the main task agent and apply to the next job, not an in-flight
 request.
 
@@ -87,24 +92,29 @@ Operational details:
 - Writes use atomic replacement; malformed stores and symlinks fail closed.
   Task deletion removes its checkpoint record and cancels pending work. In-flight
   requests cannot recreate deleted records. Budget reservations remain.
-- `memory/budget.json` records a conservative reservation **before** every request.
-  UTC daily and per-request limits use published planning rates, not provider
-  enforcement. Timeouts, crashes, refusals, and invalid outputs retain their full
-  reservation. Also configure an OpenAI project spending limit. Do not run multiple
+- `memory/budget.json` records a reservation **before** every request: one daily
+  slot for Codex, or an estimated-dollar ceiling for Claude. Timeouts, crashes,
+  refusals, and invalid outputs retain their reservation across restarts.
+  These are local guards, not provider enforcement. Do not run multiple
   server processes against the same `CP_ROOT`; like task storage, this is a
   single-writer design.
-- Input admission uses UTF-8 byte length plus a framing allowance as a conservative
-  token bound. Output caps include reasoning. Requests have a 90-second timeout,
-  no tools, no retries, no persistent API conversation, and `store:false` (not a
-  promise of zero provider-side retention).
+- Input admission bounds the supplied payload using UTF-8 byte length plus a
+  framing allowance; Codex adds its own runtime instructions. The Codex worker
+  runs in a temporary read-only workspace, ignores user config and rules, disables
+  execution features, and rejects tool attempts. Its output-token limit is an
+  acceptance check after completion, **not** a hard generation cap. Claude keeps
+  its provider output cap. Workers have a 90-second timeout, no automatic job
+  retries, and no resumed conversation. Codex may retry transport failures within
+  that worker. Ephemeral does not promise zero provider retention.
 - Failed/incomplete/stale candidates never replace the last good checkpoint.
   A new completed task turn can queue fresh work; failures do not retry themselves.
   After restart, unfinished jobs appear interrupted and are not automatically
   replayed. A changed covered transcript prefix blocks further synthesis pending
   manual investigation; this pilot does not silently rebuild a new baseline.
-- Usage is stored per job and copied into the shared ledger with `action:memory`
-  and `costEstimated:true`. Estimated cost includes a conservative cache-write
-  premium. Missing usage stays unknown; its budget reservation is still retained.
+- Usage is stored per job and copied into the shared ledger with `action:memory`.
+  Codex is marked `costSource:subscription` with zero API-dollar cost (not zero
+  subscription consumption). Claude's estimate includes a cache-write premium.
+  Missing usage stays unknown; its reservation is still retained.
 - `CP_NO_BILLED=1` blocks both transports and the manual update route. Unit tests
   inject synthetic responses in the transports' shared normalized shape;
   browser/API tests use temporary state, no key, and no Claude login.

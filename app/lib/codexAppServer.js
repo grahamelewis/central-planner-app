@@ -27,7 +27,7 @@ function candidateBins() {
 }
 
 let resolvedBin = null;
-function codexBin() {
+export function codexBin() {
   if (process.env.CP_CODEX_BIN) return process.env.CP_CODEX_BIN;
   if (resolvedBin) return resolvedBin;
   for (const bin of candidateBins()) {

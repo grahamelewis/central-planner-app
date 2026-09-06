@@ -14,6 +14,20 @@ const SRC = path.join(APP_DIR, 'lib', 'ledger.js');
 const PROJECTS = { alpha: { name: 'alpha' }, beta: { name: 'beta' } };
 const WEEKLY_HOUR_TARGET = 35;
 
+test('memory ledger distinguishes subscription consumption from estimated API-dollar costs', () => {
+  const entries = [];
+  // This function has an object default parameter; the simple brace-based
+  // extractFunction helper would mistake that parameter for its body.
+  const source = fs.readFileSync(SRC, 'utf8').match(/function logTokens\([\s\S]*?\n\}/)[0];
+  const logTokens = new Function('assertProject', 'appendLine', 'broadcast', 'weekSummary',
+    `${source}\nreturn logTokens;`)(() => {}, row => entries.push(row), () => {}, () => ({}));
+  logTokens('alpha', 'task', 100, 50, 0, 'account-model', { action: 'memory', costSource: 'subscription' });
+  assert.equal(entries[0].costSource, 'subscription'); assert.equal(entries[0].costEstimated, false);
+  assert.equal(entries[0].costUsd, 0); assert.equal(entries[0].in, 100);
+  logTokens('alpha', 'task', 100, 50, 0.01, 'claude-model', { action: 'memory', costSource: 'provider-estimate' });
+  assert.equal(entries[1].costEstimated, true); assert.equal(entries[1].costUsd, 0.01);
+});
+
 let lib;          // { dayKey, weekStart, dailyActivity, weekSummary }
 let tmp, ledgerFile;
 

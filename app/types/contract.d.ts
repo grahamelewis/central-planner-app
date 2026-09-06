@@ -261,6 +261,8 @@ interface SessionInfo {
   project: ProjectKey;
   id: string;
   startedAt?: string | number;
+  turnStartedAt?: string | null;
+  activity?: { label: string } | null;
   status?: string;
   agents?: AgentInfo[];
   edits?: EditsAggregate | null;
@@ -522,8 +524,10 @@ type WsEventMap = {
   'task:update': { project: ProjectKey; task: Task };
   'task:delete': { project: ProjectKey; id: string };
   'session:stream': { project: ProjectKey; id: string; chunk: string };
+  'session:activity': { project: ProjectKey; id: string; turnStartedAt: string; activity: { label: string } | null };
   'session:status': {
     project: ProjectKey; id: string; status?: string;
+    turnStartedAt?: string;
     tokens?: { in?: number; out?: number }; costUsd?: number;
     error?: string; authNeeded?: boolean; provider?: string;
   };
