@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { startUI, sleep, CHROME, testBothImpls, edDriver, wsPushTo } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco, edDriver, wsPushTo } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const hasTex = (() => {
@@ -125,7 +125,7 @@ test('the live watch pane: ⟳ pass chip while building, ✓ + seconds on built,
   await sleep(400);
   const ed = await page.evaluate(() => {
     const e = document.querySelector('#v-alpha #codeEditor');
-    return e ? { ext: e.dataset.ext, line: e.value.slice(0, e.selectionStart).split('\n').length } : null;
+    return e ? { ext: e.dataset.ext, line: window.__mp.getPosition().line } : null;
   });
   assert.equal(ed?.ext, 'tex', '✗ click opened the .tex in the editor');
   assert.equal(ed?.line, 3, `caret on the failing line (${ed?.line})`);
@@ -390,7 +390,7 @@ test('a failing .tex run: ✗ card with click-to-jump error rows (synthetic stat
   await sleep(400);
   const ed = await page.evaluate(() => {
     const e = document.querySelector('#v-alpha #codeEditor');
-    return e ? { ext: e.dataset.ext, line: e.value.slice(0, e.selectionStart).split('\n').length } : null;
+    return e ? { ext: e.dataset.ext, line: window.__mp.getPosition().line } : null;
   });
   assert.equal(ed?.ext, 'tex', 'row click opened the .tex');
   assert.equal(ed?.line, 3, `caret on the failing line (${ed?.line})`);
@@ -474,7 +474,7 @@ test('PDF reload storms reuse one worker and pane destruction releases it', texO
    row click funnels texOpenAt → revealAt (the S2.5 wiring). Declared last:
    the shared-page tests above are order-dependent; the synthetic run state
    lives only in this pass's page. */
-testBothImpls('run-card dual: a failing .tex run renders the ✗ card; the error-row click jumps the editor to the line', {
+testMonaco('run-card dual: a failing .tex run renders the ✗ card; the error-row click jumps the editor to the line', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const ed = edDriver(impl);
@@ -510,7 +510,7 @@ testBothImpls('run-card dual: a failing .tex run renders the ✗ card; the error
   } else {
     const s = await page.evaluate(() => {
       const e = document.querySelector('#v-alpha #codeEditor');
-      return { ext: e.dataset.ext, line: e.value.slice(0, e.selectionStart).split('\n').length };
+      return { ext: e.dataset.ext, line: window.__mp.getPosition().line };
     });
     assert.equal(s.ext, 'tex', 'row click opened the .tex');
     assert.equal(s.line, 3, `caret on the failing line (${s.line})`);

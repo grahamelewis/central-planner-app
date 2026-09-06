@@ -31,7 +31,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startUI, armPage, sleep, CHROME, testBothImpls } from './uiHarness.mjs';
+import { startUI, armPage, sleep, CHROME, testMonaco } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const opts = { skip: hasChrome ? false : 'Google Chrome not installed' };
@@ -283,7 +283,7 @@ test('A8 proven: a target absent from the first eight surfaces via the incomplet
 
 /* ═══ D — closeBrace consume/hop overtype parity, BOTH impls (dedicated case) ═══ */
 
-testBothImpls('closeBrace overtype parity: \\ref accept inside the auto-paired } lands text AND caret identically', {
+testMonaco('closeBrace overtype parity: \\ref accept inside the auto-paired } lands text AND caret identically', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   await routeTexmeta(page, { alpha: META });
@@ -495,37 +495,6 @@ test("the .bib exclusion: no completion provider on 'bibtex' — trigger chars o
     await sleep(700);
     assert.equal(await widgetVisible(page), false,
       'a .bib buffer gets no widget — the same keystrokes open one under latex (section A)');
-  } finally {
-    await context.close();
-  }
-});
-
-test('legacy-untouched control: impl=legacy keeps the .texCompl popup and has NO suggest machinery', opts, async () => {
-  const { context, page } = await mkPage({ impl: 'legacy' });
-  try {
-    await routeTexmeta(page, { alpha: META });
-    await page.waitForSelector('#v-alpha textarea#codeEditor', { timeout: 15000 });
-    await page.evaluate(() => {
-      const ed = document.querySelector('#v-alpha textarea#codeEditor');
-      const off = ed.value.split('\n').slice(0, 3).reduce((a, s) => a + s.length + 1, 0);
-      ed.focus();
-      ed.setSelectionRange(off, off);
-    });
-    await page.keyboard.type('\\cite{do', { delay: 25 });
-    await page.waitForFunction(() => {
-      const it = document.querySelectorAll('#v-alpha .texCompl .tcItem');
-      return [...it].some((el) => el.textContent.includes('doe2019numerical'));
-    }, { timeout: 20000, polling: 60 });
-    const probe = await page.evaluate(() => ({
-      monaco: typeof window.monaco,
-      state: window.__mp.state(),
-      suggest: !!document.querySelector('.suggest-widget'),
-      editors: document.querySelectorAll('.monaco-editor').length,
-    }));
-    assert.equal(probe.monaco, 'undefined', 'monaco never booted under impl=legacy');
-    assert.equal(probe.state, 'IDLE', 'the boot machine never left IDLE');
-    assert.equal(probe.suggest, false, 'no suggest-widget DOM exists anywhere');
-    assert.equal(probe.editors, 0, 'no monaco editor DOM exists anywhere');
   } finally {
     await context.close();
   }

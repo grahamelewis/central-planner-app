@@ -1714,23 +1714,20 @@ from node_modules (the pdfjs pattern). S1 is functionally complete; S2 wires the
 providers (completions, markers/tints, texfix, SyncTeX `revealAt`/⌘J, outline,
 auto-`\end`/julia-Tab) behind the same seams.
 
-### Toggle & device gate
-`localStorage['editor:impl']`: `'legacy'` (default) | `'monaco'`, per-browser like
-`theme`. `setImpl(next)` (monacoPane) is the **sanctioned writer**: flipping to
-legacy runs the synchronous M7-T7 flush BEFORE the preference changes hands.
-Coarse pointers are pinned legacy permanently and automatically — the predicate
-is `(pointer: coarse) and (not (any-pointer: fine))` with a maxTouchPoints
-fallback; **hybrid (fine+touch) devices get Monaco** (`pinnedCoarse`). A boot
-fallback forces legacy for the session only (`forcedLegacy` — the preference is
-NEVER persisted off; `rebootMonaco()` is the "try again" affordance).
+### Monaco-only policy (approved 2026-09-06)
+Monaco is the only editable source surface. The Settings Editor row and the
+per-browser implementation preference are retired; old values are ignored and
+removed on initialization. Boot is lazy, triggered by opening an editable file.
+The full dashboard attempts Monaco on touch hardware too; no Legacy pin exists.
+The independent /m phone interface is unchanged. Physical touch/IME/accessibility
+checks remain manual validation, not a claim made from browser emulation.
 
 ### Module boundary & frozen seams
 `public/monacoPane.js` is the ONLY module touching `monaco.*`. The pure LaTeX
 brain lives in `public/latex/` (`texCore/texLang/texZones/texProviders/
-texfixAnchors` — scoped extraction, imported by BOTH editor paths; one authority).
+texfixAnchors`, plus the shared outline UI in `texUi.js` — one authority).
 Consumers use seams, never `window.monaco`. Implemented seams:
-`effectiveImpl/storedImpl/pinnedCoarse/setImpl` · `ensureMonaco/rebootMonaco/
-onFallback` · `attachDock(root,key)/syncDock/parkHost` · `setFile(fkey, text,
+`ensureMonaco/rebootMonaco` · `attachDock(root,key)/syncDock/parkHost` · `setFile(fkey, text,
 {mtimeMs, ext, readOnly})` · `applyExternal(fkey, payload, reason)` ·
 `beginSave(fkey)`/`commitSave(fkey, token, responseMtime)` ·
 `requestSave/runAfterSave` · `saveViewStateFor` · `noteViewClose` (view close) ·
@@ -1741,7 +1738,7 @@ Test seam: `window.__mp` (+ `window.__monacoReady`, `__mpEditContext`); at least
 one test must drive genuine CDP keystrokes past it.
 
 ### Boot state machine (A6)
-`IDLE→LOADER→CORE→INIT→CSS_VERIFY→READY`, else `FAILED→FALLBACK_LEGACY`. The
+`IDLE→LOADER→CORE→INIT→CSS_VERIFY→READY`, else `FAILED`. The
 promise is created synchronously, single-flight, and ALWAYS settles (resolves
 `{ok:false,…}` — never rejects). Proven detectors per stage: loader
 `script.onerror`; loader-corrupt = onload + `typeof require.config !==
@@ -1750,9 +1747,10 @@ promise is created synchronously, single-flight, and ALWAYS settles (resolves
 (an uncaught throw is unhandledrejection + eternal pend); CSS_VERIFY polls
 `link.sheet` ≤2s with one reinject. One 10s deadline spans LOADER→CSS_VERIFY —
 the SOLE detector for hangs; **never gate any boot step (or test wait) on
-window `load`**. One auto-retry, net-class loader/core failures only. Fallback
-is atomic: partial boot cleaned up, legacy rendered, **drafts preserved**,
-stage+detail logged (A16 soak log). Post-READY degradation NEVER falls back:
+window `load`**. One auto-retry, net-class loader/core failures only. Failure cleans up partial boot, preserves drafts, and shows a read-only
+text panel with Copy text and Retry editor. Retry uses a fresh boot generation;
+it never reloads the page or discards drafts. Clipboard failure leaves selectable
+text available. Post-READY degradation NEVER falls back:
 worker failure → `workerDegraded` (Monaco's own main-thread recovery); a lazy
 language chunk 404 → `langDegraded(id)`, plaintext tokens (rejection `reason`
 is a raw DOM Event — guard `instanceof Event`).
@@ -1813,7 +1811,7 @@ resurrect pre-conflict text as a dirty draft); a DIRTY model under a
 - **M2 origin guard**: every internal write (`setValue/setEOL/
   pushEditOperations`) runs inside a per-fkey synchronous transaction —
   reasons are the closed set `{seedCreate, cleanReload, mergeRebase,
-  recoveryReload, legacyHandoff, eolSetup}` (unknown throws). The suppressed
+  recoveryReload, draftReconcile, eolSetup}` (unknown throws). The suppressed
   listener mutates nothing; commit applies bookkeeping atomically, re-arms
   what the flush destroyed (wash, tints, markers; texfix at S2), and emits
   **exactly one** chrome/preview signal; `finally` clears the flag; a
@@ -1828,8 +1826,8 @@ resurrect pre-conflict text as a dirty draft); a DIRTY model under a
   drafts. The only save serialization is `serialize(m)` (P-EOL-1); bare
   `getValue()` is banned in the save path by a static test. S1 residual
   CLOSED at S2.1: `files.saveFile` routes monaco-impl saves of modeled fkeys
-  through the tokens (caller swap, no protocol change; legacy and no-model
-  paths byte-identical).
+  through the tokens (caller swap, no protocol change). The shared no-model
+  draft-save path remains available.
 - **M4 merge = history rebase (A1)**: on a successful 3-way merge,
   `setValue(THEIRS)` with undo CLEARED (THEIRS becomes a real model state),
   `savedAltId := altId(THEIRS)`, then ONE undoable MERGED edit iff it differs.
@@ -1865,16 +1863,11 @@ resurrect pre-conflict text as a dirty draft); a DIRTY model under a
   oldest-first, through the total disposal matrix (model, viewState, markers,
   decorations, widgets, timers, listeners, save tokens, stale-flight
   identity — nothing left behind). `applyExternal` reasons are the closed set
-  `{cleanReload, mergeRebase, recoveryReload, legacyHandoff}` and update
-  background/orphan models directly. Monaco→legacy (`setImpl` or boot
-  fallback) is a synchronous T7 flush; on re-entry a newer `drafts[k]`
-  **always wins** (A4). **Ratified amendment (2026-08-14)**: the T7/T8
-  `draftRev` bookkeeper lives monacoPane-side (legacy stays byte-untouched
-  until S3) — `draftRev`/`modelSyncRev` count materializations monacoPane
-  performs or observes, and a legacy write is detected TEXTUALLY at the T8
-  boundary (text-divergence ⇔ an external materialization happened);
-  outcomes unchanged. Soak counters (A10/A16): `__mp.counters()` +
-  `'lru-evict'` census lines.
+  `{cleanReload, mergeRebase, recoveryReload, draftReconcile}` and update
+  background/orphan models directly. Draft/model revisions track materializations
+  performed or observed by Monaco; newer authoritative drafts win on reattach.
+  Implementation-toggle ownership and flush state are removed. Soak counters
+  remain available via `__mp.counters()` and the LRU log.
 
 ### EOL policy (A19, P-EOL-1..6)
 P-EOL-1 save serialization is `model.getValue(TextDefined, /*BOM*/true)` only.
@@ -1926,8 +1919,7 @@ lifetime (pointer-events CSS never silenced keyboards); release unpins and
 hands focus back only if held at raise. Transition-only and idempotent;
 tolerates pre-READY boot (`applyFile` re-asserts via `readOnly: editHeld ||
 …`). The caller is `renderWB`, driven by the SAME expression as the
-`.editHold` class and gated `mpImpl()==='monaco' && ui.view===key` — grey and
-keyboard can never diverge; the legacy path is untouched.
+`.editHold` class and gated `ui.view===key` — grey and keyboard can never diverge.
 
 ### Standing invariants (I1–I10, as amended)
 I1 drafts survive editor death — unsaved text always exists in `drafts`
@@ -1942,17 +1934,13 @@ reopens ×-closed pins or the jump drops (S2 wires `revealAt`). I6 save
 contract verbatim — `x-mtime-ms` header-first, the server's 250ms 409 grace,
 clipboard-before-destruction, mid-flight rebase. I7 the wash is decorations,
 never theme. I8 (INVERTED) the AMD globals are load-bearing for the page
-lifetime. I9 coarse pointers never get Monaco (automatic, per-device, not a
-preference). I10 demolition (S3) is gated on the objective soak and split per
-A12 — behavior-preserving precursors, a tagged pre-demolition SHA, ONE
-pure-deletion commit, and a PASSING rollback drill; the retired-test count is
-**five** geometry files + an `hl.test.mjs` shrink (the old "six" wording is
-corrected). hl.js is PRUNED, not deleted (ratified): tokenizer + `hlText` +
-passive overlay serve the coarse-pointer editor and every read-only view. At
-S3 the touch-fallback parity contract (A15 feature floor) is written into
-this document — including a disposition for the legacy input handler's known
-A9 lie (byte-equality clean check with no diskStale suppression), documented
-and deliberately untouched until then (legacy stays byte-identical).
+lifetime. I9 there is no alternate editing engine, including on touch devices
+or after boot failure. I10 deletion is reversible: preserve a pre-removal tag,
+extract shared code first, separate retired-file deletion, and verify rollback.
+The September 6 Monaco-only approval supersedes the former opt-in/touch-fallback
+rollout. The historical timed soak is not a prerequisite to preparing this local
+cleanup; real writing, physical touch, IME and accessibility validation remain
+explicitly pending and are not inferred from automated test passes.
 
 ### Tests & billing
 Suites: `ui.monaco-boot/-core/-save/-latex/-merge/-stale/-m7` (+ the grown
@@ -1962,19 +1950,13 @@ or the existing PUT save path; the WS-stub and `CP_NO_BILLED` layers apply
 unchanged.
 
 ### Ladder & exit gates (A11 · A14 · A16 · A17 · objective soak)
-The stage ladder: **S2** (providers wired — complete but OPT-IN) → **S2b**
-(default flip) → **SOAK** → **S3** (demolition, per I10) → **S4** (polish,
-cut-first).
-- **A11 — opt-in first, flip alone.** S2 lands the complete provider behavior
-  while `'legacy'` stays the default; nothing in S2 flips anything. The
-  default flip is its OWN tiny reversible commit (S2b), gated separately on
-  the A14 matrix, the A16 measured budgets, the A17 accessibility gate, and
-  the A14 genuine-input E2Es.
+The approved migration is shared-helper extraction → Monaco-only runtime and
+recovery UI → retired-file deletion → regression/rollback verification.
 - **A14 — the evidence matrix is a required exit artifact.** One row per
   P1–P22 integration point (index below), plus genuine-keyboard E2Es for
   typing, undo/redo, multi-cursor, find/replace, completion acceptance,
   Enter/Tab/⇧Enter, save-midflight, merge, clipboard failure, and
-  implementation handoff. Matrix verification consumes a **recorded test-run
+  editor retry/recovery. Matrix verification consumes a **recorded test-run
   artifact** — commit SHA, editor-implementation mode, per-test pass/fail,
   per-mode skips, and dated manual-evidence entries; proving a cited test
   *title exists* is reference-checking, not verification.

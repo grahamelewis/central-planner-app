@@ -361,29 +361,3 @@ test('§ outline pick jumps through revealAt with the flash; ⇧⌘O lists the S
 });
 
 /* ═══ G — legacy control: the strip click jumps the textarea; nothing arms ═══ */
-
-test('legacy control: strip click jumps the TEXTAREA caret; boot stays IDLE, zero vendor fetches, zero command fires', opts, async () => {
-  const { context, page } = await jumpPage('legacy');
-  try {
-    await page.waitForSelector('#v-alpha textarea#codeEditor[data-ext="tex"]', { timeout: 15000 });
-    await armStrip(page);
-    await page.click(rowSel('paper.tex', 120));
-    await sleep(300);
-    const st = await page.evaluate(() => {
-      const ed = document.querySelector('#v-alpha textarea#codeEditor');
-      return {
-        line: ed.value.slice(0, ed.selectionStart).split('\n').length,
-        monacoDom: !!document.querySelector('.monaco-editor'),
-        boot: window.__mp.state(),
-        fires: window.__mp.commandInfo().fires.length,
-      };
-    });
-    assert.equal(st.line, 120, 'the legacy strip click still jumps the textarea caret');
-    assert.equal(st.monacoDom, false, 'no monaco DOM under legacy');
-    assert.equal(st.boot, 'IDLE', 'the boot machine never started');
-    assert.equal(st.fires, 0, 'no S2.5 command ever fired under legacy');
-    assert.equal(sb.vendor.hits.length, 0, 'zero /vendor/monaco fetches');
-  } finally {
-    await context.close();
-  }
-});

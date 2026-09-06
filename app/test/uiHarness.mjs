@@ -129,35 +129,16 @@ export async function startUI({ seed, viewport = { width: 1600, height: 1000 }, 
 
 export const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-/* ── Phase 3 S2.1(d): the both-impls runner ──────────────────────────────
-   CONTRACT "Ladder & exit gates" (A14) + "Tests & billing": every retargeted
-   KEEP case must hold under BOTH editor implementations. Isolation rule
-   (monaco-s2 §1 S2.1(d), review concern 9): each implementation pass gets a
-   FRESH browser context with explicit storage seeding — the ui.monaco-core
-   corePage newContext+addInitScript pattern — and a page is NEVER reused
-   across impls: Monaco leaves page-global AMD state (amended I8: the loader
-   globals are retained for the page lifetime), provider registrations,
-   models, caches and the __mp seams behind, so a reused page makes the
-   legacy pass non-legacy or hands the monaco pass warmed state. The sandbox
-   SERVER is shared across passes (isolation is a browser-side property
-   here). Passes run sequentially on the suite's one shared browser — no new
-   parallel Chrome instances (contention causes false timeouts).
-
-   Per-mode skip reporting: each implementation registers as its OWN
-   node:test case (`name [impl=…]`), so a skip in one mode is visible as
-   that mode's skip in the run record — never silently absorbed into a
-   green file. (The A14 matrix consumes exactly this per-mode row shape.) */
+/* Monaco regression runner: each case gets a fresh browser context.
+   The server and browser are shared; page-global loaders, models, caches,
+   and preferences never leak from an earlier case. */
 
 /**
- * One implementation pass: a fresh browser context on the suite's shared
- * harness, storage seeded to exactly one `editor:impl` value BEFORE any app
- * module evaluates (the explicit reset — the pass's implementation is
- * declared, never inherited), billed-route armor + WS stub via armPage, and
- * console/pageerror capture from the first byte.
+ * A fresh context with billed-route protection and error capture.
  * @param {{ browser: import('playwright-core').Browser,
  *           sb: { base: string, vendor?: { base: string, clear(): void } | null } }} u
  *   the suite's startUI handle (its sandbox server is shared across passes)
- * @param {'legacy' | 'monaco'} impl seeded into localStorage['editor:impl']
+ * @param {'monaco'} impl retained as the recorded mode label
  * @param {{ viewport?: { width: number, height: number }, hash?: string,
  *           init?: Record<string, unknown> | null }} [opts]
  *   `hash` is the deep link ('#alpha' default); `init` seeds window overrides.
@@ -176,40 +157,34 @@ export async function implPage(u, impl, { viewport = { width: 1600, height: 1000
   const errors = [];
   page.on('console', (m) => msgs.push(m.text()));
   page.on('pageerror', (e) => errors.push(String((e && e.message) || e)));
-  await page.addInitScript(([impl2, init2]) => {
-    // the explicit storage reset: a fresh context is already clean, but the
-    // pass seeds its ONE editor:impl value anyway so the implementation
-    // under test is stated, not defaulted (and can never be inherited)
+  await page.addInitScript((init2) => {
     localStorage.clear();
-    localStorage.setItem('editor:impl', impl2);
+    // Monaco is the sole implementation; no preference to seed.
     if (init2) for (const [k, v] of Object.entries(init2)) window[k] = v;
-  }, [impl, init]);
+  }, init);
   await page.goto(`${u.sb.vendor ? u.sb.vendor.base : u.sb.base}/${hash}`, { waitUntil: 'domcontentloaded' });
   return { context, page, msgs, errors };
 }
 
 /**
- * Register one KEEP contract as TWO sibling node:test cases — `name
- * [impl=legacy]` and `name [impl=monaco]` — each pass in a fresh context via
- * implPage, the context closed win or lose. The suite's own before() hook
- * still applies (top-level tests in the file share it), so `ui` is an
- * ACCESSOR, deferred to run time.
+ * Register one Monaco contract in its own isolated context. The suite
+ * supplies a run-time accessor because its before() hook owns setup.
  * @param {string} name the contract's title (mode tag appended per pass)
  * @param {{ ui: () => { browser: import('playwright-core').Browser, sb: any },
- *           skip?: Partial<Record<'legacy' | 'monaco', string | boolean>>
- *                | ((impl: 'legacy' | 'monaco') => string | boolean | undefined),
+ *           skip?: Partial<Record<'monaco', string | boolean>>
+ *                | ((impl: 'monaco') => string | boolean | undefined),
  *           page?: { viewport?: { width: number, height: number },
  *                    hash?: string, init?: Record<string, unknown> | null } }} cfg
  *   `skip` is PER MODE — a skipped mode reports as that mode's own skip.
- * @param {(pass: { impl: 'legacy' | 'monaco',
+ * @param {(pass: { impl: 'monaco',
  *                  ui: any, t: import('node:test').TestContext,
  *                  context: import('playwright-core').BrowserContext,
  *                  page: import('playwright-core').Page,
  *                  msgs: string[], errors: string[] }) => Promise<void>} body
  * @returns {void}
  */
-export function testBothImpls(name, cfg, body) {
-  for (const impl of /** @type {('legacy' | 'monaco')[]} */ (['legacy', 'monaco'])) {
+export function testMonaco(name, cfg, body) {
+  for (const impl of /** @type {('monaco')[]} */ (['monaco'])) {
     const modeSkip = typeof cfg.skip === 'function' ? cfg.skip(impl) : cfg.skip && cfg.skip[impl];
     const skip = !fs.existsSync(CHROME) ? 'Google Chrome not installed' : modeSkip || false;
     test(`${name} [impl=${impl}]`, { skip }, async (t) => {
@@ -224,74 +199,29 @@ export function testBothImpls(name, cfg, body) {
   }
 }
 
-/* ── Phase 3 S2.6: the per-impl editor driver for retargeted KEEP suites ──
-   The §2 sweep rule: contracts stay VERBATIM, only assertions move — DOM
-   reads under legacy, `__mp` seam reads under monaco. This driver is the
-   assertion mover: waits, buffer reads, and caret STAGING (typing itself
-   stays genuine CDP keystrokes, the __mp-bypass rule). The kept container
-   preserves `#codeEditor` + datasets under monaco (CONTRACT P14), so
-   dataset probes stay impl-agnostic; only value/caret access branches. */
+/* Buffer assertions and caret staging use the read-only/test seams.
+   Actual typing still uses genuine browser keystrokes. */
 
 /**
- * @param {'legacy' | 'monaco'} impl
  * @returns {{ monaco: boolean,
  *   wait: (page: import('playwright-core').Page, fkey: string, timeout?: number) => Promise<void>,
  *   text: (page: import('playwright-core').Page, fkey: string) => Promise<string | null>,
  *   caretStart: (page: import('playwright-core').Page) => Promise<void>,
  *   caretEnd: (page: import('playwright-core').Page) => Promise<void> }}
  */
-export function edDriver(impl) {
-  const monaco = impl === 'monaco';
+export function edDriver() {
   return {
-    monaco,
-    /** Editor live on `fkey` under this impl (boot READY + visible dock vs textarea). */
+    monaco: true,
     async wait(page, fkey, timeout = 25000) {
-      if (monaco) {
-        await page.waitForFunction((fk) => (
-          window.__mp && window.__mp.state() === 'READY' && window.__mp.activeFkey() === fk
-          && !!document.querySelector('.view.show .wb > .mdock.on .monaco-editor')
-        ), fkey, { timeout, polling: 100 });
-      } else {
-        await page.waitForFunction((fk) => {
-          const ed = document.querySelector('#codeEditor');
-          return !!ed && ed.tagName === 'TEXTAREA' && ed.dataset.fkey === fk;
-        }, fkey, { timeout, polling: 100 });
-      }
+      await page.waitForFunction(fk => window.__mp?.state() === 'READY' && window.__mp.activeFkey() === fk
+        && !!document.querySelector('.view.show .wb > .mdock.on .monaco-editor'), fkey, { timeout });
     },
-    /** The buffer (draft included) — `__mp.text` vs textarea value. */
-    text(page, fkey) {
-      return monaco
-        ? page.evaluate((fk) => window.__mp.text(fk), fkey)
-        : page.evaluate(() => document.querySelector('#codeEditor')?.value ?? null);
-    },
-    /** Focus + caret at 1,1 — staging only; keystrokes stay CDP. */
-    async caretStart(page) {
-      if (monaco) {
-        await page.evaluate(() => { window.__mp.focus(); window.__mp.setPosition(1, 1); });
-      } else {
-        await page.click('#codeEditor');
-        await page.evaluate(() => {
-          const ed = document.querySelector('#codeEditor');
-          ed.setSelectionRange(0, 0); ed.focus();
-        });
-      }
-    },
-    /** Focus + caret at the very end of the buffer. */
-    async caretEnd(page) {
-      if (monaco) {
-        await page.evaluate(() => {
-          window.__mp.focus();
-          const lines = String(window.__mp.getText() ?? '').split('\n');
-          window.__mp.setPosition(lines.length, lines[lines.length - 1].length + 1);
-        });
-      } else {
-        await page.click('#codeEditor');
-        await page.evaluate(() => {
-          const ed = document.querySelector('#codeEditor');
-          ed.setSelectionRange(ed.value.length, ed.value.length); ed.focus();
-        });
-      }
-    },
+    text: (page, fkey) => page.evaluate(fk => window.__mp.text(fk), fkey),
+    async caretStart(page) { await page.evaluate(() => { window.__mp.focus(); window.__mp.setPosition(1, 1); }); },
+    async caretEnd(page) { await page.evaluate(() => {
+      window.__mp.focus(); const lines = String(window.__mp.getText() ?? '').split('\n');
+      window.__mp.setPosition(lines.length, lines.at(-1).length + 1);
+    }); },
   };
 }
 
@@ -312,8 +242,7 @@ export function chunked(text, n = 24) {
 /* ── Phase 3 S2.6 / A16 seed (monaco-s2 §4 item 4): the vendor bytes harness ──
    Cold vs warm transfer for /vendor/monaco/* measured over CDP Network
    events against the sandbox's REAL static route (the A5 spike methodology,
-   now repeatable): a fresh context primed to editor:impl=monaco boots Monaco
-   (attachDock on an open editable file, or the idle warm), then a reload in
+   now repeatable): explicitly boot Monaco in a fresh context, then reload in
    the SAME context replays every request against the primed HTTP cache —
    express.static serves ETag + max-age=0, so warm requests revalidate as
    304s. encodedDataLength is the on-the-wire size (identity-encoded today —
@@ -397,9 +326,11 @@ export async function measureVendorBytes(u, { hash = '#alpha', settleMs = 600, t
   });
   await page.addInitScript(() => {
     localStorage.clear();
-    localStorage.setItem('editor:impl', 'monaco'); // the idle warm boots even with no open file
+    // Measurements trigger the same boot explicitly, without relying on idle warmup.
   });
   const pass = async () => {
+    await page.waitForFunction(() => !!window.__mp);
+    await page.evaluate(() => window.__mp.ensure());
     await page.waitForFunction(() => window.__mp && window.__mp.state() === 'READY',
       null, { timeout, polling: 100 });
     await sleep(settleMs); // trailing fetches + their loadingFinished events

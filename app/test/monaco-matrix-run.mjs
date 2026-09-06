@@ -37,7 +37,7 @@ const FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\.test\.mjs$/;
 /**
  * Parse monaco-matrix.md into rows. Format (anchored at column 0):
  *   `## <id> — <name>` opens a row (P\d+ | E\d+ | G\d+ | MX);
- *   `- [dual|legacy|monaco|unit] \`file\` :: \`title\`` cites a recorded test;
+ *   `- [monaco|unit] \`file\` :: \`title\`` cites a recorded test;
  *   `- [manual] S2b-GATED (YYYY-MM-DD): note` is a dated manual placeholder.
  * The indented format-spec bullets in the header never match (anchoring).
  * @returns {{ rows: Map<string, { id: string, name: string,
@@ -60,7 +60,7 @@ export function parseMatrix(text) {
       continue;
     }
     if (/^## /.test(ln)) { cur = null; continue; } // any other heading closes the row
-    const cite = /^- \[(dual|legacy|monaco|unit)\] `([^`]+)` :: `(.+)`\s*$/.exec(ln);
+    const cite = /^- \[(monaco|unit)\] `([^`]+)` :: `(.+)`\s*$/.exec(ln);
     if (cite) {
       if (!cur) { problems.push(`line ${i + 1}: citation outside any row: ${ln}`); continue; }
       if (!FILE_RE.test(cite[2])) problems.push(`line ${i + 1}: bad file name in citation: ${cite[2]}`);
@@ -119,9 +119,8 @@ export function parseTap(out) {
   return points;
 }
 
-/** Implementation mode from the testBothImpls title suffix. */
+/** Implementation mode from the testMonaco title suffix. */
 export function modeOfTitle(title) {
-  if (title.endsWith(' [impl=legacy]')) return 'legacy';
   if (title.endsWith(' [impl=monaco]')) return 'monaco';
   return 'untagged';
 }
@@ -213,7 +212,7 @@ function main() {
 
   const leaves = perTest.filter((p) => p.type === 'test');
   const modes = {};
-  for (const m of ['legacy', 'monaco', 'untagged']) modes[m] = { pass: 0, fail: 0, skip: 0 };
+  for (const m of ['monaco', 'untagged']) modes[m] = { pass: 0, fail: 0, skip: 0 };
   for (const p of leaves) {
     const bucket = modes[p.mode];
     bucket[p.status === 'pass' ? 'pass' : (p.status === 'skip' || p.status === 'todo') ? 'skip' : 'fail']++;
@@ -251,7 +250,7 @@ function main() {
   const totSkip = fileRecords.reduce((a, r) => a + r.skip, 0);
   console.log(`\nrecorded ${RUN_PATH}`);
   console.log(`sha ${sha}${dirty ? ' (DIRTY tree)' : ''} — ${totPass} pass / ${totFail} fail / ${totSkip} skip across ${files.length} files in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-  console.log(`modes: legacy ${modes.legacy.pass}✓/${modes.legacy.fail}✗/${modes.legacy.skip}−  monaco ${modes.monaco.pass}✓/${modes.monaco.fail}✗/${modes.monaco.skip}−  untagged ${modes.untagged.pass}✓/${modes.untagged.fail}✗/${modes.untagged.skip}−`);
+  console.log(`modes: monaco ${modes.monaco.pass}✓/${modes.monaco.fail}✗/${modes.monaco.skip}−  untagged ${modes.untagged.pass}✓/${modes.untagged.fail}✗/${modes.untagged.skip}−`);
   console.log(`manual (S2b-gated) placeholders recorded: ${manualEvidence.length}`);
   process.exit(totFail ? 1 : 0);
 }

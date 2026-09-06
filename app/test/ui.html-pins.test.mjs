@@ -5,7 +5,7 @@ import { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startUI, CHROME, testBothImpls, edDriver, wsPushTo } from './uiHarness.mjs';
+import { startUI, CHROME, testMonaco, edDriver, wsPushTo } from './uiHarness.mjs';
 
 let ui, external;
 const html = (title) => `<!doctype html><link rel="stylesheet" href="report.css"><h1>${title}</h1>`;
@@ -30,7 +30,7 @@ before(async () => {
 });
 after(async () => { if (ui) await ui.stop(); });
 
-testBothImpls('HTML pins: dual open, independent panes, reopening, saved preview and external guard', {
+testMonaco('HTML pins: dual open, independent panes, reopening, saved preview and external guard', {
   ui: () => ui,
 }, async ({ impl, page, errors }) => {
   const ed = edDriver(impl);
@@ -119,7 +119,7 @@ testBothImpls('HTML pins: dual open, independent panes, reopening, saved preview
   assert.deepEqual(errors.filter(e => e !== harnessStorageError), []);
 });
 
-testBothImpls('HTML pin beyond twelve source tabs still opens both panes', {
+testMonaco('HTML pin beyond twelve source tabs still opens both panes', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const { body: state } = await ui.sb.fetchJson('GET', '/api/state');

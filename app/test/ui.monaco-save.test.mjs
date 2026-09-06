@@ -222,7 +222,7 @@ test('this suite touches no billed route; the save path never bare-getValue()s',
   const filesSrc = fs.readFileSync(path.join(APP_DIR, 'public', 'files.js'), 'utf8');
   const sf = filesSrc.slice(filesSrc.indexOf('export async function saveFile'),
     filesSrc.indexOf('export function closeTab'));
-  assert.match(sf, /editorImpl\(\) === 'monaco' && mpText\(k\) != null\) return mpRequestSave\(k\);/,
+  assert.match(sf, /mpText\(k\) != null\) return mpRequestSave\(k\);/,
     'saveFile carries the S2.1 monaco+model gate');
   const gateMark = 'return mpRequestSave(k);';
   const belowGate = sf.slice(sf.indexOf(gateMark) + gateMark.length);
@@ -761,38 +761,7 @@ test('an external-pin fkey rides the identical token machine (stubbed /api/extfi
     await context.close();
   }
 
-  // ── toggle off: the legacy keydown path, untouched ──
-  const legacy = await savePage({ impl: 'legacy' });
-  try {
-    await legacy.page.waitForSelector('textarea#codeEditor', { timeout: 15000 });
-    await legacy.page.click('textarea#codeEditor');
-    await legacy.page.evaluate(() => {
-      const ed = /** @type {HTMLTextAreaElement} */ (document.querySelector('textarea#codeEditor'));
-      ed.setSelectionRange(ed.value.length, ed.value.length);
-      ed.focus();
-    });
-    await legacy.page.keyboard.type('LEGACY SAVE\n');
-    await legacy.page.keyboard.press(`${MOD}+s`);
-    await legacy.page.waitForFunction(() => {
-      const t = document.getElementById('toast');
-      return !!t && /saved /.test(t.textContent || '');
-    }, null, { timeout: 8000 });
-    const s = await legacy.page.evaluate((fk) => ({
-      state: window.__mp.state(),
-      seq: window.__mp.saveState(fk).seq,
-      models: window.__mp.models().length,
-      draft: window.__mp.store().drafts[fk] ?? null,
-      tag: document.querySelector('#codeEditor').tagName,
-    }), FK.save);
-    assert.equal(s.tag, 'TEXTAREA', 'the legacy editor is the textarea');
-    assert.equal(s.state, 'IDLE', 'the boot machine never starts on the legacy path');
-    assert.equal(s.models, 0, 'no models exist');
-    assert.equal(s.seq, 0, 'the M3 token machine never issued a token');
-    assert.equal(s.draft, null, 'files.saveFile cleared the draft exactly as before');
-    assert.match(fs.readFileSync(path.join(alphaRoot, 'save.tex'), 'utf8'), /LEGACY SAVE/);
-  } finally {
-    await legacy.context.close();
-  }
+
 });
 
 /* ═══ I — S2.1(a): files.saveFile re-anchored onto the M3 tokens ═══
@@ -921,60 +890,6 @@ test('S2.1 re-anchor: a 409 through files.saveFile lands in the M5 ladder (in-ap
     assert.ok(log.includes('http-409'), 'the 409 went through the M3 response path');
     assert.ok(log.includes('recovery-cancel'), '…and entered M5 (T1 cancel)');
     assert.equal(dialogs.length, 0, 'zero native dialogs end to end');
-  } finally {
-    await context.close();
-  }
-});
-
-test('S2.1 re-anchor: files.saveFile under the legacy impl is byte-identical (no token; native confirm on 409)', opts, async () => {
-  const { context, page } = await savePage({ impl: 'legacy' });
-  try {
-    const dialogs = [];
-    page.on('dialog', (d) => { dialogs.push(d.type()); d.dismiss().catch(() => {}); });
-    await page.waitForSelector('textarea#codeEditor', { timeout: 15000 });
-    const gate = saveGate(page);
-    await page.click('textarea#codeEditor');
-    await page.evaluate(() => {
-      const ed = /** @type {HTMLTextAreaElement} */ (document.querySelector('textarea#codeEditor'));
-      ed.setSelectionRange(ed.value.length, ed.value.length);
-      ed.focus();
-    });
-    await page.keyboard.type('FILES LEGACY\n');
-    await page.waitForFunction((fk) => window.__mp.store().drafts[fk] != null, FK.save);
-
-    // driven through files.saveFile directly — NOT the keydown handler
-    await runSaveFile(page, 'save.tex');
-    const s = await page.evaluate((fk) => ({
-      state: window.__mp.state(),
-      seq: window.__mp.saveState(fk).seq,
-      models: window.__mp.models().length,
-      draft: window.__mp.store().drafts[fk] ?? null,
-      toast: document.getElementById('toast').textContent,
-    }), FK.save);
-    assert.equal(s.state, 'IDLE', 'the boot machine never starts');
-    assert.equal(s.models, 0, 'no models exist');
-    assert.equal(s.seq, 0, 'the M3 machine never issued a token — the gate is impl-scoped');
-    assert.equal(s.draft, null, 'the legacy body cleared the draft');
-    assert.match(s.toast, /saved save\.tex/, 'the legacy toast');
-    assert.equal(gate.puts.length, 1, 'one PUT, unchanged wire protocol');
-    assert.match(fs.readFileSync(path.join(alphaRoot, 'save.tex'), 'utf8'), /FILES LEGACY/);
-
-    // 409 → the legacy NATIVE confirm (never the monaco confirmBox), and a
-    // dismissed confirm keeps the draft — today's flow, byte-identical
-    await page.keyboard.type('MORE409 ');
-    await page.waitForFunction((fk) => window.__mp.store().drafts[fk] != null, FK.save);
-    const draftBefore = await page.evaluate((fk) => window.__mp.store().drafts[fk], FK.save);
-    gate.cfg.put = '409';
-    await runSaveFile(page, 'save.tex');
-    assert.deepEqual(dialogs, ['confirm'], 'the 409 raised the NATIVE confirm (legacy path unchanged)');
-    assert.equal(await page.evaluate(() => !!document.querySelector('#confirmBack')), false,
-      'the M5 in-app confirm never appears under legacy');
-    const after409 = await page.evaluate((fk) => ({
-      draft: window.__mp.store().drafts[fk] ?? null,
-      seq: window.__mp.saveState(fk).seq,
-    }), FK.save);
-    assert.equal(after409.draft, draftBefore, 'the dismissed confirm kept the draft');
-    assert.equal(after409.seq, 0, 'still zero tokens after the 409 round');
   } finally {
     await context.close();
   }

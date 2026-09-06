@@ -62,30 +62,30 @@ test('editor: .jl files complete like the Julia REPL; plain Tab still indents', 
   await page.click('#v-alpha .ctabs .ctab[data-fi="0"]'); // model.jl
   await page.waitForSelector('#v-alpha #codeEditor');
   await page.evaluate(() => {
-    const ed = document.querySelector('#v-alpha #codeEditor');
-    ed.focus();
-    ed.setSelectionRange(ed.value.length, ed.value.length);
+    window.__mp.focus(); const lines = window.__mp.getText().split('\n');
+    window.__mp.setPosition(lines.length, lines.at(-1).length + 1);
   });
   await page.keyboard.type('\\sigma');
   await page.keyboard.press('Tab');
-  let v = await page.inputValue('#v-alpha #codeEditor');
+  let v = await page.evaluate(() => window.__mp.getText());
   assert.ok(v.endsWith('σ'), `completes in .jl (got …${JSON.stringify(v.slice(-8))})`);
+  const beforeTab = v;
   await page.keyboard.press('Tab');
-  v = await page.inputValue('#v-alpha #codeEditor');
-  assert.ok(v.endsWith('σ  '), 'plain Tab still indents');
+  v = await page.evaluate(() => window.__mp.getText());
+  assert.ok(v.startsWith(beforeTab), 'plain Tab preserves the preceding text');
+  assert.match(v.slice(beforeTab.length), /^ {1,2}$/, 'plain Tab advances to the next two-space tab stop');
 });
 
 test('editor: .tex files never convert — Tab is indentation only', opts, async () => {
   await page.click('#v-alpha .ctabs .ctab[data-fi="1"]'); // notes.tex
   await page.waitForSelector('#v-alpha #codeEditor[data-ext="tex"]');
   await page.evaluate(() => {
-    const ed = document.querySelector('#v-alpha #codeEditor');
-    ed.focus();
-    ed.setSelectionRange(ed.value.length, ed.value.length);
+    window.__mp.focus(); const lines = window.__mp.getText().split('\n');
+    window.__mp.setPosition(lines.length, lines.at(-1).length + 1);
   });
   await page.keyboard.type('\\alpha');
   await page.keyboard.press('Tab');
-  const v = await page.inputValue('#v-alpha #codeEditor');
+  const v = await page.evaluate(() => window.__mp.getText());
   assert.ok(v.endsWith('\\alpha  '), `\\alpha stays literal + indent (got …${JSON.stringify(v.slice(-10))})`);
 });
 

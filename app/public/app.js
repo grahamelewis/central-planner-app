@@ -9,7 +9,7 @@ import {
 } from './util.js';
 import {
   state, ui, pdfPanes, tailBufs, agentsLive, editsLive, jobsLive,
-  jobTimers, drafts, edViews, runBufs, runSegs, runOff, htmlEdits,
+  jobTimers, drafts, runBufs, runSegs, runOff, htmlEdits,
   snapsCache, pendingPerms, composerDrafts, queuedMsgs,
   turnTexTouched, pendingComplete, consoleView,
   projKeys, tasksOf, findTask, taskProvider, agentName,
@@ -710,13 +710,6 @@ export function go(v) {
     if (prev && prev.clientHeight) consoleView[prev.dataset.key] = {
       scrollTop: prev.scrollTop,
       follow: prev._follow !== false,
-    };
-    // same idea for the outgoing project's editor — renderWB only banks the
-    // editor of the view it renders, and that's the INCOMING one here
-    const ped = document.getElementById('v-' + ui.view)?.querySelector('#codeEditor');
-    if (ped && ped.dataset.fkey) edViews[ped.dataset.fkey] = {
-      scrollTop: ped.scrollTop, scrollLeft: ped.scrollLeft,
-      selStart: ped.selectionStart, selEnd: ped.selectionEnd,
     };
   }
   // an inactive project has no nav tab / workbench view — fall back to overview

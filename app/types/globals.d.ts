@@ -145,9 +145,7 @@ interface Element {
   _job?: JobInfo | null;
   _prog?: number | null;
   /** editor ↔ overlay: synchronous pan re-sync (exposed by wireWB). */
-  _hlSync?: (() => void) | null;
   /** editor: wrap-aware caret point for texEditor's completion popup. */
-  _caretXY?: (() => { x: number; y: number }) | null;
   /** session pane: composer autosize cap, refreshed each wiring pass. */
   _taCapFn?: (() => void) | null;
   _taCap?: number;

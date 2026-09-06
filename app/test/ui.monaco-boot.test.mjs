@@ -97,7 +97,7 @@ async function bootPage({ impl = null, init = null, inject = null, touch = false
 }
 
 const waitSettle = (page, timeout = 25000) => page.waitForFunction(
-  () => window.__mp && ['READY', 'FALLBACK_LEGACY'].includes(window.__mp.state()),
+  () => window.__mp && ['READY', 'FAILED'].includes(window.__mp.state()),
   null, { timeout, polling: 100 },
 );
 
@@ -115,50 +115,18 @@ const bootStates = (page) => page.evaluate(() => window.__mp.log().map((e) => e.
  * armed injection kill the boot, and assert the atomic fallback contract.
  */
 async function runFallbackCase({ inject, init = null, expectStage, extraChecks }) {
-  const { context, page, msgs } = await bootPage({ impl: null, inject });
+  const { context, page, msgs } = await bootPage({ inject, init });
   try {
-    await page.waitForSelector('#codeEditor[data-ext="tex"]', { timeout: 15000 });
-    // a real draft, typed through the keyboard — the fallback must preserve it
-    await page.click('#codeEditor');
-    await page.keyboard.type('DRAFTMARK');
-    await page.waitForFunction(() => document.querySelector('#codeEditor').value.includes('DRAFTMARK'));
-    // flip the toggle + test overrides, then re-render via the file tab
-    await page.evaluate((ov) => {
-      localStorage.setItem('editor:impl', 'monaco');
-      if (ov) for (const [k, v] of Object.entries(ov)) window[k] = v;
-    }, init);
-    await page.click('.ctab.cd[data-fi="0"]');
-    await waitSettle(page);
-
-    assert.equal(await page.evaluate(() => window.__mp.state()), 'FALLBACK_LEGACY',
-      `boot must end in FALLBACK_LEGACY (console: ${msgs.slice(-6).join(' | ')})`);
-    // bootPromise settled — resolved {ok:false}, never pending, never rejected
+    await page.locator('.mpFailure').waitFor({timeout:25000});
     const r = await settledResult(page);
-    assert.notEqual(r, 'PENDING', 'bootPromise must be settled, not pending');
-    assert.equal(r.ok, false);
-    assert.equal(r.stage, expectStage, `fallback stage: expected ${expectStage}, got ${r.stage}`);
-    // legacy editor present, draft intact, still editable
-    await page.waitForSelector('#codeEditor[data-ext="tex"]', { timeout: 10000 });
-    const val = await page.evaluate(() => document.querySelector('#codeEditor').value);
-    assert.ok(val.includes('DRAFTMARK'), 'the draft text must survive the fallback');
-    await page.click('#codeEditor');
-    await page.keyboard.type('Z');
-    const val2 = await page.evaluate(() => document.querySelector('#codeEditor').value);
-    assert.notEqual(val2, val, 'the legacy editor must be editable after fallback');
-    // the stored preference is NEVER persisted off — session memory only
-    assert.equal(await page.evaluate(() => localStorage.getItem('editor:impl')), 'monaco',
-      'fallback must not write localStorage[editor:impl]');
-    assert.equal(await page.evaluate(() => window.__mp.forcedLegacy()), true);
-    // no monaco DOM left behind; the dock is hidden and empty
-    assert.equal(await page.evaluate(() => document.querySelectorAll('.monaco-editor').length), 0);
-    assert.equal(await page.evaluate(() => {
-      const d = document.querySelector('#v-alpha .wb > .mdock');
-      return d ? getComputedStyle(d).display : 'missing';
-    }), 'none');
+    assert.notEqual(r, 'PENDING'); assert.equal(r.ok, false); assert.equal(r.stage, expectStage);
+    assert.equal(await page.locator('textarea#codeEditor').count(), 0);
+    assert.equal(await page.locator('.mpFailure pre').textContent(), TEX);
+    assert.equal(await page.locator('.mpRetry').count(), 1);
+    assert.equal(await page.evaluate(() => localStorage.getItem('editor:impl')), null);
+    assert.equal(await page.locator('.monaco-editor').count(), 0);
     if (extraChecks) await extraChecks(page, msgs);
-  } finally {
-    await context.close();
-  }
+  } finally { await context.close(); }
 }
 
 /* ── baseline: READY, milestones, single-flight, kept dock ───────────── */
@@ -218,7 +186,7 @@ test('baseline → READY: milestones logged, single-flight under the idle-warm/f
     assert.equal(kept.state, 'READY');
     assert.equal(kept.boots, 1, 'no re-boot across renders');
     assert.equal(kept.docked, true, 'host re-docked after the console round-trip');
-    assert.equal(await page.evaluate(() => localStorage.getItem('editor:impl')), 'monaco');
+    assert.equal(await page.evaluate(() => localStorage.getItem('editor:impl')), null);
   } finally {
     await context.close();
   }
@@ -312,7 +280,7 @@ test('core-hang: zero signal while hung — the machine holds in CORE, and boot 
     assert.equal(mid.state, 'CORE', 'no signal before the deadline — the machine holds in CORE');
     assert.equal(mid.failed, 0, 'the hang produced zero failure events');
     await waitSettle(page, 20000);
-    assert.equal(await page.evaluate(() => window.__mp.state()), 'FALLBACK_LEGACY');
+    assert.equal(await page.evaluate(() => window.__mp.state()), 'FAILED');
     const r = await settledResult(page);
     assert.equal(r.stage, 'deadline', 'only the deadline detects the hang class');
     // structural mandate: the boot machine itself never gates on window 'load'
@@ -357,7 +325,7 @@ test('worker-block → READY + workerDegraded + Monaco main-thread console warni
     assert.ok(warned, `Monaco's main-thread fallback warning must appear (console: ${msgs.slice(-8).join(' | ')})`);
     // still a working editor, preference untouched
     await page.waitForSelector('#v-alpha .wb > .mdock.on .monaco-editor', { timeout: 15000 });
-    assert.equal(await page.evaluate(() => localStorage.getItem('editor:impl')), 'monaco');
+    assert.equal(await page.evaluate(() => localStorage.getItem('editor:impl')), null);
     const r = await settledResult(page);
     assert.equal(r.ok, true);
   } finally {
@@ -378,14 +346,13 @@ test('lang-block (python post-boot) → READY + langDegraded(python), editing ke
     await page.evaluate(() => window.__mp.setLanguage('python'));
     await page.waitForFunction(() => window.__mp.degraded().langs.includes('python'), null, { timeout: 10000 });
     assert.equal(await page.evaluate(() => window.__mp.state()), 'READY', 'lang failure never falls back');
-    assert.equal(await page.evaluate(() => window.__mp.forcedLegacy()), false);
     // plaintext degradation only — the buffer still edits
     const roundtrip = await page.evaluate(() => {
       window.__mp.setText('x = 1');
       return window.__mp.getText();
     });
     assert.equal(roundtrip, 'x = 1');
-    assert.equal(await page.evaluate(() => localStorage.getItem('editor:impl')), 'monaco');
+    assert.equal(await page.evaluate(() => localStorage.getItem('editor:impl')), null);
     const r = await settledResult(page);
     assert.equal(r.ok, true);
   } finally {
@@ -410,67 +377,6 @@ test('init-throw (test seam in wiring) → FALLBACK(init) with a real stack', op
 
 /* ── toggle + A15 device pin ─────────────────────────────────────────── */
 
-test('toggle default: editor:impl unset → legacy editor, dock hidden/empty, zero vendor fetches', opts, async () => {
-  const { context, page } = await bootPage({ impl: null });
-  try {
-    await page.waitForSelector('#codeEditor[data-ext="tex"]', { timeout: 15000 });
-    await sleep(1200); // let the idle-warm window pass — it must be a no-op
-    const s = await page.evaluate(() => ({
-      impl: window.__mp.impl(),
-      state: window.__mp.state(),
-      boots: window.__mp.bootCount(),
-      slot: document.querySelectorAll('#monacoSlot').length,
-      monaco: document.querySelectorAll('.monaco-editor').length,
-      dockDisplay: getComputedStyle(document.querySelector('#v-alpha .wb > .mdock')).display,
-      dockEmpty: document.querySelector('#v-alpha .wb > .mdock').innerHTML === '',
-      // the legacy editor DOM is the full pre-Monaco structure
-      edWrap: !!document.querySelector('.edWrap .edGutter #edGutterInner')
-        && !!document.querySelector('.edWrap #codeHL')
-        && !!document.querySelector('.edWrap #codeEditor'),
-    }));
-    assert.equal(s.impl, 'legacy', 'default is legacy');
-    assert.equal(s.state, 'IDLE', 'no boot ever started');
-    assert.equal(s.boots, 0);
-    assert.equal(s.slot, 0, 'no monaco slot in legacy renders');
-    assert.equal(s.monaco, 0);
-    assert.equal(s.dockDisplay, 'none', 'the dock is display:none in legacy mode');
-    assert.equal(s.dockEmpty, true, 'the dock is empty in legacy mode');
-    assert.equal(s.edWrap, true, 'legacy editor structure byte-for-byte intact (wrap+gutter+overlay)');
-    const vendorHits = sb.vendor.hits();
-    assert.equal(vendorHits.length, 0,
-      `legacy mode must fetch nothing from /vendor/monaco (saw: ${vendorHits.join(', ')})`);
-  } finally {
-    await context.close();
-  }
-});
-
-test('A15 coarse pin: (pointer:coarse) and (not (any-pointer:fine)) → legacy regardless of stored monaco', opts, async () => {
-  // CDP touch emulation → Chrome reports pointer:coarse + any-pointer:coarse
-  // (verified: the pin query matches natively under this emulation)
-  const { context, page } = await bootPage({ impl: 'monaco', touch: true });
-  try {
-    await page.waitForSelector('#codeEditor[data-ext="tex"]', { timeout: 15000 });
-    await sleep(1200);
-    const s = await page.evaluate(() => ({
-      pinned: window.__mp.pinnedCoarse(),
-      impl: window.__mp.impl(),
-      stored: localStorage.getItem('editor:impl'),
-      state: window.__mp.state(),
-      boots: window.__mp.bootCount(),
-      monaco: document.querySelectorAll('.monaco-editor').length,
-    }));
-    assert.equal(s.pinned, true, 'coarse-only device is pinned');
-    assert.equal(s.impl, 'legacy', 'the pin overrides the stored preference');
-    assert.equal(s.stored, 'monaco', 'the stored preference itself is untouched');
-    assert.equal(s.state, 'IDLE', 'no boot on a pinned device');
-    assert.equal(s.boots, 0);
-    assert.equal(s.monaco, 0);
-    assert.equal(sb.vendor.hits().length, 0, 'pinned device fetches nothing from /vendor/monaco');
-  } finally {
-    await context.close();
-  }
-});
-
 test('A15 hybrid: coarse primary but any-pointer:fine → Monaco (the not-clause matters)', opts, async () => {
   // touch emulation supplies the coarse primary; the shim supplies the fine
   // secondary pointer Chrome's emulation cannot express — the pin's
@@ -478,13 +384,11 @@ test('A15 hybrid: coarse primary but any-pointer:fine → Monaco (the not-clause
   const { context, page } = await bootPage({ impl: 'monaco', touch: true, hybridShim: true });
   try {
     const mq = await page.evaluate(() => ({
-      pinned: window.__mp.pinnedCoarse(),
       coarse: matchMedia('(pointer:coarse)').matches,
       anyFine: matchMedia('(any-pointer:fine)').matches,
     }));
     assert.equal(mq.coarse, true, 'the primary pointer really is coarse');
     assert.equal(mq.anyFine, true, 'a fine pointer exists (hybrid)');
-    assert.equal(mq.pinned, false, 'a device with ANY fine pointer is not pinned');
     await waitSettle(page);
     assert.equal(await page.evaluate(() => window.__mp.state()), 'READY');
     await page.waitForSelector('#v-alpha .wb > .mdock.on .monaco-editor', { timeout: 15000 });

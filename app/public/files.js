@@ -23,7 +23,7 @@ import { syncTexRunControls } from './texrun.js';
 // because neither side touches the other at module-eval time (monacoPane's
 // imports of us are hoisted function declarations).
 import {
-  effectiveImpl as editorImpl, applyExternal as mpApplyExternal,
+  applyExternal as mpApplyExternal,
   noteViewClose as mpNoteViewClose, requestSave as mpRequestSave, text as mpText,
 } from './monacoPane.js';
 import { selectViewer } from './viewers.js';
@@ -228,7 +228,6 @@ export async function autoMergeDisk(project, rel) {
   if (ours == null) { // draft vanished meanwhile (saved / reverted) — plain reload
     diskStale.delete(fk);
     if (fileCache[fk]) {
-      if (editorImpl() !== 'monaco') { refreshFile(project, rel); return; } // legacy: today's line, byte-identical
       // M4 T3 under Monaco: refreshFile's renderWB only reconciles the fkey
       // attached to the VISIBLE view — a retained background/orphan model
       // (A4/M7 T6) would hold pre-change text and its live undo indefinitely.
@@ -269,11 +268,11 @@ export async function autoMergeDisk(project, rel) {
   // state), and pushes MERGED as the ONLY undoable edit iff it differs (T4
   // dissolve pushes nothing) — ⌘Z can reach current disk, never pre-merge
   // OURS. Background/orphan models take the same txn directly (A4/M7 T6 —
-  // no renderWB needed, visible caret untouched); no model or legacy impl →
+  // no renderWB needed, visible caret untouched); no model →
   // no-op/skipped: today's behavior byte-identical. The renderWB below then
   // reconciles as a read-only no-op (serialize === draft / raw-to-raw
   // baseline match) — at most once post-commit, P3's one-swap rule.
-  if (editorImpl() === 'monaco') mpApplyExternal(fk, { theirs, merged }, 'mergeRebase');
+  mpApplyExternal(fk, { theirs, merged }, 'mergeRebase');
   if (ui.view === project) renderWB(project);
   const now = Date.now();
   if (!(mergeToastAt[fk] > now - 15000)) {
@@ -304,9 +303,9 @@ export async function saveFile(key, rel) {
   // immediately instead of waiting for reattach reconciliation. Caller swap
   // only, NO wire-protocol change; concurrent callers coalesce per fkey
   // (M3 T7 — chip click + saveFile can never double-dispatch). mpText(k) is
-  // the frozen model-existence probe (null ⇔ no model): the legacy impl and
-  // no-model fkeys take the unchanged path below, byte-identical.
-  if (editorImpl() === 'monaco' && mpText(k) != null) return mpRequestSave(k);
+  // the model-existence probe (null ⇔ no model): no-model fkeys still
+  // need the shared draft-save path below.
+  if (mpText(k) != null) return mpRequestSave(k);
   if (drafts[k] == null) return; // nothing unsaved
   const base = draftBase[k] ?? fileCache[k]?.mtimeMs;
   if (!Number.isFinite(base)) {
@@ -390,7 +389,7 @@ export function closeTab(key, task, i, files) {
   // Phase 3 full-M7 (A10 / s05 M7 T4): tell the kept-model registry the VIEW
   // closed — a clean model becomes an LRU-eligible orphan, a dirty model
   // (draft, undo stack, savedAltId) is retained until save/revert/discard.
-  // Additive: a no-op without a model (legacy mode, never-opened tabs).
+  // Additive: a no-op without a model (for example, never-opened tabs).
   {
     const rel = isExternalPin(key, files[i]) ? String(files[i]) : relOf(key, files[i]);
     if (rel != null) mpNoteViewClose(`${key}::${rel}`);

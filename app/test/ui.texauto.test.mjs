@@ -14,7 +14,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
-import { startUI, sleep, CHROME, testBothImpls, edDriver, wsPushTo } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco, edDriver, wsPushTo } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const opts = { skip: hasChrome ? false : 'Google Chrome not installed' };
@@ -72,7 +72,7 @@ before(async () => {
 });
 after(async () => { if (ui) await ui.stop(); });
 
-const edValue = () => page.inputValue('#v-alpha #codeEditor');
+const edValue = () => page.evaluate(() => window.__mp.getText());
 const runStatus = (rel, state, startedAt) =>
   wsPush('run:status', { project: 'alpha', run: { rel, state, startedAt, ms: 900 } });
 
@@ -122,7 +122,9 @@ test('a clean open editor reloads to the session version in place', opts, async 
 test('non-overlapping draft + session edit merge silently; one save lands both', opts, async () => {
   const base = await edValue();
   const mine = base.replace('% deck v1', '% deck v1 — graham pass');
-  await page.fill('#v-alpha #codeEditor', mine); // unsaved draft
+  await page.evaluate(() => window.__mp.focus());
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
+  await page.keyboard.insertText(mine); // unsaved draft
   await sleep(200);
   const claude = fs.readFileSync(slidesPath, 'utf8')
     .replace('\\end{document}', '\\begin{frame}{Robustness}\nclaude frame\n\\end{frame}\n\\end{document}');
@@ -146,7 +148,9 @@ test('non-overlapping draft + session edit merge silently; one save lands both',
 test('overlapping edits fall back to the ⚠ disk guard with the draft pinned', opts, async () => {
   const base = await edValue();
   const mine = base.replace('baseline result', 'MY new number');
-  await page.fill('#v-alpha #codeEditor', mine);
+  await page.evaluate(() => window.__mp.focus());
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+a' : 'Control+a');
+  await page.keyboard.insertText(mine);
   await sleep(200);
   fs.writeFileSync(slidesPath, base.replace('baseline result', 'CLAUDE new number'));
   await wsPush('file:changed', { project: 'alpha', rel: 'slides.tex' });
@@ -179,7 +183,7 @@ test('merge3 edge cases (engine seam)', opts, async () => {
    reads via edDriver). /api/run is intercepted on THIS pass's page (never
    billed, no latexmk); run lifecycle rides synthetic run:status pushes.
    Declared last: the shared-page tests above are order-dependent. */
-testBothImpls('turn-end dual: ▶-created deck tab + session file:changed → exactly one queued compile; clean editor reloads', {
+testMonaco('turn-end dual: ▶-created deck tab + session file:changed → exactly one queued compile; clean editor reloads', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const ed = edDriver(impl);

@@ -28,7 +28,6 @@ import { voiceSecHtml, voiceSecWire } from './voice.js';
 // It is benign ONLY under the monacoPane header rule: every binding below is
 // accessed strictly inside functions, never at module-eval time — pinned by
 // the cold-page Settings smoke (ui.monaco-settings.test.mjs).
-import { effectiveImpl, storedImpl, pinnedCoarse, setImpl, rebootMonaco } from './monacoPane.js';
 // PERMANENT: routing, state adoption and the nav live with the entry module.
 import { go, loadState, renderAll, renderNav, handleEvent } from './app.js';
 
@@ -624,22 +623,6 @@ export function renderSettings() {
     ['dark', '● Dark', 'the classic night dashboard'],
     ['light', '○ Light', 'paper mode for bright rooms'],
   ];
-  // Phase 3 S2.1(b) — the Editor row reflects REALITY (CONTRACT "Toggle &
-  // device gate"): effectiveImpl is what a code tab renders right now — the
-  // A15 pin (I9) and the session boot-fallback both override a stored
-  // 'monaco', so selection follows the effective impl, and the note says why
-  // when it diverges from the raw preference. (All monacoPane access is
-  // function-scope — see the import note above.)
-  const edImpl = effectiveImpl();
-  const edPinned = pinnedCoarse();
-  const edForced = !edPinned && edImpl === 'legacy' && storedImpl() === 'monaco';
-  const edNote = edPinned
-    ? 'this device is pinned to the legacy editor — touch-first hardware, automatic, not a preference'
-    : edForced
-      ? 'Monaco could not boot — using the legacy editor for this session (your saved preference is unchanged)'
-      : edImpl === 'monaco'
-        ? 'Monaco (beta) — per-browser, like the theme'
-        : 'the classic editor — Monaco (beta) is opt-in, per-browser like the theme';
   host.innerHTML = `
     <h1>Settings</h1>
     ${servicesSecHtml()}
@@ -653,38 +636,11 @@ export function renderSettings() {
     `<div class="segOpt ${cur === v ? 'on' : ''}" data-th="${esc(v)}">${esc(label)}</div>`).join('')}
         </div>
       </div>
-      <div class="setRow">
-        <div class="setLbl">Editor<small>${esc(edNote)}</small></div>
-        <div class="segCtl" id="editorSeg">
-          <div class="segOpt ${edImpl === 'legacy' ? 'on' : ''}" data-ed="legacy">✎ Legacy</div>
-          <div class="segOpt ${edImpl === 'monaco' ? 'on' : ''}${edPinned ? ' locked' : ''}" data-ed="monaco">▤ Monaco (beta)</div>
-        </div>
-        ${edForced ? '<button class="gbtn" id="edImplRetry">↻ Try Monaco again</button>' : ''}
-      </div>
     </div>
     ${voiceSecHtml()}
     ${updateSecHtml()}`;
   host.querySelectorAll('[data-th]').forEach(el =>
     el.addEventListener('click', () => setTheme(el.dataset.th)));
-  // Phase 3 S2.1(b): the toggle writes ONLY through setImpl, the sanctioned
-  // writer (CONTRACT "Toggle & device gate": flipping to legacy runs the
-  // synchronous M7-T7 flush BEFORE the preference changes hands, so the
-  // legacy renderers that follow read just-re-asserted drafts). The A15 pin
-  // is not a preference — a locked option is inert (I9).
-  host.querySelectorAll('#editorSeg [data-ed]').forEach(el =>
-    el.addEventListener('click', () => {
-      if (el.classList.contains('locked')) return;
-      setImpl(el.dataset.ed === 'monaco' ? 'monaco' : 'legacy');
-      renderSettings();
-    }));
-  // boot-fallback recovery: rebootMonaco is the "try again" affordance
-  // (CONTRACT "Toggle & device gate") — it clears the session-only
-  // forcedLegacy pin and re-arms a fresh boot generation; the next code-tab
-  // render boots a brand-new machine. The preference itself never moved.
-  host.querySelector('#edImplRetry')?.addEventListener('click', () => {
-    rebootMonaco();
-    renderSettings();
-  });
   const saveDefaults = async (patch) => {
     const r = await api('PATCH', '/api/providers/defaults', patch);
     if (r) { state.agentDefaults = r; renderSettings(); toast('new-task agent default saved'); }

@@ -107,8 +107,10 @@ async function startVendorProxy(upstreamPort) {
     clear() { rules = []; hits.length = 0; },
     hits: () => hits.slice(),
     close: () => new Promise((resolve) => {
-      try { server.closeAllConnections?.(); } catch { /* node < 18.2 */ }
       server.close(() => resolve());
+      // Stop accepting before dropping sockets, including injected hangs.
+      // Otherwise a late worker request can slip between the two operations.
+      try { server.closeAllConnections?.(); } catch { /* node < 18.2 */ }
     }),
   };
 }

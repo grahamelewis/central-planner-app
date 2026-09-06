@@ -146,9 +146,9 @@ test('M2 fossil guard: setValue/pushEditOperations/setEOL appear ONLY inside the
       `${raw} must appear exactly once, in its wrapper`);
   }
   // the reason sets are closed — no call site may invent members
-  assert.ok(/'seedCreate', 'cleanReload', 'mergeRebase', 'recoveryReload', 'legacyHandoff', 'eolSetup'/.test(src),
+  assert.ok(/'seedCreate', 'cleanReload', 'mergeRebase', 'recoveryReload', 'draftReconcile', 'eolSetup'/.test(src),
     'TXN_REASONS is the enumerated closed set');
-  assert.ok(/'cleanReload', 'mergeRebase', 'recoveryReload', 'legacyHandoff'/.test(src),
+  assert.ok(/'cleanReload', 'mergeRebase', 'recoveryReload', 'draftReconcile'/.test(src),
     'applyExternal reasons are the A4 closed set');
   // save-path serialization: bare getValue() is forbidden — every read goes
   // through serialize() (P-EOL-1); getValue appears only there
@@ -772,87 +772,6 @@ test('EDITCONTEXT PIN: the default surface is editContext:false and the IME case
   // ui.voice.test.mjs 'Space while Monaco focused never mics' and section G
   // below (Tab) — leg (c).
   await imeCase(null, false);
-});
-
-/* ═══ F — toggle handoff both ways + legacy byte-identical ═══ */
-
-test('toggle off → legacy DOM intact, zero vendor fetches, boot never starts', opts, async () => {
-  const { context, page } = await corePage({ impl: null });
-  try {
-    await page.waitForSelector('textarea#codeEditor[data-ext="tex"]', { timeout: 15000 });
-    await sleep(1200); // the idle-warm window must be a no-op
-    const s = await page.evaluate(() => ({
-      state: window.__mp.state(),
-      slot: document.querySelectorAll('#monacoSlot').length,
-      monaco: document.querySelectorAll('.monaco-editor').length,
-      hosts: document.querySelectorAll('.mpHost').length,
-      edWrap: !!document.querySelector('.edWrap .edGutter #edGutterInner')
-        && !!document.querySelector('.edWrap #codeHL')
-        && !!document.querySelector('.edWrap textarea#codeEditor'),
-    }));
-    assert.equal(s.state, 'IDLE');
-    assert.equal(s.slot, 0);
-    assert.equal(s.monaco, 0);
-    assert.equal(s.hosts, 0, 'no kept host exists in legacy mode');
-    assert.equal(s.edWrap, true, 'legacy editor structure byte-for-byte intact');
-    assert.equal(sb.vendor.hits().length, 0, 'legacy mode fetches nothing from /vendor/monaco');
-  } finally {
-    await context.close();
-  }
-});
-
-test('toggle handoff with a draft alive: monaco → legacy shows it, legacy typing wins on re-entry, ⌘Z reaches the disk baseline', opts, async () => {
-  const { context, page } = await corePage();
-  try {
-    await waitEditor(page, FK.notes); // fresh context → first open tab
-    await clickTab(page, 1, FK.two);  // two.tex — isolated from D's disk rewrites
-    const orig = await page.evaluate((fk) => window.__mp.text(fk), FK.two);
-    await page.evaluate(() => { window.__mp.focus(); window.__mp.setPosition(1, 1); });
-    await page.keyboard.type('MONACO DRAFT ');
-    await page.waitForFunction((fk) => (window.__mp.store().drafts[fk] || '').includes('MONACO DRAFT'), FK.two);
-
-    // → legacy: the textarea renders the SAME draft (the continuously-synced
-    // drafts map IS the synchronous flush — single source of truth, I1/A4)
-    await page.evaluate(() => localStorage.setItem('editor:impl', 'legacy'));
-    await page.click('.ctab.cd[data-fi="1"]');
-    await page.waitForSelector('textarea#codeEditor[data-ext="tex"]', { timeout: 10000 });
-    const leg = await page.evaluate(() => ({
-      val: document.querySelector('textarea#codeEditor').value,
-      parked: !!document.querySelector('#mpPark .mpHost'),
-      monacoVisible: !!document.querySelector('#v-alpha .wb > .mdock.on'),
-    }));
-    assert.ok(leg.val.includes('MONACO DRAFT'), 'legacy shows the monaco draft verbatim');
-    assert.equal(leg.parked, true, 'the kept host parked, not destroyed');
-    assert.equal(leg.monacoVisible, false);
-    // type MORE in legacy — this draft revision is now the newest truth
-    await page.click('textarea#codeEditor');
-    await page.evaluate(() => {
-      const ta = document.querySelector('textarea#codeEditor');
-      ta.setSelectionRange(0, 0);
-    });
-    await page.keyboard.type('LEGACY MORE ');
-    await page.waitForFunction((fk) => (window.__mp.store().drafts[fk] || '').includes('LEGACY MORE'), FK.two);
-
-    // → monaco: the NEWER draft wins (A4 — a retained stale model can never
-    // hide the legacy draft), dirty at re-entry, ⌘Z reaches the DISK baseline
-    await page.evaluate(() => localStorage.setItem('editor:impl', 'monaco'));
-    await page.click('.ctab.cd[data-fi="1"]');
-    await waitEditor(page, FK.two);
-    const re = await page.evaluate((fk) => ({
-      text: window.__mp.text(fk),
-      dirty: window.__mp.isDirty(fk),
-    }), FK.two);
-    assert.ok(re.text.includes('LEGACY MORE') && re.text.includes('MONACO DRAFT'),
-      'monaco re-entry shows the newer (legacy-typed) draft');
-    assert.equal(re.dirty, true, 'amber on re-entry');
-    await undoToClean(page, FK.two);
-    assert.equal(await page.evaluate((fk) => window.__mp.text(fk), FK.two), orig,
-      '⌘Z bottoms out at the disk baseline — never an intermediate buffer');
-    assert.equal(await page.evaluate((fk) => window.__mp.store().drafts[fk], FK.two), undefined,
-      'clean again — draft dissolved by the undo');
-  } finally {
-    await context.close();
-  }
 });
 
 /* ═══ F3 — C2-MF5 editHold: blur + readOnly for the hold lifetime (P17) ═══

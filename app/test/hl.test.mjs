@@ -2,17 +2,16 @@
 //  1. round-trip fidelity: stripping tags + unescaping the highlighted HTML
 //     must equal the original input (a wrong color is tolerable; lost/garbled
 //     text is not).
-//  2. incremental == fresh-full-render: paintHL after a sequence of edits must
-//     produce byte-identical DOM to a from-scratch render of the same text.
-// Uses the faithful depth-counting DOM stub in test/domstub.mjs.
-import { test, describe, before } from 'node:test';
+// Read-only highlighting is independent of the retired editor overlay.
+import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
-import { FakeCode, installDocument, stripToText } from './domstub.mjs';
 import { APP_DIR } from './helpers.mjs';
 
-installDocument();
-const { paintHL, hlText } = await import(path.join(APP_DIR, 'public', 'hl.js'));
+const { hlText } = await import(path.join(APP_DIR, 'public', 'hl.js'));
+const UNESC = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"' };
+const stripToText = html => html.replace(/<\/?span[^>]*>/g, '')
+  .replace(/&(amp|lt|gt|quot);/g, match => UNESC[match]);
 
 // Representative snippets per language (cover comments, strings, multiline
 // constructs, and HTML-significant characters that must survive escaping).
@@ -26,13 +25,6 @@ const SNIPPETS = {
   tex: '% comment <x>\n\\section{Title & more}\ntext $x^2 + y$ and $$\\int_0^1$$ done',
   sql: "-- comment <x> & \"q\"\nSELECT a, count(*) AS n\nFROM read_parquet('works_*.parquet')\nWHERE name = 'O''Brien' AND v < 5\n/*\nblock comment < > &\n*/\ngroup by a;",
 };
-
-function freshRender(text, ext) {
-  const el = new FakeCode();
-  const store = {};
-  paintHL(el, text, ext, store);
-  return el;
-}
 
 describe('hlFor / hlText basics', () => {
   test('hlText returns null for an unknown extension', async () => {
@@ -55,67 +47,6 @@ describe('hlFor / hlText basics', () => {
       assert.ok(!/[<>]/.test(noTags), `no raw angle brackets leak for ${ext}`);
     });
   }
-});
-
-describe('paintHL: incremental render === fresh full render', () => {
-  // A handful of representative edit sequences per language. After each edit,
-  // the incrementally-updated DOM must equal a from-scratch render.
-  for (const [ext, snip] of Object.entries(SNIPPETS)) {
-    test(`${ext}: a sequence of edits stays consistent with full render`, () => {
-      const el = new FakeCode();
-      const store = {};
-      const lines = snip.split('\n');
-      const edits = [
-        snip,                                    // initial
-        lines.slice(0, -1).join('\n'),           // delete last line
-        lines.join('\n') + '\nappended tail',    // append a line
-        lines.slice(1).join('\n'),               // delete first line
-        ['NEW FIRST'].concat(lines).join('\n'),  // prepend a line
-        lines.map((l, i) => (i === 1 ? l + ' edited' : l)).join('\n'), // edit line 1
-        snip,                                    // back to original
-      ];
-      for (const text of edits) {
-        paintHL(el, text, ext, store);
-        // (a) text fidelity per line
-        const want = text.split('\n');
-        assert.equal(el.children.length, want.length, `line count for ${ext}`);
-        for (let i = 0; i < want.length; i++) {
-          assert.equal(stripToText(el.children[i].innerHTML), want[i] + '\n',
-            `line ${i} text fidelity for ${ext}`);
-        }
-        // (b) byte-identical to a fresh full render
-        assert.equal(el.innerHTML, freshRender(text, ext).innerHTML,
-          `incremental === full for ${ext} after edit`);
-        // (c) store invariants
-        assert.equal(store.states.length, want.length + 1, `states length for ${ext}`);
-      }
-    });
-  }
-
-  test('multiline construct toggling ripples correctly (jl block comment)', () => {
-    const el = new FakeCode();
-    const store = {};
-    const seq = [
-      'a\nb\nc\nd\ne',
-      'a\nb\n#=\nc\nd\ne',     // open a block comment mid-document
-      'a\nb\n#=\nc\n=#\nd\ne', // close it
-      'a\nb\nc\nd\ne',         // remove it again
-    ];
-    for (const text of seq) {
-      paintHL(el, text, 'jl', store);
-      assert.equal(el.innerHTML, freshRender(text, 'jl').innerHTML);
-    }
-  });
-
-  test('markdown fence toggling ripples correctly', () => {
-    const el = new FakeCode();
-    const store = {};
-    const seq = ['a\n```\nb\nc', 'a\n```\nb\nc\n```', 'a\nb\nc\n```', 'a\nb\nc'];
-    for (const text of seq) {
-      paintHL(el, text, 'md', store);
-      assert.equal(el.innerHTML, freshRender(text, 'md').innerHTML);
-    }
-  });
 });
 
 describe('sql tokens', () => {
@@ -174,19 +105,6 @@ describe('tex math zones', () => {
     assert.match(html, /<span class="cm">% note \$y\$<\/span>/, 'comment swallows the rest');
   });
 
-  test('incremental repaint stays byte-identical while a math env opens and closes', () => {
-    const el = new FakeCode();
-    const store = {};
-    const seq = [
-      'a\n\\begin{align}\nx = 1\nb',
-      'a\n\\begin{align}\nx = 1\n\\end{align}\nb',
-      'a\nx = 1\nb',
-    ];
-    for (const text of seq) {
-      paintHL(el, text, 'tex', store);
-      assert.equal(el.innerHTML, freshRender(text, 'tex').innerHTML);
-    }
-  });
 });
 
 describe('tex wash edges', () => {
@@ -225,17 +143,5 @@ describe('tex verbatim + unclosed math containment', () => {
     assert.ok(!lines[1].includes('mzone') && !lines[1].includes('"mv"'), 'carry dropped at EOL');
   });
 
-  test('incremental repaint stays byte-identical while verbatim opens and closes', () => {
-    const el = new FakeCode();
-    const store = {};
-    const seq = [
-      'a\n\\begin{verbatim}\n$ x\nb',
-      'a\n\\begin{verbatim}\n$ x\n\\end{verbatim}\nb',
-      'a\n$ x\nb',
-    ];
-    for (const text of seq) {
-      paintHL(el, text, 'tex', store);
-      assert.equal(el.innerHTML, freshRender(text, 'tex').innerHTML);
-    }
-  });
+
 });

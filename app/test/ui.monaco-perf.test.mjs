@@ -177,34 +177,6 @@ test('A16 longtask ring: armed at READY, records a forced long task, disposed + 
 
 /* ═══ C — legacy control: nothing armed, nothing sampled, no boot ═══ */
 
-test('A16 under legacy: probe reports armed:false, zero observers/samples, boot never starts, legacy typing never samples', opts, async () => {
-  const { context, page } = await perfPage({ impl: 'legacy' });
-  try {
-    await page.waitForSelector('textarea#codeEditor[data-ext="tex"]', { timeout: 15000 });
-    await sleep(1200); // span the idle-warm window — must stay a no-op
-    const s = await page.evaluate(() => ({
-      state: window.__mp.state(),
-      perf: window.__mp.perf(),
-      c: window.__mp.counters(),
-    }));
-    assert.equal(s.state, 'IDLE', 'no boot under legacy');
-    assert.deepEqual(s.perf.armed, { input: false, longtask: false },
-      'zero instruments armed under legacy (the near-zero-idle-cost gate)');
-    assert.deepEqual(s.perf.input, { n: 0, p50: null, p95: null, max: null });
-    assert.deepEqual(s.perf.longTasks, []);
-    assert.deepEqual({ latN: s.c.latN, latP50: s.c.latP50, latP95: s.c.latP95 },
-      { latN: 0, latP50: null, latP95: null }, 'the census fold reads empty under legacy');
-
-    // genuine keystrokes into the legacy textarea: still zero samples
-    await page.click('textarea#codeEditor');
-    await page.keyboard.type('legacy keys');
-    await sleep(250);
-    assert.equal(await page.evaluate(() => window.__mp.perf().input.n), 0,
-      'legacy typing never reaches the sampler');
-  } finally {
-    await context.close();
-  }
-});
 
 /* ═══ D — the vendor bytes harness (§4 item 4): shapes, never budgets ═══ */
 

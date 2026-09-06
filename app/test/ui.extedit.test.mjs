@@ -7,7 +7,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startUI, sleep, CHROME, testBothImpls, edDriver, wsPushTo } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco, edDriver, wsPushTo } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const opts = { skip: hasChrome ? false : 'Google Chrome not installed' };
@@ -56,9 +56,8 @@ test('an external .md opens EDITABLE — not the old read-only view', opts, asyn
 test('⌘S writes the external file to disk through the pin grant', opts, async () => {
   await page.click('#codeEditor');
   await page.evaluate(() => {
-    const ed = document.querySelector('#codeEditor');
-    ed.setSelectionRange(ed.value.length, ed.value.length);
-    ed.focus();
+    window.__mp.focus(); const lines = window.__mp.getText().split('\n');
+    window.__mp.setPosition(lines.length, lines.at(-1).length + 1);
   });
   await page.keyboard.type('\nEDITED FROM THE DASHBOARD\n');
   await sleep(200);
@@ -95,9 +94,7 @@ test('▤ preview renders the external markdown and live-tracks the draft', opts
   // now type — the pane tracks the unsaved draft
   await page.click('#codeEditor');
   await page.evaluate(() => {
-    const ed = document.querySelector('#codeEditor');
-    ed.setSelectionRange(0, 0);
-    ed.focus();
+    window.__mp.focus(); window.__mp.setPosition(1, 1);
   });
   await page.keyboard.type('LIVE EXTERNAL DRAFT\n\n');
   await sleep(600);
@@ -120,7 +117,7 @@ test('▤ preview renders the external markdown and live-tracks the draft', opts
    Contract verbatim; only waits/reads move (edDriver). Declared last — the
    shared-page tests above are order-dependent; each pass reseeds the ext
    file on disk and restores the grant in its finally. */
-testBothImpls('P4 dual: external pin edits + ⌘S through the grant; file:changed reloads; 409-cancel and 403 destroy nothing', {
+testMonaco('P4 dual: external pin edits + ⌘S through the grant; file:changed reloads; 409-cancel and 403 destroy nothing', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const ed = edDriver(impl);

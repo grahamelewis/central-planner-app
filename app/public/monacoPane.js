@@ -1,95 +1,6 @@
-// monacoPane.js — Phase 3, slice S1: the Monaco editor shell behind the
-// editor:impl toggle. This file is the ONLY owner of the Monaco boot machine
-// (blueprint §14 A6, monaco-s05 §A6 edge table 1–13), the A15 device pin, the
-// kept editor host (A7: the live host is NEVER inside an innerHTML
-// replacement boundary — workbench renders refill sibling slots around it),
-// and — since S1.2 — the M1 model-creation machine (per-fkey registry, A19
-// P-EOL seeding, DIRTY_SENTINEL), the M2 mutation-transaction/origin guard,
-// and the M2-idle data plane (altId dirty bit → drafts map → editorChrome).
-// S1.3 adds the M3 save begin/commit token machine (A3) and the M5 409
-// recovery machine, plus their ⌘S / ⌘⏎ keybindings.
-// S1.4 wires the S0 latex brain (public/latex/) in: Monarch 'latex'/'bibtex'
-// registration at boot INIT (§5 step 4, per the A5 design consequence — no
-// eager basic-language preload), the cpDefineThemes theme bridge (§2 Theme
-// row: live CSS vars → literal-hex cp-dark/cp-light, define BEFORE the first
-// createEditor, re-run via store.themeHooks on every applyTheme flip), and
-// the mzone math wash as a MODEL-owned decorations pass over the shared
-// texZones scanner (§2 "mzone math wash", invariant I7 — decorations, never
-// theme token-background rules, which silently don't render).
-// The M6 task closes the disk-stale undo machine (A9): onIdleEdit's
-// suppressed-clean state under ⚠ gains its reconcile-fetch auto-reload leg
-// (staleReconcile below) — only verified fresh disk bytes ever flip the chip.
-// The full-M7 task completes the lifecycle machine (s05 §M7, A10/A4): the
-// LRU-50 clean-detached soft cap + orphan (view-close) tracking via
-// noteViewClose, the T7 synchronous Monaco→legacy flush (setImpl toggle /
-// A6 boot-fallback legs), the draftRev/modelSyncRev ownership bookkeeping
-// with its T8 boundary detection (see the WORDING DEVIATION note at the M7
-// section), and the A10/A16 soak counters (__mp.counters + 'lru-evict'
-// saveLog lines).
-// S2.2 (monaco-s2 §1) wires the S0 completion factory in:
-// registerCompletionItemProvider for 'latex' ONLY (bibtex keeps no provider —
-// the .bib exclusions for free) at boot INIT, disposed per boot generation
-// (risk N3), with the per-project /api/texmeta requestMeta plumbing, the
-// boot-generation discard for late responses, and the closeBrace
-// consume-range parity — see registerLatexProviders.
-// S2.3 (monaco-s2 §1) lands the reserved setProblems seam (P9): compile
-// problems → 'texlog' markers via the S0 markersForProblems factory (severity
-// error→Error / warning→Warning / badbox→Hint) PLUS the tint-parity
-// isWholeLine decoration pair .lnErr/.lnWarn (badboxes deliberately
-// untinted), fanned out per model with boundary clamping against each
-// model's LIVE line count (review concern 6) — see the S2.3 section below.
-// S2.4 (monaco-s2 §1) hosts texfix (P6): the pure S0 anchors engine
-// (latex/texfixAnchors.js) bound ACTIVE-MODEL-ONLY through an AnchorHost
-// adapter — findMatches literal/limit-2 (the ambiguity probe), .sugMark
-// inline decorations with NeverGrowsWhenTypingAtEdges, the ✦ .sugPane as an
-// IContentWidget under the match end — with the s.file ownership filter
-// (review concern 2), the sugRedraw protocol handle (I4: resolution patches
-// never renderWB), the engine-owned single stale grace (risk N2), and the
-// accepted|dismissed|stale wire through resolveSug (review concern 1) —
-// see the S2.4 section below.
-// The A16-seeds task (S2.6, monaco-s2 §4 — CONTRACT "Ladder & exit gates"
-// A16) lands the S2b measurement instruments: the keydown→next-rAF
-// input-latency ring and the READY-gated longtask ring behind the read-only
-// __mp.perf() probe, with p50/p95 folded into the soak census so the
-// 'lru-evict' saveLog lines carry them. Instruments only — S2b rules the
-// pass/fail budgets — and strictly monaco-gated: nothing arms under legacy.
-// The drafts map in store.js remains the single source of truth for unsaved
-// text; this module only keeps it true on every content event.
-//
-// ── EDITCONTEXT PIN (S1.2, decided 2026-08-11) ────────────────────────────
-// Monaco 0.56 defaults to the EditContext input surface on Chrome 151. The
-// I2-IME CDP case (imeSetComposition ×2 → background renderWB storm →
-// imeSetComposition → insertText; buffer === composed text, zero
-// compositionEnd across the render, hasTextFocus true) was run under BOTH
-// editContext:true and editContext:false in ui.monaco-core.test.mjs and is
-// green in both — the kept-connected host keeps a live composition alive on
-// either surface (matching the A7 spike's finding). The pinned surface is
-// editContext:FALSE (a real <textarea> input surface), because the blueprint
-// §2 "EditContext posture / day-one safety" row is ratified on it: every
-// tag-based guard in the app (voice Space-PTT's textarea/input predicate,
-// wireGlobal's Tab isText check) stays meaningful on a textarea surface,
-// while under EditContext the input surface is a DIV and those guards
-// silently pass dead air. The CDP case runs in BOTH surfaces every suite run
-// (regression floor) and re-asserts the pin on the create-option default;
-// revisiting the pin means re-running that pair, nothing else.
-// Tests may override per-context via window.__mpEditContext (pre-boot).
-//
-// Imports go one way in spirit — workbench.js imports our seams — but the
-// data plane deliberately reaches the store (drafts/fileCache/…), the two
-// chrome consumers (files.editorChrome, viewers.mdPreviewSchedule), the P5
-// fetch contract (files.fetchFileInto), the ▶ driver + the problems source
-// (texrun.runFile, texrun.texProblemsFor — S2.3) and the one-swap render
-// (workbench.renderWB). ALL are used strictly inside functions, never at
-// module-eval time, so the ESM cycles
-// monacoPane → files → workbench → monacoPane are benign.
-//
-// S1 residual — CLOSED at S2.1(a): files.saveFile now routes every
-// monaco-impl save of a MODELED fkey through the M3 token queue (its
-// requestSave gate — caller swap, no wire-protocol change), so savedAltId
-// is captured on every same-impl save path and the chip realigns
-// immediately. reconcileOnAttach's "save landed outside M3" branch remains,
-// no longer load-bearing for same-impl saves — it is the M7 T8
-// legacy-handoff detector (a legacy-side save before an impl handoff).
+// Monaco is the only editable source surface. Drafts remain authoritative
+// outside the editor; the kept host preserves focus, undo, and composition.
+// Boot failure shows a recoverable pane, never a second editing engine.
 
 /* eslint-disable no-console */
 
@@ -119,51 +30,9 @@ import { toast, esc, enc, isExtRel, confirmBox } from './util.js';
 // once rather than sprinkling ambient declarations.
 const w = /** @type {any} */ (window);
 
-const LS_KEY = 'editor:impl'; // 'legacy' (default) | 'monaco' — per-browser, like 'theme'
 const VS_BASE = '/vendor/monaco/vs';
-
-/* ─────────────────────────── A15: device pin ───────────────────────────
-   Monaco never ships to coarse-pointer devices. The ratified predicate is
-   the exact boolean `(pointer:coarse) and (not (any-pointer:fine))` with a
-   maxTouchPoints fallback; hybrid devices (any fine pointer) get Monaco.
-   Automatic, per-device — not a preference. */
-
-/** @returns {boolean} true → this device is pinned to the legacy editor */
-export function pinnedCoarse() {
-  try {
-    const mq = window.matchMedia('(pointer:coarse) and (not (any-pointer:fine))');
-    // an unparseable query serializes to exactly 'not all' — only then fall back
-    if (mq.media !== 'not all') return mq.matches;
-  } catch { /* matchMedia unavailable — fall through */ }
-  // maxTouchPoints fallback (§14 A15): touch hardware with no detectable fine pointer
-  let anyFine = false;
-  try { anyFine = window.matchMedia('(any-pointer:fine)').matches; } catch { /* unknown */ }
-  return (navigator.maxTouchPoints || 0) > 0 && !anyFine;
-}
-
-/* ─────────────────────────── toggle ─────────────────────────── */
-
-let forcedLegacy = false; // A6 FALLBACK_LEGACY memory — session-only, NEVER persisted
-
-/** @returns {string} the raw stored preference ('legacy' when unset/unknown) */
-export function storedImpl() {
-  let v = null;
-  try { v = localStorage.getItem(LS_KEY); } catch { /* private mode */ }
-  return v === 'monaco' ? 'monaco' : 'legacy';
-}
-
-/**
- * The editor implementation this render should use.
- * Coarse pin and the session fallback both override a stored 'monaco'; the
- * stored preference itself is never written here (A6: a broken Monaco boot
- * must not persist the toggle off).
- * @returns {'legacy' | 'monaco'}
- */
-export function effectiveImpl() {
-  if (pinnedCoarse()) return 'legacy';
-  if (forcedLegacy) return 'legacy';
-  return storedImpl() === 'monaco' ? 'monaco' : 'legacy';
-}
+// Retired browser preferences cannot select a removed implementation.
+try { localStorage.removeItem('editor:impl'); } catch { /* private mode */ }
 
 /* ─────────────────────────── boot state machine (A6) ───────────────────────────
    ensureMonaco() creates bootPromise SYNCHRONOUSLY on first call (single-flight:
@@ -175,7 +44,7 @@ export function effectiveImpl() {
 
 let bootPromise = null;      // created synchronously, single-flight
 let resolveBoot = null;
-let bootState = 'IDLE';      // IDLE→LOADER→CORE→INIT→CSS_VERIFY→READY | FAILED→FALLBACK_LEGACY
+let bootState = 'IDLE'; // IDLE → LOADER → CORE → INIT → CSS_VERIFY → READY | FAILED
 let bootStarts = 0;          // how many boot sequences ever began (single-flight proof)
 let bootGen = 0;             // bumped by rebootMonaco() — the "try Monaco again" affordance
 let bootT0 = 0;
@@ -194,7 +63,7 @@ const langDegradedSet = new Set();
 let editor = null;           // the singleton kept editor instance
 let host = null;             // #codeEditor.mpHost — the kept node Monaco owns (A7)
 let park = null;             // #mpPark — offscreen holding container on <body>
-let fallbackCb = null;       // workbench registers: re-render legacy after fallback
+let bootFailure = null; // safe stage label for the recoverable error pane
 let lastAttach = null;       // { root, key } of the most recent dock attach
 
 /* ─────────────── model machine state (M1/M2/M7, S1.2) ───────────────
@@ -238,9 +107,8 @@ const dirtyCbs = [];              // onDirtyChange(cb) — P1's push-style seam
    while a model existed (T4) — observability only: LRU eligibility is
    COMPUTED (clean ∧ detached ∧ no machine mid-flight), never stored, so
    T5's "a commitSave 200 lands on an orphan → clean → LRU-eligible" needs
-   no transition code at all. draftRev/modelSyncRev/legacyOwned are the
-   T7/T8 ownership bookkeeping — see the WORDING DEVIATION note at the M7
-   section below. All maps are in-memory only (P22 parity). */
+   no transition code at all. draftRev/modelSyncRev track newer
+   shared drafts that must be reconciled into retained models. All maps are in-memory only (P22 parity). */
 const LRU_CAP = 50;             // A10: the clean-detached soft cap
 let lruTick = 0;                // monotonic recency clock
 const lruSeq = new Map();       // fkey → tick at last create/attach (T1/T2 recency)
@@ -248,7 +116,6 @@ const orphans = new Set();      // fkeys view-closed with a live model (T4)
 let lruEvictions = 0;           // soak counter (A10/A16)
 const draftRev = new Map();     // fkey → monotonic revision of drafts[fkey] (A4)
 const modelSyncRev = new Map(); // fkey → the draftRev the model last materialized/synced at
-const legacyOwned = new Set();  // fkeys T7-flushed to legacy ownership; cleared at T8 re-entry
 
 const projOf = (fkey) => fkey.slice(0, Math.max(0, fkey.indexOf('::')));
 const relOfFkey = (fkey) => {
@@ -695,10 +562,6 @@ function tintsRearm(fkey) {
    pass of THIS render ran before attachDock, on a host node the previous
    observer no longer watched). */
 function observeProblems(root, key) {
-  if (effectiveImpl() !== 'monaco') {
-    if (stripObserver) { stripObserver.disconnect(); stripObserver = null; stripObserved = null; }
-    return;
-  }
   const strip = root.querySelector('#texProblems');
   if (strip !== stripObserved) {
     if (stripObserver) { stripObserver.disconnect(); stripObserver = null; stripObserved = null; }
@@ -901,7 +764,7 @@ function texfixCreate(project, fkey) {
 function texfixArm(project) {
   if (!project) return;
   const fkey = activeFkey;
-  const live = effectiveImpl() === 'monaco' && bootState === 'READY' && !!editor
+  const live = bootState === 'READY' && !!editor
     && !!fkey && projOf(fkey) === project && models.has(fkey);
   if (!live) {
     if (tfx && tfx.project === project) texfixRelease();
@@ -1427,7 +1290,7 @@ function fail(stage, detail) {
   }
   clearTimeout(deadlineTimer);
   deadlineTimer = null;
-  fallbackLegacy(stage, detail);
+  showBootFailure(stage, detail);
 }
 
 /* cleanup: dispose the partial editor, remove injected nodes, clear timers.
@@ -1450,32 +1313,40 @@ function cleanupPartialBoot() {
   }
 }
 
-/* edge 13: atomic fallback — legacy re-render via the registered callback,
-   drafts preserved, the stored editor:impl preference NEVER written (session
-   memory only), stage + URL logged (local soak log seed, A16). */
-function fallbackLegacy(stage, detail) {
-  toState('FALLBACK_LEGACY', Object.assign({ stage }, detail || {}));
-  forcedLegacy = true;
-  // M7 T7 (A6 leg): the synchronous flush precedes the legacy re-render —
-  // every dirty model's text is re-asserted into drafts before fallbackCb
-  // reads them (I1). In practice a belt: models only exist post-READY and
-  // P1 kept drafts true continuously, but T7's flush-then-switch ordering
-  // costs nothing to honor verbatim.
-  flushToLegacy('fallback');
-  console.warn('[monaco] boot failed — falling back to the legacy editor (preference unchanged).',
-    'stage:', stage, 'detail:', detail);
+// Failure is terminal for this generation, but never destroys drafts.
+function showBootFailure(stage, detail) {
+  bootFailure = stage;
+  console.warn('[monaco] editor unavailable', { stage });
   hideAllDocks();
   const settle = resolveBoot;
   resolveBoot = null;
-  if (settle) settle({ ok: false, stage, detail }); // resolved, never rejected
-  if (fallbackCb) {
-    try { fallbackCb(lastAttach ? lastAttach.key : null); } catch (e) { console.warn('[monaco] fallback render failed', e); }
-  }
+  if (settle) settle({ ok: false, stage, detail });
+  if (lastAttach?.root.isConnected) renderBootFailure(lastAttach.root);
+}
+
+function renderBootFailure(root) {
+  const slot = root.querySelector('#monacoSlot');
+  if (!slot || !bootFailure) return;
+  const fkey = slot.dataset.fkey;
+  if (slot.querySelector('.mpFailure')) return;
+  slot.innerHTML = '<section class="mpFailure" role="alert"><h3>Editor could not load</h3><p>Your unsaved text is still held in this tab. Retry without reloading the page, or copy the text before closing it.</p><div><button class="gbtn mpRetry">Retry editor</button> <button class="gbtn mpCopy">Copy text</button></div><pre tabindex="0" aria-label="Read-only file text"></pre><p class="mpCopyStatus" role="status"></p></section>';
+  const content = () => drafts[fkey] ?? fileCache[fkey]?.text ?? '';
+  slot.querySelector('pre').textContent = content();
+  slot.querySelector('.mpCopy').addEventListener('click', async () => {
+    const status = slot.querySelector('.mpCopyStatus');
+    try { await navigator.clipboard.writeText(content()); status.textContent = 'Text copied.'; }
+    catch { status.textContent = 'Clipboard unavailable. Select and copy the read-only text above.'; }
+  });
+  slot.querySelector('.mpRetry').addEventListener('click', () => {
+    const key = lastAttach?.key;
+    rebootMonaco();
+    if (key) renderWB(key);
+  });
 }
 
 /**
  * Re-arm a fresh boot generation — the explicit "try Monaco again" affordance
- * (edge 13). Clears the session fallback pin; the next ensureMonaco() runs a
+ * Clears the recoverable failure state; the next ensureMonaco() runs a
  * brand-new machine.
  * @returns {void}
  */
@@ -1501,7 +1372,7 @@ export function rebootMonaco() {
   latCount = 0;      // the A16 rings are per-generation: the old numbers
   ltRing.length = 0; // measured a disposed editor/monaco instance (§4)
   retried = false;
-  forcedLegacy = false;
+  bootFailure = null;
   workerDegraded = false;
   langDegradedSet.clear();
   lastWindowError = '';
@@ -1584,7 +1455,7 @@ function armGlobalListeners() {
    dirty/chrome/preview signal per transaction, emitted after commit. */
 
 const TXN_REASONS = new Set([
-  'seedCreate', 'cleanReload', 'mergeRebase', 'recoveryReload', 'legacyHandoff', 'eolSetup',
+  'seedCreate', 'cleanReload', 'mergeRebase', 'recoveryReload', 'draftReconcile', 'eolSetup',
 ]);
 
 function beginTxn(fkey, reason) {
@@ -1838,31 +1709,15 @@ function createFor(fkey, text, mtimeMs, ext) {
   return m;
 }
 
-/* ═══════ M7-T2 reattach reconciliation + A4/T8 drafts-newer-wins reseed ═══════
-   Runs on every attach of an EXISTING model (same-fkey renders included; the
-   steady-state pass is a read-only no-op — decided RAW-to-RAW against
-   baselineRaw, because serialize(m) can never equal a non-pure disk text
-   after A19 normalization). The drafts map is authoritative
-   across the implementation boundary — a retained stale model can never hide
-   or overwrite a legacy draft (M7 T8, completed by the full-M7 task: a
-   text-divergent drafts[k] is the newer revision — the draftRev bump the
-   legacy writer could not perform is recorded here at the boundary; see the
-   WORDING DEVIATION note at the M7 section). The T8 CLEAN case ("drafts[k]
-   ==null — saved or REVERTED while in legacy → cleanReload → ActiveClean")
-   is forced past the raw-to-raw short-circuit via the legacyOwned entry bit
-   below — a draft the legacy round-trip discarded may never survive in the
-   retained buffer. */
+// Reconcile retained models against authoritative drafts and disk bytes.
 function reconcileOnAttach(fkey, m, text, mtimeMs) {
   if (inComposition && fkey === activeFkey) return; // A7 belt: never a destructive
   //                                                   write under a live composition
   const draft = drafts[fkey];
   const trustworthy = typeof text === 'string' && Number.isFinite(mtimeMs);
   const sentinel = savedAltId.get(fkey) === DIRTY_SENTINEL;
-  const wasLegacyOwned = legacyOwned.has(fkey); // read BEFORE the hand-back —
-  //   the T8 clean-case force below keys off ownership AT ENTRY (M7 T8)
   try {
     if (draft != null) {
-      legacyOwned.delete(fkey); // T8 re-entry — Monaco is the single active writer again
       const mtext = serialize(m); // one serialization per pass (a storm-path hot spot)
       // an observed divergence IS a newer external (legacy) materialization:
       // account for the revision at the moment of observation (M7 T8 / A4)
@@ -1871,7 +1726,7 @@ function reconcileOnAttach(fkey, m, text, mtimeMs) {
         // newer drafts[k] ALWAYS wins (A4) — and a sentinel model whose
         // fileCache later resolved re-seeds onto the real baseline (M1 T7):
         // disk text beneath (undo cleared), draft back as ONE dirty edit.
-        runTxn(fkey, 'legacyHandoff', () => {
+        runTxn(fkey, 'draftReconcile', () => {
           txnSetValue(fkey, m, text);
           const prof = eolProfile(text);
           eolProfiles.set(fkey, prof);
@@ -1891,7 +1746,7 @@ function reconcileOnAttach(fkey, m, text, mtimeMs) {
         // falsely-clean chip; beginSave's finite-baseline refusal guards the
         // PUT). Without this leg a retained stale model would HIDE the
         // legacy draft — the exact lie T8's Holds forbids.
-        runTxn(fkey, 'legacyHandoff', () => {
+        runTxn(fkey, 'draftReconcile', () => {
           txnSetValue(fkey, m, draft);
           savedAltId.set(fkey, DIRTY_SENTINEL);
           baselineRaw.delete(fkey);
@@ -1902,27 +1757,8 @@ function reconcileOnAttach(fkey, m, text, mtimeMs) {
       return;
     }
     const alt = m.getAlternativeVersionId();
-    if (!trustworthy) return; // nothing solid to reconcile against — legacyOwned
-    //   is deliberately STICKY on this exit: a legacy-owned model that comes
-    //   back divergent-and-draftless (the T8 clean case below) must still be
-    //   forced through its reconcile on the first pass that CAN perform it
-    legacyOwned.delete(fkey); // T8 re-entry — Monaco is the single active writer again
-    // ── M7 T8 clean case, "draft saved or REVERTED while in legacy" →
-    //    cleanReload → ActiveClean. The revert leg: legacy's input handler
-    //    deletes drafts[k]+draftBase[k] when the textarea round-trips back to
-    //    fileCache.text with disk UNCHANGED — so text === baselineRaw and the
-    //    raw-to-raw short-circuit below would RETAIN the model's discarded
-    //    draft text: the resurrection T8's Hold forbids (the drafts-driven
-    //    chip reads 'saved' over a divergent buffer; the next keystroke would
-    //    re-materialize the discarded text as drafts[k]). A model re-enters
-    //    divergent-and-draftless from legacy ownership ONLY through that leg,
-    //    so the entry-time bit forces the reconcile past the short-circuit.
-    //    recovering is excluded: M5's T4 destruction made the fkey draftless
-    //    on purpose (flushToLegacy skipped it) and the in-flight recoveryReload
-    //    owns its story — the mid-recovery no-op window stands (M5 invariant). ──
-    const forceT8Clean = wasLegacyOwned && !recovering.has(fkey)
-      && alt !== savedAltId.get(fkey);
-    if (!sentinel && !forceT8Clean && text === baselineRaw.get(fkey)) return;
+    if (!trustworthy) return;
+    if (!sentinel && text === baselineRaw.get(fkey)) return;
     // ^ raw-to-raw short-circuit BEFORE any serialize comparison: the incoming
     //   text IS the disk record savedAltId was captured from, so there is
     //   nothing to reconcile. serialize-vs-raw can never match for a non-pure
@@ -2082,12 +1918,12 @@ function syncEolChip(fkey) {
 /**
  * Frozen seam (A4): apply an external change to fkey's model — background
  * and orphan models included, never waiting for a renderWB. Reasons are the
- * CLOSED set {cleanReload, mergeRebase, recoveryReload, legacyHandoff}; an
+ * CLOSED set {cleanReload, mergeRebase, recoveryReload, draftReconcile}; an
  * unknown reason throws (fossil/exhaustiveness guard). Payloads:
  *   cleanReload / recoveryReload — string newText (+ opts.mtimeMs)
  *   mergeRebase — { theirs, merged } (A1 history rebase: THEIRS becomes a
  *     real model state with undo cleared; one MERGED edit only if it differs)
- *   legacyHandoff — string disk baseline; drafts[fkey] (if any) wins on top
+ *   draftReconcile — string disk baseline; drafts[fkey] (if any) wins on top
  * Bookkeeping of fileCache/drafts/draftBase/diskStale stays with the calling
  * machine (M4/M5, their S1 tasks) — this runs the model-side txn.
  * @param {string} fkey
@@ -2097,7 +1933,7 @@ function syncEolChip(fkey) {
  *   found the bytes already reconciled — the M4 T3 idempotence no-op below)
  */
 export function applyExternal(fkey, payload, reason) {
-  if (!['cleanReload', 'mergeRebase', 'recoveryReload', 'legacyHandoff'].includes(reason)) {
+  if (!['cleanReload', 'mergeRebase', 'recoveryReload', 'draftReconcile'].includes(reason)) {
     throw new Error(`monacoPane: unknown applyExternal reason '${reason}'`);
   }
   const m = models.get(fkey);
@@ -2128,7 +1964,7 @@ export function applyExternal(fkey, payload, reason) {
       editor.setPosition(pos); // validated — never throws on a shrunk document
       editor.setScrollTop(scrollTop);
     }
-  } else if (reason === 'legacyHandoff') {
+  } else if (reason === 'draftReconcile') {
     reconcileOnAttach(fkey, m, String(payload), fileCache[fkey]?.mtimeMs ?? Date.now());
   } else {
     const text = String(payload);
@@ -2651,30 +2487,8 @@ export function saveViewStateFor(fkey) {
   if (m && editor.getModel() === m) viewStates.set(fkey, editor.saveViewState());
 }
 
-/* ═══════════ M7 — orphan lifecycle, LRU-50 soft cap, T7/T8 ownership (A10/A4) ═══════════
-
-   M7 T7/T8 WORDING DEVIATION (RATIFIED by Graham 2026-08-14, recorded in the
-   s1 doc §2 row 7 — same shape as the M6 T1 "retained-but-refreshed"
-   amendment): s05 T7 ends "…the legacy textarea
-   becomes the single active writer, editing drafts directly and bumping
-   draftRev on each materialization". That clause would require editing the
-   legacy editor path, which this slice keeps functionally byte-identical
-   (the S1 hard rule). The spec's INTENT — exactly one active writer per
-   fkey; on Monaco entry a newer drafts[k] ALWAYS wins (A4 verbatim) — is
-   delivered with monacoPane-side bookkeeping instead:
-     · draftRev[k] counts the materializations THIS module performs (M2-idle
-       edits, commit-rebases, T7 flushes) plus every external one it OBSERVES;
-     · modelSyncRev[k] records the revision the model last materialized or
-       synced at (equal ⇒ model text === drafts[k] by construction);
-     · a legacy write is detected TEXTUALLY at the T8 boundary —
-       reconcileOnAttach treats any drafts[k] that differs from the model's
-       serialized text as a newer revision, bumps draftRev at the moment of
-       observation (the bump the legacy writer could not perform), and
-       reseeds through the M1-T3-shaped dirty-seed txn.
-   Equivalent because the model's text always equals the drafts[k] state it
-   last synced with: text-divergence ⇔ an external materialization happened.
-   The T8 outcome table and both Holds are unchanged; only the counter's
-   bookkeeper moved across the boundary. */
+// Model lifecycle: clean detached models may be evicted; dirty text and
+// draft/model revisions remain independent of the live editor instance.
 
 /** @param {string} fkey @returns {number} the new (monotonic per-fkey) draft revision */
 function bumpDraftRev(fkey) {
@@ -2743,48 +2557,6 @@ export function noteViewClose(fkey) {
   if (!models.has(fkey)) return;
   orphans.add(fkey); // observability only — never consulted by lruEligible
   lruSweep();
-}
-
-/* M7 T7 — the Monaco→legacy synchronous flush. Per dirty fkey: drafts[k] :=
-   serialize(model), RE-ASSERTED even though the P1 data plane keeps it true
-   continuously (T7 verbatim); draftRev[k]++; every model marked legacyOwned
-   ("stale" in the s05 wording) until its T8 re-entry clears it. Synchronous
-   end-to-end — the caller flips the writer in the same task, so no
-   keystroke can land between flush and writer switch. Recovering fkeys are
-   skipped: M5's T4 destruction (clipboard-verified) deliberately killed
-   their drafts and the in-flight reload must land on a draftless fkey —
-   re-materializing here would resurrect what M5 just destroyed. No chrome
-   signal: the legacy re-render that always follows rebuilds the chip. */
-function flushToLegacy(why) {
-  texfixRelease(); // S2.4/T7: the flush re-arms nothing — legacy takes over its own sugLayer
-  for (const [fkey, m] of models) {
-    legacyOwned.add(fkey); // T7 "mark all models stale" — clean ones included
-    if (recovering.has(fkey)) continue; // M5 owns this fkey's story mid-recovery
-    const dirty = drafts[fkey] != null || m.getAlternativeVersionId() !== savedAltId.get(fkey);
-    if (!dirty) continue;
-    if (drafts[fkey] == null) draftBase[fkey] = fileCache[fkey]?.mtimeMs; // first-divergence shape (P1)
-    drafts[fkey] = serialize(m);
-    modelSyncRev.set(fkey, bumpDraftRev(fkey)); // flushed FROM the model — in sync
-    logSave(fkey, 'legacy-flush', { why });
-  }
-}
-
-/**
- * Frozen seam (M7 T7): the sanctioned editor:impl writer. Flipping to
- * 'legacy' runs the synchronous flush BEFORE the preference changes hands,
- * so the legacy renderers that follow read just-re-asserted drafts and no
- * keystroke can interleave (single-threaded, zero task boundaries). A direct
- * localStorage flip (devtools, older tests) stays safe too — the P1 data
- * plane keeps drafts true continuously — but only this seam carries the T7
- * draftRev/legacyOwned bookkeeping. Flipping to 'monaco' just writes the
- * preference: T8 runs per-fkey on the next attach (reconcileOnAttach).
- * @param {'legacy' | 'monaco'} next
- * @returns {void}
- */
-export function setImpl(next) {
-  const v = next === 'monaco' ? 'monaco' : 'legacy';
-  if (v === 'legacy' && effectiveImpl() === 'monaco') flushToLegacy('toggle');
-  try { localStorage.setItem(LS_KEY, v); } catch { /* private mode — session-only flip */ }
 }
 
 /**
@@ -2899,7 +2671,6 @@ function reallyDispose(fkey, m) {
   orphans.delete(fkey);
   draftRev.delete(fkey);
   modelSyncRev.delete(fkey);
-  legacyOwned.delete(fkey);
   // the disposal matrix's marker step (M7 T3): clear this model's 'texlog'
   // markers BEFORE dispose — S2.3 SETS them (setProblems/applyProblems), so
   // this clearing is now load-bearing: a stale marker row keyed to a dead
@@ -3051,7 +2822,7 @@ export function syncDock(root) {
   const dock = root.querySelector(':scope > .wb > .mdock');
   if (!dock) return;
   const slot = root.querySelector('#monacoSlot');
-  const active = effectiveImpl() === 'monaco' && bootState === 'READY' && !!slot && !!host;
+  const active = bootState === 'READY' && !!slot && !!host;
   if (!active) {
     dock.classList.remove('on');
     dock.removeAttribute('style');
@@ -3078,10 +2849,10 @@ export function syncDock(root) {
  */
 export function attachDock(root, key) {
   lastAttach = { root, key };
-  if (effectiveImpl() === 'monaco' && root.querySelector('#monacoSlot')) {
+  if (root.querySelector('#monacoSlot')) {
     const p = ensureMonaco(); // single-flight — the idle warm may already own it
     p.then((r) => {
-      if (!r.ok) return; // fallbackLegacy already re-rendered via the callback
+      if (!r.ok) { renderBootFailure(root); return; }
       const a = lastAttach;
       if (a && a.root.isConnected) syncDock(a.root);
     });
@@ -3091,27 +2862,11 @@ export function attachDock(root, key) {
   texfixArm(key); // S2.4: engine sync + the sugRedraw handle for this render (P6)
 }
 
-/**
- * Register the legacy re-render used by FALLBACK_LEGACY (workbench passes
- * renderWB — monacoPane cannot import it without a cycle).
- * @param {(key: string | null) => void} cb
- * @returns {void}
- */
-export function onFallback(cb) { fallbackCb = cb; }
-
 window.addEventListener('resize', () => {
   if (lastAttach && lastAttach.root.isConnected) syncDock(lastAttach.root);
 });
 
-/* ─────────────────────────── idle warm (A5) ───────────────────────────
-   Opt-in only: with the toggle on 'monaco' (and the device not pinned), warm
-   the boot when the browser is idle so the first editable open lands on a
-   READY editor. Legacy default → this is a no-op. */
-{
-  const warm = () => { if (effectiveImpl() === 'monaco') ensureMonaco(); };
-  if (typeof w.requestIdleCallback === 'function') w.requestIdleCallback(warm, { timeout: 5000 });
-  else setTimeout(warm, 1500);
-}
+// Boot lazily on editable-file open. Settings/dashboard visits load no Monaco assets.
 
 /* ─────────────────── A16 perf seeds (S2.6, monaco-s2 §4) ───────────────────
    Instrumentation only — the pass/fail budgets are ruled at S2b (CONTRACT
@@ -3206,10 +2961,6 @@ w.__mp = {
   log: () => bootLog.slice(),
   bootCount: () => bootStarts,
   generation: () => bootGen,
-  impl: effectiveImpl,
-  stored: storedImpl,
-  pinnedCoarse,
-  forcedLegacy: () => forcedLegacy,
   degraded: () => ({ worker: workerDegraded, langs: [...langDegradedSet] }),
   // post-boot lazy-language trigger (the lang-block injection case)
   setLanguage: (id) => {
@@ -3430,7 +3181,6 @@ w.__mp = {
     rev: staleFlights.has(fkey) ? staleFlights.get(fkey).rev : null,
   }),
   // ── M7 lifecycle surface ──
-  setImpl,          // the sanctioned toggle writer (T7 flush on →legacy)
   noteViewClose,    // the T4 view-close seam (same entry files.closeTab calls)
   counters: soakCounters, // A10/A16 soak census (models/dirty/cleanDetached/orphans/evictions/heapMB + lat fold)
   // ── A16 perf probe (S2.6, §4 — read-only; the budgets are S2b's ruling) ──
@@ -3444,7 +3194,6 @@ w.__mp = {
   }),
   draftRev: (fkey) => draftRev.get(fkey) || 0,
   modelSyncRev: (fkey) => modelSyncRev.get(fkey) || 0,
-  legacyOwnedHas: (fkey) => legacyOwned.has(fkey),
   lruInfo: (fkey) => {
     const m = models.get(fkey);
     return {
@@ -3476,7 +3225,6 @@ w.__mp = {
     staleFlight: staleFlights.has(fkey),
     draftRev: draftRev.has(fkey),
     syncRev: modelSyncRev.has(fkey),
-    legacyOwned: legacyOwned.has(fkey),
   }),
   signals: () => ({ chrome: chromeSignals, preview: previewSignals, txnSync: txnSyncVerified }),
   resetSignals: () => { chromeSignals = 0; previewSignals = 0; },

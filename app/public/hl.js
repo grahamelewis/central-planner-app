@@ -126,7 +126,7 @@ const TEX_SYM = new Set(('alpha beta gamma delta epsilon varepsilon zeta eta the
   + 'to gets mapsto implies iff Rightarrow Leftarrow Leftrightarrow '
   + 'rightarrow leftarrow leftrightarrow longrightarrow uparrow downarrow').split(' '));
 
-// carry states — stable references (paintHL compares them with ===)
+// Stable tokenizer carry states.
 const TEX_M = {
   inline: { math: true, close: '$' },
   display: { math: true, close: '$$' },
@@ -312,13 +312,6 @@ function lineTok(L, line, st) {
   return [out + esc(line.slice(last)), null];
 }
 
-function mkLn(html) {
-  const s = document.createElement('span');
-  s.className = 'ln';
-  s.innerHTML = html + '\n';
-  return s;
-}
-
 /** One-shot highlight of a whole text → html string (read-only views). */
 export function hlText(text, ext) {
   const lk = EXT_LANG[ext];
@@ -331,77 +324,4 @@ export function hlText(text, ext) {
     st = ns;
   }
   return out;
-}
-
-/**
- * Paint/refresh the editor overlay. `codeEl` is the <code> inside the overlay
- * pre — one .ln span per line. `store` is a caller-kept cache object per file
- * ({lang, text, lines, states}); it survives re-renders, so a fresh empty
- * codeEl repaints fully while keystrokes hit the incremental path.
- */
-export function paintHL(codeEl, text, ext, store) {
-  const lk = EXT_LANG[ext];
-  if (!lk) return false;
-  const L = LANGS[lk];
-  text = String(text);
-  if (store.lang === lk && store.text === text && codeEl.childElementCount === (store.lines?.length || 0)) {
-    return true; // up to date
-  }
-
-  // full render: first paint, language change, or DOM out of sync with cache
-  if (store.lang !== lk || !store.lines || codeEl.childElementCount !== store.lines.length) {
-    const nl = text.split('\n');
-    let st = null, html = '';
-    const states = [null];
-    for (let i = 0; i < nl.length; i++) {
-      const [h, ns] = lineTok(L, nl[i], st);
-      html += '<span class="ln">' + h + '\n</span>';
-      st = ns;
-      states.push(st);
-    }
-    codeEl.innerHTML = html;
-    store.lang = lk; store.text = text; store.lines = nl; store.states = states;
-    return true;
-  }
-
-  // incremental: replace only the changed line range, then ripple the carry
-  // state forward until it matches the cached entry state again
-  const nl = text.split('\n');
-  const old = store.lines, states = store.states;
-  let pre = 0;
-  const max = Math.min(nl.length, old.length);
-  while (pre < max && nl[pre] === old[pre]) pre++;
-  let suf = 0;
-  while (suf < max - pre && nl[nl.length - 1 - suf] === old[old.length - 1 - suf]) suf++;
-  const oldEnd = old.length - suf, newEnd = nl.length - suf;
-
-  let st = states[pre];
-  const frag = document.createDocumentFragment();
-  const midStates = [];
-  for (let i = pre; i < newEnd; i++) {
-    const [h, ns] = lineTok(L, nl[i], st);
-    frag.appendChild(mkLn(h));
-    st = ns;
-    midStates.push(st);
-  }
-  const kids = codeEl.children; // live collection
-  for (let i = oldEnd - 1; i >= pre; i--) codeEl.removeChild(kids[i]);
-  codeEl.insertBefore(frag, codeEl.children[pre] || null);
-
-  const newStates = states.slice(0, pre + 1).concat(midStates, states.slice(oldEnd + 1));
-  // ripple: re-tokenize suffix lines while their entry state actually changed
-  // (compare against the OLD cached entry — states[oldEnd + offset]); carry
-  // states are stable object references, so identity comparison is exact
-  let j = newEnd;
-  while (j < nl.length && st !== states[oldEnd + (j - newEnd)]) {
-    newStates[j] = st;
-    const [h, ns] = lineTok(L, nl[j], st);
-    codeEl.children[j].innerHTML = h + '\n';
-    st = ns;
-    j++;
-  }
-  if (j === nl.length) newStates[nl.length] = st;
-
-  store.text = text; store.lines = nl; store.states = newStates;
-  return true;
 }

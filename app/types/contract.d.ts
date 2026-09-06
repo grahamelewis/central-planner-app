@@ -598,14 +598,6 @@ interface FileCacheEntry {
   [k: string]: any;
 }
 
-/** edViews entry — the editor's place, kept across tab round-trips. */
-interface EdView {
-  scrollTop?: number;
-  scrollLeft?: number;
-  selStart?: number;
-  selEnd?: number;
-}
-
 interface TranscriptEntry {
   role?: string;
   text?: string;

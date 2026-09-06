@@ -324,6 +324,13 @@ Sources checked 2026-09-04:
 
 ## Notes
 
+- **Editor**: Monaco is the only source editor; there is no Settings choice.
+  Old Legacy preferences are ignored. The editor loads on first editable-file
+  open, not on dashboard/Settings visits. If loading fails, use the pane's
+  **Retry editor** button; unsaved drafts remain in the browser tab. **Copy text**
+  and a selectable read-only view remain available. Do not reload/close the page
+  before saving or copying unsaved work. The separate `/m` phone app is unchanged.
+
 - **Light mode**: profile menu (your name, top left) → Settings → theme System / Dark /
   Light. System follows the macOS appearance; the choice is saved per-browser.
 - **Updates**: once a day the dashboard checks whether your checkout is behind the

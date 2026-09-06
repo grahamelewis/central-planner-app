@@ -429,30 +429,3 @@ test('reboot: a stale generation\'s command never fires again — the newest re-
 });
 
 /* ═══ H — legacy control: zero command machinery; legacy auto-\end untouched ═══ */
-
-test('legacy control: the textarea keeps its own auto-\\end and ⌘/; no monaco command ever fires', opts, async () => {
-  const { context, page } = await cmdPage('legacy');
-  try {
-    await page.waitForSelector('#v-alpha textarea#codeEditor[data-ext="tex"]', { timeout: 15000 });
-    await page.click('#v-alpha textarea#codeEditor');
-    await page.evaluate(() => {
-      const ed = document.querySelector('#v-alpha textarea#codeEditor');
-      const pos = ed.value.indexOf('\\begin{itemize}') + '\\begin{itemize}'.length;
-      ed.setSelectionRange(pos, pos);
-    });
-    await page.keyboard.press('Enter');
-    const val = await page.evaluate(() => document.querySelector('#v-alpha textarea#codeEditor').value);
-    assert.ok(val.includes('\\end{itemize}'), 'the LEGACY auto-\\end still runs (texEditorAttach, byte-identical path)');
-    const st = await page.evaluate(() => ({
-      boot: window.__mp.state(),
-      fires: window.__mp.commandInfo().fires.length,
-      monacoDom: !!document.querySelector('.monaco-editor'),
-    }));
-    assert.equal(st.boot, 'IDLE', 'no boot under legacy');
-    assert.equal(st.fires, 0, 'no S2.5 command ever fired');
-    assert.equal(st.monacoDom, false, 'no monaco DOM');
-    assert.equal(sb.vendor.hits.length, 0, 'zero /vendor/monaco fetches');
-  } finally {
-    await context.close();
-  }
-});

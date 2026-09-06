@@ -8,7 +8,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startUI, sleep, CHROME, testBothImpls, edDriver, wsPushTo } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco, edDriver, wsPushTo } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const opts = { skip: hasChrome ? false : 'Google Chrome not installed' };
@@ -38,85 +38,6 @@ before(async () => {
 });
 after(async () => { if (ui) await ui.stop(); });
 
-test('a clean editor reloads Claude\'s edit in place — scroll kept', opts, async () => {
-  // reader is parked mid-file
-  const scroll0 = await page.evaluate(() => {
-    const ed = document.querySelector('#codeEditor');
-    ed.scrollTop = 300;
-    return ed.scrollTop;
-  });
-  assert.ok(scroll0 > 0, 'editor overflows enough to scroll');
-  // Claude's Edit lands on disk, then the mid-turn broadcast arrives
-  fs.writeFileSync(texPath, TEX_V2);
-  await wsPush('file:changed', { project: 'alpha', rel: 'paper.tex' });
-  await sleep(600); // renderWB + ensureFile refetch
-  const s = await page.evaluate(() => {
-    const ed = document.querySelector('#codeEditor');
-    return { val: ed.value, scroll: ed.scrollTop };
-  });
-  assert.ok(s.val.includes('Claude rewrote this.'), 'editor shows the new disk content');
-  assert.ok(!s.val.includes('Original.'), 'old content gone');
-  assert.ok(Math.abs(s.scroll - scroll0) < 2, `reader's scroll survives the reload (${scroll0} → ${s.scroll})`);
-});
-
-test('a non-overlapping draft folds the disk edit in — no warning, one unsaved draft', opts, async () => {
-  // the user types (draft exists)…
-  await page.evaluate(() => {
-    const ed = document.querySelector('#codeEditor');
-    ed.focus();
-    ed.setSelectionRange(ed.value.length, ed.value.length);
-  });
-  await page.keyboard.type('% my precious unsaved thought');
-  await sleep(200);
-  // …and Claude edits a DIFFERENT line on disk mid-turn
-  fs.writeFileSync(texPath, TEX_V2.replace('Claude rewrote this.', 'Claude rewrote it AGAIN.'));
-  await wsPush('file:changed', { project: 'alpha', rel: 'paper.tex' });
-  await sleep(600);
-  const s = await page.evaluate(() => ({
-    val: document.querySelector('#codeEditor').value,
-    save: document.querySelector('#saveState')?.textContent || '',
-    cls: document.querySelector('#saveState')?.className || '',
-  }));
-  assert.ok(s.val.includes('% my precious unsaved thought'), 'draft text untouched');
-  assert.ok(s.val.includes('AGAIN'), "Claude's edit merged into the open draft");
-  assert.ok(!/⚠ disk/.test(s.save), `no conflict warning — the draft rebased (${JSON.stringify(s.save)})`);
-  assert.match(s.cls, /dirty/, 'merged draft is a normal unsaved draft');
-});
-
-test('an overlapping edit pins the draft behind ⚠ disk; save runs the 409 reload flow', opts, async () => {
-  // the user and Claude rewrite the SAME line — merge must refuse
-  const mine = (await page.inputValue('#codeEditor')).replace('AGAIN.', 'AGAIN, says me.');
-  await page.fill('#codeEditor', mine);
-  await sleep(200);
-  fs.writeFileSync(texPath,
-    fs.readFileSync(texPath, 'utf8').replace('AGAIN.', 'AGAIN, says Claude.'));
-  await wsPush('file:changed', { project: 'alpha', rel: 'paper.tex' });
-  await sleep(600);
-  let s = await page.evaluate(() => ({
-    val: document.querySelector('#codeEditor').value,
-    save: document.querySelector('#saveState')?.textContent || '',
-    cls: document.querySelector('#saveState')?.className || '',
-    title: document.querySelector('#saveState')?.title || '',
-  }));
-  assert.ok(s.val.includes('AGAIN, says me.'), 'draft pinned — disk did not overwrite it');
-  // the fixed save chip's third state: red dot + ⚠ disk (constant geometry —
-  // the full warning lives in the tooltip, the recovery flow is unchanged)
-  assert.match(s.save, /⚠ disk/, `chip warns about the conflict (${JSON.stringify(s.save)})`);
-  assert.match(s.cls, /stale/, 'chip carries the stale class');
-  assert.match(s.title, /edited this file on disk/, 'tooltip explains the conflict');
-  // reconcile: accept the reload in the conflict dialog the save triggers
-  page.once('dialog', (d) => d.accept());
-  await page.evaluate(() => { document.querySelector('#codeEditor').focus(); });
-  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+s' : 'Control+s');
-  await sleep(800); // 409 → confirm → refetch → render
-  s = await page.evaluate(() => ({
-    val: document.querySelector('#codeEditor').value,
-    save: document.querySelector('#saveState')?.textContent || '',
-  }));
-  assert.ok(s.val.includes('AGAIN, says Claude.'), 'reloaded to the disk version after the conflict dialog');
-  assert.ok(!/⚠ disk/.test(s.save), 'warning gone after reconciling');
-});
-
 /* ── Phase 3 S2.6 (P3/M4, monaco-s2 §2): the file:changed KEEP contracts
    under BOTH editor implementations — clean reload in place, the
    non-overlapping 3-way merge folding disk INTO the draft, and the genuine
@@ -125,7 +46,7 @@ test('an overlapping edit pins the draft behind ⚠ disk; save runs the 409 relo
    their own suites (legacy confirm above; the M5 ladder in ui.monaco-save)
    — the SHARED contract here ends at the pin + warn. Declared last: the
    shared-page tests above are order-dependent; each pass reseeds disk. */
-testBothImpls('file:changed dual: clean reload in place; non-overlap merges into the draft; overlap pins ⚠ disk', {
+testMonaco('file:changed dual: clean reload in place; non-overlap merges into the draft; overlap pins ⚠ disk', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const ed = edDriver(impl);

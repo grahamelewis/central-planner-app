@@ -15,5 +15,5 @@
     "skipLibCheck": true
   },
   "include": ["public/*.js", "public/latex/*.js", "types/*.d.ts"],
-  "exclude": ["public/m", "public/pdfPane.js", "public/texEditor.js"]
+  "exclude": ["public/m", "public/pdfPane.js"]
 }

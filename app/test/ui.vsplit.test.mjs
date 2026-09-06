@@ -8,7 +8,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { startUI, sleep, CHROME, testBothImpls } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const opts = { skip: hasChrome ? false : 'Google Chrome not installed' };
@@ -171,7 +171,7 @@ test('the window shrinking AFTER a valid split re-clamps live (the resize story)
    idle — exactly the near-verbatim intent; the layout-happened growth for
    this suite is deferred to S3 by the plan's own call). Declared last:
    the shared-page tests above are order-dependent. */
-testBothImpls('vsplit dual: the divider floor keeps sessbar + composer whole under either editor impl', {
+testMonaco('vsplit dual: the divider floor keeps sessbar + composer whole under either editor impl', {
   ui: () => ui,
   page: { viewport: { width: 1500, height: 700 } }, // the failing geometry
 }, async ({ page }) => {

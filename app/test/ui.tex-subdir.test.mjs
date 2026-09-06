@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { startUI, sleep, CHROME, testBothImpls, edDriver, wsPushTo } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco, edDriver, wsPushTo } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const hasTex = (() => {
@@ -126,7 +126,7 @@ test('the pdf tabs persist like ＋-added displays (reload keeps both)', texOpts
    strip) runs everywhere the suite runs. The compile/canvas halves stay in
    the latexmk-gated tests above. Declared last: the shared-page tests above
    are order-dependent. */
-testBothImpls('▶ dual: draft.tex then slides.tex get coexisting pdf tabs; selection never reorders the strip', {
+testMonaco('▶ dual: draft.tex then slides.tex get coexisting pdf tabs; selection never reorders the strip', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const ed = edDriver(impl);

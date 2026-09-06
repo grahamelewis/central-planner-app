@@ -7,7 +7,6 @@ import { enc, isExtRel } from './util.js';
 import { renderSettings } from './views.js';
 
 /** @type {{ [fkey: string]: { lang?: string, text?: string, lines?: any[], states?: any[], [k: string]: any } }} */
-export const hlStores = {}; // fkey → highlighter cache ({lang, text, lines, states})
 /** @type {{ [paneKey: string]: PdfPane }} */
 export const pdfPanes = {}; // project → live PDF.js pane; its element is re-attached
                      // across renders so rebuilds never lose scroll/zoom
@@ -81,10 +80,6 @@ export const transcripts = {};   // `${project}/${id}` → { entries:[{role,text
 export const fileCache = {};     // `${project}::${rel}` → { text, mtimeMs } | { error } | { loading }
 /** @type {{ [fkey: string]: string }} */
 export const drafts = {};        // `${project}::${rel}` → unsaved editor text (survives re-renders)
-/** @type {{ [fkey: string]: EdView }} */
-export const edViews = {};       // fkey → { scrollTop, scrollLeft, selStart, selEnd } — the editor's
-                          // place, remembered across TAB ROUND-TRIPS (≋ console and back,
-                          // file A → B → A, project switches); in-memory, per session
 export const diskStale = new Set(); // fkeys where an agent changed DISK under an unsaved draft
 /** @type {{ [fkey: string]: number }} */
 export const draftBase = {};     // `${project}::${rel}` → disk mtimeMs the draft started from —

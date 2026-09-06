@@ -8,7 +8,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startUI, sleep, CHROME, testBothImpls, edDriver } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco, edDriver } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const opts = { skip: hasChrome ? false : 'Google Chrome not installed' };
@@ -114,7 +114,7 @@ test('pinning an extra supersedes it — no duplicate, persisted list updated', 
    script clears storage on every navigation BY DESIGN (the explicit
    impl-seeding reset), so a reload inside a dual pass cannot honestly
    assert persistence. Declared last: shared-page order-dependence. */
-testBothImpls('◇ dual: a browser open becomes a persisted focused extra; a pinned file opens its pin tab instead', {
+testMonaco('◇ dual: a browser open becomes a persisted focused extra; a pinned file opens its pin tab instead', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const ed = edDriver(impl);

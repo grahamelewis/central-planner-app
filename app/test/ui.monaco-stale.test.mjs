@@ -738,32 +738,28 @@ test('I1 drafts retention: kill the Monaco instance in AltCleanStale (reboot + i
     });
     assert.equal(boot.ok, false, 'the injected boot failed');
     assert.equal(boot.stage, 'init');
-    await page.waitForSelector('textarea#codeEditor', { timeout: 10000 });
+    await page.waitForSelector('.mpFailure pre', { timeout: 10000 });
 
     const after = await page.evaluate((fk) => {
       const s = window.__mp.store();
-      const ta = document.querySelector('textarea#codeEditor');
+      const ta = document.querySelector('.mpFailure pre');
       const ss = document.querySelector('#saveState');
       return {
         state: window.__mp.state(),
-        forced: window.__mp.forcedLegacy(),
-        impl: window.__mp.impl(),
         stored: localStorage.getItem('editor:impl'),
         draft: s.drafts[fk] ?? null,
         base: s.draftBase[fk] ?? null,
         stale: s.diskStale.has(fk),
-        taFkey: ta ? ta.dataset.fkey : null,
-        taValue: ta ? ta.value : null,
+        taFkey: ta ? ta.closest('#monacoSlot').dataset.fkey : null,
+        taValue: ta ? ta.textContent : null,
         chip: ss ? ss.className : null,
         monacoNodes: document.querySelectorAll('.monaco-editor').length,
         models: window.__mp.models(),
         flight: window.__mp.staleState(fk),
       };
     }, FK.fall);
-    assert.equal(after.state, 'FALLBACK_LEGACY', 'the boot machine ended in the atomic fallback');
-    assert.equal(after.forced, true, 'session-only fallback pin');
-    assert.equal(after.impl, 'legacy');
-    assert.equal(after.stored, 'monaco', 'the stored preference is NEVER written by a failed boot (A6)');
+    assert.equal(after.state, 'FAILED', 'the boot machine ended in the atomic fallback');
+    assert.equal(after.stored, null, 'the stored preference is NEVER written by a failed boot (A6)');
     assert.equal(after.draft, pre.draft, 'drafts[k] survived the kill byte-identical (I1)');
     assert.equal(after.base, pre.base, 'draftBase still pinned on the OLD mtime — the 409 net stays armed');
     assert.equal(after.stale, true, '⚠ survived the kill');

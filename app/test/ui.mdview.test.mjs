@@ -11,7 +11,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startUI, sleep, CHROME, testBothImpls, edDriver } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco, edDriver } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const opts = { skip: hasChrome ? false : 'Google Chrome not installed' };
@@ -131,9 +131,7 @@ test('typing in the editor live-updates the pane IN PLACE — scroll and element
   });
   await page.click('#codeEditor');
   await page.evaluate(() => {
-    const ed = document.querySelector('#codeEditor');
-    ed.setSelectionRange(0, 0);
-    ed.focus();
+    window.__mp.focus(); window.__mp.setPosition(1, 1);
   });
   await page.keyboard.type('LIVE DRAFT LINE\n\n');
   await sleep(600); // 250ms debounce + render
@@ -241,7 +239,7 @@ test('hostile markdown is sanitized: no script/style/handlers/javascript: URLs',
    retargeted ASSERTIONS the plan's S2.6 row calls for). Declared last: the
    shared-page tests above are order-dependent; each pass here runs in its
    own fresh context (the S2.1(d) isolation rule) and touches no disk. */
-testBothImpls('P20 dual: typing live-updates the ▤ pane in place — debounce, drafts-as-source, scroll kept', {
+testMonaco('P20 dual: typing live-updates the ▤ pane in place — debounce, drafts-as-source, scroll kept', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const ed = edDriver(impl);

@@ -348,31 +348,3 @@ test('a cleanReload txn re-arms markers/tints synchronously against the new text
 });
 
 /* ═══ E — legacy control: strip + legacy tints as today, machinery disarmed ═══ */
-
-test('legacy impl: the strip and texMarkLines tints behave as today; NO monaco problems machinery arms', opts, async () => {
-  const { context, page } = await probPage('legacy');
-  try {
-    await page.waitForFunction(() => !!document.querySelector('#v-alpha textarea#codeEditor'),
-      { timeout: 15000, polling: 100 });
-    await push(page, 'pdf:status', { project: 'alpha', entry: pdfEntry(sb, [
-      { kind: 'error', file: 'main.tex', line: 2, message: 'legacy err' },
-      { kind: 'badbox', file: 'main.tex', line: 4, message: 'legacy box' },
-    ]) });
-    await page.waitForFunction(() => !!document.querySelector('#v-alpha #texProblems .tpChip.err'),
-      { timeout: 10000, polling: 100 });
-
-    const legacy = await page.evaluate(() => ({
-      // the untouched legacy leg: texMarkLines tinted the hl line
-      lnErr: !!document.querySelector('#v-alpha .codeHL .ln.lnErr'),
-      monaco: typeof window.monaco,
-      info: window.__mp.problemsInfo(),
-    }));
-    assert.equal(legacy.lnErr, true, 'legacy texMarkLines tints exactly as before (byte-identical path)');
-    assert.equal(legacy.monaco, 'undefined', 'no monaco boot under legacy');
-    assert.equal(legacy.info.observing, false, 'the strip observer never arms under legacy');
-    assert.deepEqual(legacy.info.projects, [], 'zero stored problem sets — the machinery is fully disarmed');
-    assert.equal(legacy.info.rows, 0);
-  } finally {
-    await context.close();
-  }
-});

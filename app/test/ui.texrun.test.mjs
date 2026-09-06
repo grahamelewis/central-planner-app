@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { startUI, sleep, CHROME, testBothImpls, edDriver } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco, edDriver } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const hasTex = (() => { try { execSync('command -v latexmk', { stdio: 'ignore' }); return true; } catch { return false; } })();
@@ -75,9 +75,8 @@ test('the save chip: constant box, the dot flips, a click saves', opts, async ()
   assert.ok(!/unsaved/.test(clean.txt) && /saved/.test(clean.txt), `clean chip says saved (${JSON.stringify(clean.txt)})`);
   await page.click('#codeEditor');
   await page.evaluate(() => {
-    const ed = document.querySelector('#codeEditor');
-    ed.setSelectionRange(ed.value.length, ed.value.length);
-    ed.focus();
+    window.__mp.focus(); const lines = window.__mp.getText().split('\n');
+    window.__mp.setPosition(lines.length, lines.at(-1).length + 1);
   });
   await page.keyboard.type('% chip test\n');
   await sleep(300);
@@ -120,9 +119,8 @@ test('toolbar ▶ recompiles (⊘ mid-run, same box) and the corner dot tracks t
   // dirty the tex → the pane control grows its amber corner dot
   await page.click('#codeEditor');
   await page.evaluate(() => {
-    const ed = document.querySelector('#codeEditor');
-    ed.setSelectionRange(ed.value.length, ed.value.length);
-    ed.focus();
+    window.__mp.focus(); const lines = window.__mp.getText().split('\n');
+    window.__mp.setPosition(lines.length, lines.at(-1).length + 1);
   });
   await page.keyboard.type('% via toolbar\n');
   await sleep(300);
@@ -166,9 +164,8 @@ test('document ▶ saves a dirty included file, then compiles the viewer root', 
   });
   await page.waitForSelector('#codeEditor[data-rel="appendix.tex"]');
   await page.evaluate(() => {
-    const ed = document.querySelector('#codeEditor');
-    ed.setSelectionRange(ed.value.length, ed.value.length);
-    ed.focus();
+    window.__mp.focus(); const lines = window.__mp.getText().split('\n');
+    window.__mp.setPosition(lines.length, lines.at(-1).length + 1);
   });
   await page.keyboard.type('% dependency transaction\n');
   await sleep(250);
@@ -265,7 +262,7 @@ test('the live-watch pane grows the ▶ too — save-now semantics in its toolti
    reads ride the chip + __mp (edDriver); contract verbatim. Declared last:
    the shared-page tests above are order-dependent; the disk marker is
    per-pass so the sibling pass never collides. */
-testBothImpls('save chip dual: constant box, dot flips on typing, a chip click saves to disk', {
+testMonaco('save chip dual: constant box, dot flips on typing, a chip click saves to disk', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const ed = edDriver(impl);

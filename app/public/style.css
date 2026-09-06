@@ -860,78 +860,6 @@ body.dragging iframe{ pointer-events:none; }
 }
 .codeHalf .cfoot span:last-child{ margin-left:auto; color:var(--mut); }
 
-/* editable code pane — visually identical to the read-only pre */
-.codeEdit{
-  flex:1; margin:0; padding:11px 15px; border:none; outline:none; resize:none;
-  background:transparent; font-family:ui-monospace,Menlo,monospace; font-size:11px;
-  line-height:1.75; color:var(--code-ink); white-space:pre; overflow:auto; tab-size:4;
-  caret-color:var(--green);
-}
-.codeEdit:focus{ background:var(--well-edit); }
-
-/* syntax-color overlay: an identically-metriced <pre> sits behind a textarea
-   whose text is transparent — the overlay is what you read, the textarea is
-   what you edit. Both share .codeEdit so the font metrics cannot drift. */
-.edWrap{ position:relative; flex:1; min-height:0; }
-/* content (textarea + overlay) starts right of the line-number gutter; --gutW is
-   set per file in wireWB to fit its line count */
-.edWrap .codeEdit{ position:absolute; left:var(--gutW, 40px); right:0; top:0; bottom:0; flex:none; margin:0; letter-spacing:0; font-variant-ligatures:none; }
-/* line-number gutter — a fixed column on the left, vertical-scroll-synced with
-   the textarea (translateY in wireWB); never scrolls horizontally. Its metrics
-   MUST match .codeEdit (11px mono, 1.75 line-height, 11px top pad) so number N
-   sits on row N. Relies on the editor's wrap="off" (1 line = 1 row). */
-.edGutter{ position:absolute; left:0; top:0; bottom:0; width:var(--gutW, 40px); overflow:hidden;
-  background:var(--well); border-right:1px solid var(--line); z-index:2; user-select:none; }
-.edGutterInner{ font-family:ui-monospace,Menlo,monospace; font-size:11px; line-height:1.75;
-  padding-top:11px; color:var(--faint); text-align:right; will-change:transform; }
-.edGutterInner > div{ padding:0 7px 0 5px; }
-/* must out-specify `.codeHalf pre` (pre-wrap + break-word would wrap the
-   overlay while the textarea scrolls — total misalignment) */
-.codeHalf pre.codeHL{ white-space:pre; word-break:normal; overflow:hidden; pointer-events:none; z-index:0; }
-/* soft wrap — prose files (.tex): long lines wrap down to the pane width
-   instead of scrolling right. The textarea carries wrap="soft" in its markup;
-   this rule mirrors the SAME breaking rules onto both layers (textarea and
-   overlay share .codeEdit, so they cannot disagree on a wrap point). Gutter
-   cells get per-line heights from wireWB — a wrapped line keeps ONE number
-   spanning all its visual rows. */
-.edWrap.softWrap .codeEdit{ white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; overflow-x:hidden; }
-.edWrap.softWrap .edGutterInner > div{ box-sizing:border-box; }
-/* the native caret is font-height inside the 1.75 line box (it floats in the
-   leading, hard to place) and 1px thin — hide it and draw our own in the
-   overlay: line-tall, 2px, glowing, with the active line tinted (wireWB) */
-.codeSrc{ z-index:1; color:transparent; caret-color:transparent; background:transparent; }
-.codeSrc:focus{ background:transparent; }
-.edWrap:focus-within{ background:var(--well-edit); }
-/* The native ::selection is painted by the TEXTAREA layer; at some
-   zoom/display-scaling combinations Chrome lands its textarea rows a few px
-   off the overlay glyphs, so the band read as off-center (2026-07-20).
-   Same cure as the native caret: hide it and draw .selBand rows in the
-   overlay's own coordinate space (wireWB syncSel) — aligned with the glyphs
-   by construction. IME mode shows the textarea's own text, so the native
-   band comes back there. */
-.codeSrc::selection{ background:transparent; color:transparent; }
-.edWrap.ime .codeSrc::selection{ background:var(--sel); }
-.codeHL .selBand{
-  position:absolute; z-index:-1; background:var(--sel);
-  pointer-events:none; border-radius:2px;
-}
-.edCaret{
-  position:absolute; width:2px; background:var(--green); border-radius:1px;
-  pointer-events:none; z-index:2;
-  box-shadow:0 0 5px rgb(from var(--green) r g b / 55%);
-  animation:edBlink 1.15s steps(1) infinite;
-}
-@keyframes edBlink{ 0%,55%{opacity:1} 56%,100%{opacity:0} }
-/* window not focused → the caret pauses and dims (it would otherwise keep
-   ticking and suggest the editor still has your keystrokes) */
-html.winblur .edCaret{ animation:none; opacity:.3; }
-/* current line: a full-width band behind the glyphs covering every wrapped
-   row of the logical line (drawn + sized in wireWB's syncCaret) */
-.edLnBand{ position:absolute; left:0; background:var(--ov06); pointer-events:none; }
-/* IME composition: provisional text renders in the textarea — surface it,
-   and hand the caret back to the browser while composing */
-.edWrap.ime .codeHL{ visibility:hidden; }
-.edWrap.ime .codeSrc{ color:var(--code-ink); caret-color:var(--green); }
 /* ephemeral (unpinned) tabs from the folder browser */
 .codeHalf .ctab.xtab{ font-style:italic; }
 .dirtyDot{ color:var(--yellow); margin-left:6px; font-size:8px; vertical-align:middle; }
@@ -2398,19 +2326,6 @@ html[data-theme="light"] .agentDefaultCtl select{ color-scheme:light; }
 .textLayer span{ position:absolute; color:transparent; white-space:pre; cursor:text; transform-origin:0 0; }
 .textLayer ::selection{ background:var(--sel); }
 
-/* completion popup (\cite · \ref · \begin · commands) */
-.texCompl{
-  position:absolute; z-index:30; min-width:230px; max-width:340px; padding:3px;
-  background:var(--panel); border:1px solid var(--ov22); border-radius:9px;
-  box-shadow:0 14px 40px #00000066; font-size:11px; overflow:hidden;
-}
-.tcItem{ display:flex; gap:7px; align-items:baseline; padding:4px 9px; border-radius:6px; cursor:pointer; color:var(--mut); }
-.tcItem.on, .tcItem:hover{ background:var(--ov08); color:var(--ink); }
-.tcIcon{ flex-shrink:0; width:13px; text-align:center; font-size:10px; }
-.tc-cite{ color:var(--purple); } .tc-ref{ color:var(--blue); } .tc-env{ color:var(--green); } .tc-cmd{ color:var(--yellow); }
-.tcLabel{ font-family:ui-monospace,Menlo,monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.tcDetail{ margin-left:auto; color:var(--dim); font-size:9.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px; flex-shrink:0; }
-
 /* compile problems strip under the editor */
 .texProblems{ flex-shrink:0; border-top:1px solid var(--line); background:var(--chrome-44); max-height:180px; display:flex; flex-direction:column; }
 .texProblems.hasErr .tpBar{ background:rgb(from var(--red) r g b / 7%); }
@@ -2453,8 +2368,6 @@ html[data-theme="light"] .agentDefaultCtl select{ color-scheme:light; }
 #texOutlineMenu .pmItem:hover{ background:var(--glass); color:var(--ink); }
 
 /* Claude-fix suggestions — in-editor highlights, chips, and the review card */
-.sugClip{ position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:3; }
-.sugLayer{ position:absolute; inset:0; pointer-events:none; will-change:transform; }
 /* the doomed text: red deletion tint + strikethrough, drawn in the overlay */
 .sugMark{
   position:absolute; z-index:2; pointer-events:none; border-radius:4px;
@@ -2552,10 +2465,7 @@ html[data-theme="light"] .agentDefaultCtl select{ color-scheme:light; }
 .tpBar .tpFix:hover{ color:var(--ink); border-color:var(--ov3a); }
 .tpFixRun{ margin-left:auto; color:var(--mut); }
 
-/* overlay line decorations: compile problems + jump flash */
-.codeHL .ln.lnErr{ background:rgb(from var(--red) r g b / 12%); box-shadow:inset 2px 0 0 var(--red); }
-.codeHL .ln.lnWarn{ background:rgb(from var(--yellow) r g b / 9%); box-shadow:inset 2px 0 0 rgb(from var(--yellow) r g b / 60%); }
-.codeHL .ln.lnFlash{ animation:lnFlash 1.8s; }
+/* Shared Monaco navigation flash. */
 @keyframes lnFlash{ 0%,40%{ background:rgb(from var(--blue) r g b / 25%); } 100%{ background:transparent; } }
 
 /* ============ LIGHT THEME ============ */
@@ -2934,6 +2844,10 @@ html[data-theme="light"] #pdDate{ color-scheme:light; }
 .mpHost{ width:100%; height:100%; }
 /* the placeholder slot the dock overlays — same box the legacy .edWrap fills */
 .monacoSlot{ position:relative; flex:1; min-height:0; background:var(--well); }
+.mpFailure { padding:20px; height:100%; overflow:auto; color:var(--ink); }
+.mpFailure h3 { margin:0 0 10px; }
+.mpFailure p { color:var(--dim); max-width:65ch; line-height:1.5; }
+.mpFailure pre { max-height:50vh; overflow:auto; white-space:pre; user-select:text; border:1px solid var(--line); padding:12px; margin-top:16px; }
 .monacoSlot .mpBooting{
   position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
   color:var(--dim); font-size:11px; letter-spacing:.4px; user-select:none;

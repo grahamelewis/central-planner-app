@@ -3,7 +3,7 @@
 // auto-recompile queue, runFile, run/build cards, pane-status sync.
 
 import { passFrac, creepTarget, CREEP_EASE } from './pdfPane.js';
-import { texMarkLines, TEX_EXTS } from './texEditor.js';
+import { TEX_EXTS } from './latex/texUi.js';
 import { enc, esc, toast, isExtRel } from './util.js';
 import {
   state, ui, pdfPanes, fileCache, drafts, runBufs, runSegs, turnTexTouched,
@@ -13,7 +13,7 @@ import { api, apiQuiet } from './net.js';
 import { saveFile } from './files.js';
 import { selectViewer, getAddedViewers, persistAddedViewers, artPaneKey } from './viewers.js';
 import { renderWB, texOpenAt } from './workbench.js';
-import { effectiveImpl as editorImpl, requestSave as requestMonacoSave } from './monacoPane.js';
+import { requestSave as requestMonacoSave } from './monacoPane.js';
 
 const autoRunQ = {};       // project → [texRel…] auto-compiles waiting on the single run slot
 const texInputCache = {};  // project::root → last project-contained dependency list
@@ -123,12 +123,7 @@ export function renderTexProblems(key) {
   host.querySelectorAll('.tpRow[data-pf]').forEach((el) => el.addEventListener('click', () => {
     if (el.dataset.pf && el.dataset.pl) texOpenAt(key, el.dataset.pf, Number(el.dataset.pl), 1);
   }));
-  // keep the gutter tints in sync with the fresh problem set
-  const ed = root.querySelector('#codeEditor');
-  const hlCode = root.querySelector('#codeHL');
-  if (ed && hlCode && TEX_EXTS.includes(ed.dataset.ext)) {
-    texMarkLines(hlCode, probs, ed.dataset.rel);
-  }
+
 }
 
 /* ─────────────── Claude fix — repair a failing LaTeX build ───────────────
@@ -496,8 +491,7 @@ export async function runFile(key, rel) {
         toast(`cannot compile — reopen ${inputRel} before saving its stale draft`);
         return;
       }
-      if (editorImpl() === 'monaco') await requestMonacoSave(k);
-      else await saveFile(key, inputRel);
+      await requestMonacoSave(k);
       if (drafts[k] != null) return; // conflict/failure/new typing: never compile stale bytes
     }
   }

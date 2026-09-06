@@ -11,7 +11,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startUI, sleep, CHROME, testBothImpls, edDriver } from './uiHarness.mjs';
+import { startUI, sleep, CHROME, testMonaco, edDriver } from './uiHarness.mjs';
 
 const hasChrome = fs.existsSync(CHROME);
 const opts = { skip: hasChrome ? false : 'Google Chrome not installed' };
@@ -110,7 +110,7 @@ test('clicking the target task greets you with the dropped file selected', opts,
    duplicate drop stays a no-op — both passes assert the invariants (task
    unchanged, editor unchanged, EXACTLY one pin). Declared last: the
    shared-page tests above are order-dependent. */
-testBothImpls('drag dual: dropping c.tex on the target task pins it once, without switching task or editor', {
+testMonaco('drag dual: dropping c.tex on the target task pins it once, without switching task or editor', {
   ui: () => ui,
 }, async ({ impl, page }) => {
   const ed = edDriver(impl);
