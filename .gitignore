@@ -35,6 +35,7 @@ desktop/dist/
 /decisions/
 /categories.json
 /jobhist.json
+/runs/
 /.kaimon-daemon.json
 /plan/
 /.cache/

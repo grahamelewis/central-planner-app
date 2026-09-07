@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { broadcast } from './events.js';
-import { PROJECTS, ARTIFACT_GLOBS } from './config.js';
+import { PROJECTS, ARTIFACT_GLOBS, isIgnoredDir } from './config.js';
 import { containedPath } from './paths.js';
 import { parseLatexLog, problemCounts, passFromLine } from './texlog.js';
 
@@ -26,8 +26,6 @@ const artifactWatchers = new Map();
 const artifactScanQueues = new Map();
 let artifactWatchersStarted = false;
 
-const ignoreDirSet = new Set(ARTIFACT_GLOBS.ignoreDirs || []);
-
 function kindOf(p) {
   const ext = path.extname(p).toLowerCase();
   if (ext === '.html' || ext === '.htm') return 'html';
@@ -35,14 +33,18 @@ function kindOf(p) {
   return null;
 }
 
-// True if any path segment of `abs` relative to `root` is an ignored dir name.
+// True if any path segment of `abs` relative to `root` is an ignored dir
+// (lib/config.js: node_modules, target/, dist/, build/…, plus vendor/ beside a
+// go.mod). This gates both the initial scan and every native event, so a
+// `cargo build` writing thousands of files under target/ never reaches
+// recordArtifact, let alone artifact:new.
 function inIgnoredDir(root, abs) {
   const rel = path.relative(root, abs);
   if (!rel || rel.startsWith('..')) return false;
   const segments = rel.split(path.sep);
   // For files, the last segment is the basename — still fine to check all
   // segments; a *file* named e.g. "data" without extension is not an artifact anyway.
-  return segments.some((seg) => ignoreDirSet.has(seg));
+  return segments.some((seg, i) => isIgnoredDir(seg, i ? path.join(root, ...segments.slice(0, i)) : root));
 }
 
 // Source/figure extensions that can feed a pinned live compile. Deliberately
@@ -290,7 +292,7 @@ export function listProjectFiles(project) {
       if (e.name.includes('\r')) continue; // macOS Finder 'Icon\r' droppings
       const abs = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (ignoreDirSet.has(e.name)) continue;
+        if (isIgnoredDir(e.name, dir)) continue;
         walk(abs, depth + 1);
       } else if (e.isFile()) {
         out.push(path.relative(root, abs));

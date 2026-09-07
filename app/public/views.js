@@ -610,8 +610,89 @@ function servicesSecHtml() {
   </div>`;
 }
 
+/* ── Toolchains: what ▶ and the job cards run (lib/toolchains.js) ──
+   The snapshot carries the summary (ok/versions/hint); the paths shown on
+   hover come from GET /api/toolchains, fetched once when Settings opens. */
+const TC_ORDER = ['rust', 'go', 'node', 'c', 'cpp', 'julia', 'python', 'r', 'sql', 'tex'];
+const TC_MARK = { rust: 'Rs', go: 'Go', node: 'JS', c: 'C', cpp: 'C++', julia: 'Jl', python: 'Py', r: 'R', sql: 'SQL', tex: 'TeX' };
+let tcFetching = false;
+
+/** @returns {boolean} whether state.toolchains holds the detail rows (paths) */
+const tcHasDetail = () => Object.values(state.toolchains || {}).some((t) => Array.isArray(t.required));
+
+function toolchainsSecHtml() {
+  const tc = state.toolchains || {};
+  const ids = TC_ORDER.filter((id) => tc[id]).concat(Object.keys(tc).filter((id) => !TC_ORDER.includes(id)));
+  let ready = 0;
+  let missing = 0;
+  const cards = ids.map((id) => {
+    /** @type {ToolchainInfo} */
+    const t = tc[id];
+    const miss = new Set([...(t.missing || []), ...(t.missingOptional || [])]);
+    // detail rows when fetched, else the summary's version map (keys are the bins in order)
+    /** @type {ToolchainRow[]} */
+    const rows = t.required
+      ? [...t.required, ...(t.optional || [])]
+      : Object.entries(t.versions || {}).map(([bin, short]) => ({ bin, found: !miss.has(bin), path: null, version: short, short }));
+    const status = !t.ok ? ['tcMissing', 'missing'] : (t.missingOptional?.length ? ['tcPartial', 'partial'] : ['connected', 'ready']);
+    if (t.ok) ready++; else missing++;
+    const bins = rows.map((r) => {
+      const opt = (t.optional || []).some((o) => o.bin === r.bin) || (!t.required && (t.missingOptional || []).includes(r.bin));
+      const tip = r.found ? (r.path || r.version || 'found') : (opt ? 'optional — not installed' : 'not on the server PATH');
+      const ver = r.found ? (r.short || r.version || (r.pending ? '…' : '✓')) : '—';
+      return `<span class="tcBin ${r.found ? '' : 'off'}" title="${esc(tip)}">${esc(r.bin)} ${esc(ver)}</span>`;
+    }).join(' · ');
+    const ts = t.ts
+      ? ` · .ts via ${t.ts.via === 'node' ? 'node (limited type stripping)' : t.ts.via === 'tsx' ? 'installed tsx (no download)' : '<span class="tcBin off">unavailable — install project or dashboard tsx dependencies</span>'}`
+      : '';
+    return `<div class="serviceCard tcCard" data-tc="${esc(id)}">
+      <div class="serviceMark">${esc(TC_MARK[id] || id)}</div>
+      <div class="serviceBody"><div class="serviceTitle">${esc(t.label || id)} <span class="serviceStatus ${status[0]}"><i></i>${status[1]}</span></div>
+        <div class="serviceDetail">${bins}${ts}</div>
+        ${t.hint ? `<div class="tcHint">${esc(t.hint)}</div>` : ''}</div>
+    </div>`;
+  }).join('');
+  const summary = ids.length
+    ? `${ready} ready · ${missing} missing — what ▶ and the job cards run; hover a binary for its path`
+    : 'checking the server PATH…';
+  return `<div class="setSec" id="tcSec">
+    <h3>Toolchains</h3>
+    <div class="serviceGrid">${cards}</div>
+    <div class="tcFoot"><span id="tcSummary">${esc(summary)}</span><button class="gbtn" id="tcRefresh">Refresh</button></div>
+  </div>`;
+}
+
+/** Wire the Toolchains section; fetch the detail (paths) once per view open. */
+function mountToolchains(host) {
+  const wire = () => {
+    host.querySelector('#tcRefresh')?.addEventListener('click', async (e) => {
+      const btn = /** @type {HTMLButtonElement} */ (e.currentTarget);
+      btn.disabled = true;
+      btn.textContent = 'checking…';
+      const r = await api('POST', '/api/toolchains/refresh');
+      if (r) { state.toolchains = r; toast('toolchains re-checked'); }
+      if (ui.view === 'settings') { swap(); } else { btn.disabled = false; btn.textContent = 'Refresh'; }
+    });
+  };
+  const swap = () => {
+    const sec = host.querySelector('#tcSec');
+    if (!sec) return;
+    sec.outerHTML = toolchainsSecHtml();
+    wire();
+  };
+  wire();
+  if (tcHasDetail() || tcFetching) return;
+  tcFetching = true;
+  apiQuiet('GET', '/api/toolchains').then((r) => {
+    tcFetching = false;
+    if (!r || typeof r !== 'object') return;
+    state.toolchains = r;
+    if (ui.view === 'settings') swap();
+  });
+}
+
 /**
- * The Settings view (theme · agent defaults · providers · voice · updates).
+ * The Settings view (theme · agent defaults · providers · toolchains · voice · updates).
  * @returns {void}
  */
 export function renderSettings() {
@@ -626,6 +707,7 @@ export function renderSettings() {
   host.innerHTML = `
     <h1>Settings</h1>
     ${servicesSecHtml()}
+    ${toolchainsSecHtml()}
     <div class="setSec" id="memorySettings"><h3>Task memory</h3><p>Loading memory settings…</p></div>
     <div class="setSec">
       <h3>Appearance</h3>
@@ -675,6 +757,7 @@ export function renderSettings() {
     const r = await api('POST', '/api/providers/codex/logout');
     if (r) { state.providers.codex = { id: 'codex', name: 'Codex', ...r }; renderSettings(); }
   });
+  mountToolchains(host);
   mountMemorySettings(host);
   voiceSecWire(host);
   // update actions — the server broadcasts update:status transitions

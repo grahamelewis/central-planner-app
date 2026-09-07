@@ -14,6 +14,11 @@ import { pumps, pumpConsole, seedTailBuf } from './console.js';
 import { texFixCardHtml } from './texrun.js';
 import { MIC_OK } from './voice.js';
 import { renderWB, focusOn } from './workbench.js';
+import {
+  beginSubmission, acknowledgeSubmission, stopControlHtml, savedDraftsHtml,
+  pausedQueues, recallPending, persistRecallState, transcriptRevision,
+  trackSubmissionDelivery,
+} from './undoSend.js';
 
 /* themed dropdown (replaces the native <select>): a pill trigger + a themed
    menu wired in wireWB. dropItem[data-val] → setTaskModel/setTaskPerm. */
@@ -414,6 +419,45 @@ export function kaimonCardHtml(key) {
     <span class="ctl" id="kaimonDismissBtn" title="hide this — durable opt-out: set &quot;kaimon&quot;: false in config.json">×</span></div>`;
 }
 
+/* ── the missing-toolchain notice ──
+   The projects snapshot says which runtimes a project's markers imply
+   (Cargo.toml → rust, go.mod → go, package.json → node, CMakeLists/Makefile →
+   c/cpp, …) and which of those the server cannot run; state.toolchains has
+   the install hint. Dismissable per project until the missing set changes. */
+/**
+ * One line per missing toolchain this project needs (empty string when none).
+ * @param {string} key project key
+ * @returns {string} html
+ */
+export function toolchainNoticeHtml(key) {
+  const needs = state.projects?.[key]?.toolchains;
+  const missing = needs?.missing || [];
+  if (!missing.length) return '';
+  const sig = missing.join(',');
+  try { if (localStorage.getItem(`tcDismissed:${key}`) === sig) return ''; } catch { /* storage off */ }
+  const lines = missing.map((id) => {
+    /** @type {ToolchainInfo | null} */
+    const t = state.toolchains?.[id] || null;
+    const label = t?.label || id;
+    const marker = needs.markers?.[id];
+    const what = marker ? `a ${marker.split('/').pop()}` : `${label} files`;
+    const bins = (t?.missing?.length ? t.missing : [id]).join(' / ');
+    return `This project has ${what} but ${bins} is not installed${t?.hint ? ` — install with ${t.hint}` : ''}`;
+  });
+  return `<div class="runHint" id="tcNotice" style="color:var(--yellow);border-color:rgb(from var(--yellow) r g b / 18%);background:rgb(from var(--yellow) r g b / 5%);">🧰 <span>${lines.map(esc).join('<br>')}</span>
+    <span class="ctl" id="tcDismissBtn" data-key="${esc(key)}" data-sig="${esc(sig)}" title="hide this until the set of missing toolchains changes — Settings › Toolchains lists them all">×</span></div>`;
+}
+if (typeof document !== 'undefined') {
+  // the card is rendered by sessionBody and wired here by delegation so no
+  // other module has to know about it
+  document.addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? /** @type {HTMLElement | null} */ (e.target.closest('#tcDismissBtn')) : null;
+    if (!btn) return;
+    try { localStorage.setItem(`tcDismissed:${btn.dataset.key}`, btn.dataset.sig || ''); } catch { /* storage off */ }
+    renderWB(btn.dataset.key);
+  });
+}
+
 /* ── the Claude sign-in card ──
    Shown wherever a next turn could run, whenever the server knows Claude is
    unreachable for auth reasons (state.auth.needed — set by a failed turn, the
@@ -502,7 +546,8 @@ export function sessionBody(key, task) {
   const st = task.status;
   const provider = taskProvider(task);
   const agent = agentName(provider);
-  if (st === 'queued') return launchCard(key, task);
+  // a missing toolchain is worth knowing before launch, not only after
+  if (st === 'queued') return toolchainNoticeHtml(key) + launchCard(key, task);
   if (st === 'manual') return manualCard(key, task);
 
   // the entry pane: things that need YOU (questions, approvals, handoffs) plus
@@ -516,6 +561,8 @@ export function sessionBody(key, task) {
   if (fixCard) parts.push(fixCard);
   const kaCard = kaimonCardHtml(key);
   if (kaCard && st !== 'done' && !task.archived) parts.push(kaCard);
+  const tcCard = toolchainNoticeHtml(key);
+  if (tcCard && st !== 'done' && !task.archived) parts.push(tcCard);
   // NOTE: a handoff on a still-waiting task renders NOTHING here on purpose —
   // sessions cannot propose completion; the record only surfaces once the
   // user's ✓ complete flow closes the task (the done card below).
@@ -563,19 +610,19 @@ export function sessionBody(key, task) {
     ? `<div class="queuedBar">${qd.map((q, i) =>
       `<div class="queuedMsg"><span class="qTag">⏳ queued</span><span class="qTxt">${esc(q)}</span>
         <button class="qx" data-unqueue="${i}" title="don't send — back to the composer">×</button></div>`).join('')}
-      <div class="qNote">sends when this turn ends</div></div>`
+      <div class="qNote">${pausedQueues.has(k) ? 'Paused — return messages to the composer when ready' : 'sends when this turn ends'}</div></div>`
     : '';
   const composerPlaceholder = st === 'running' ? 'Queue a message…' : `Message ${agent}…`;
   const composerTitle = `${st === 'running' ? 'Enter queues for when the turn ends' : 'Enter sends'}, ⇧Enter for a new line`;
   const foot = st === 'done'
     ? `<div class="closedbar">task complete · handoff recorded ✓</div>`
-    : `${queuedBar}<div class="composer">
+    : `${queuedBar}${savedDraftsHtml(key, task.id)}<div class="composer">
         <textarea id="composerInput" rows="1"
           placeholder="${esc(composerPlaceholder)}" title="${esc(composerTitle)}"
           aria-label="${st === 'running' ? `Queue a message for ${agent}` : `Message ${agent}`}">${esc(composerDrafts[k] || '')}</textarea>
         ${MIC_OK ? `<button class="micBtn" id="micBtn" title="hold to talk — or hold Space anywhere">${MIC_SVG}</button>` : ''}
-        ${st === 'running' ? '<button class="stopBtn" id="interruptBtn" title="interrupt this turn">⏹ stop</button>' : ''}
-        <button class="send" id="sendBtn">Send</button>
+        ${stopControlHtml(key, task)}
+        <button class="send" id="sendBtn"${recallPending(key, task.id) ? ' disabled' : ''}>Send</button>
       </div><div class="voiceHint" id="voiceHint" style="display:none"></div>${sessbar}`;
   // focus mode: the ≋ console mounts HERE, above the composer — watch the
   // stream and talk to the session in one pane while the editor keeps the
@@ -592,10 +639,13 @@ export function sessionBody(key, task) {
  * @param {string} project
  * @param {string} id task id
  * @param {string} text
+ * @param {{ explicit?: boolean }} [options]
  * @returns {Promise<void>}
  */
-export async function sendMsg(project, id, text) {
+export async function sendMsg(project, id, text, { explicit = false } = {}) {
   const k = `${project}/${id}`;
+  transcriptRevision[k] = (transcriptRevision[k] || 0) + 1;
+  const submission = explicit ? beginSubmission(project, id, text) : null;
   // the echoes below are OPTIMISTIC — if the server refuses the message they
   // are rolled back, else the ▸ you marker strands mid-stream and everything
   // the still-running turn emits after it renders inside the you-bubble
@@ -611,7 +661,17 @@ export async function sendMsg(project, id, text) {
     if (!pumps[k]) pumps[k] = requestAnimationFrame(() => pumpConsole(project, k));
   }
   if (ui.view === project) renderWB(project);
-  if (await api('POST', `/api/tasks/${enc(project)}/${enc(id)}/message`, { text })) return;
+  const delivery = api('POST', `/api/tasks/${enc(project)}/${enc(id)}/message`, {
+    text, ...(submission ? { requestId: submission.requestId } : {}),
+  });
+  if (submission) trackSubmissionDelivery(project, id, submission, delivery);
+  const response = await delivery;
+  // Recall can win while /message is still in flight. Its canonical history
+  // and restored draft must never be overwritten by this older response.
+  if (submission?.restored) return;
+  const recalling = submission && ['recalling', 'recall-recovery'].includes(submission.phase);
+  if (submission && (response || !recalling)) acknowledgeSubmission(project, id, submission, response);
+  if (response) { persistRecallState(); return; }
   // refused (a turn raced in, task deleted…) — undo both echoes and keep the
   // text: it lands back in the composer, never silently lost
   const entries = transcripts[k]?.entries;
@@ -622,7 +682,9 @@ export async function sendMsg(project, id, text) {
     if (cut >= 0) tailBufs[k] = tailBufs[k].slice(0, cut) + tailBufs[k].slice(cut + splice.length);
     if (!pumps[k]) pumps[k] = requestAnimationFrame(() => pumpConsole(project, k));
   }
-  composerDrafts[k] = composerDrafts[k] ? `${text}\n\n${composerDrafts[k]}` : text;
-  toast('message not delivered — kept in the composer');
+  if (!recalling && !submission?.draftRecovered) composerDrafts[k] = composerDrafts[k] ? `${text}\n\n${composerDrafts[k]}` : text;
+  persistRecallState();
+  toast(recalling ? 'delivery unconfirmed — original prompt retained while restoration finishes'
+    : 'message not delivered — kept in the composer');
   if (ui.view === project) renderWB(project);
 }

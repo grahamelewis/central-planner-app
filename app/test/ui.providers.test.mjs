@@ -145,7 +145,7 @@ test('AI service cards stay contained in light mode at a phone-width viewport, i
   await sleep(250);
   const fit = await page.evaluate(() => ({
     light: document.documentElement.dataset.theme,
-    cards: document.querySelectorAll('.serviceCard').length,
+    cards: document.querySelectorAll('.serviceCard:not(.tcCard)').length, // the AI-service cards — Settings › Toolchains reuses .serviceCard for its own rows
     notice: document.querySelector('.serviceNotice')?.textContent,
     doc: document.documentElement.scrollWidth,
     viewport: innerWidth,

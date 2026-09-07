@@ -467,6 +467,17 @@ body.dragging iframe{ pointer-events:none; }
 }
 .queuedMsg .qx:hover{ color:var(--ink); }
 .qNote{ color:var(--dim); font-size:10.5px; font-style:italic; margin-top:3px; }
+.savedComposerDrafts{ flex-shrink:0; margin:10px 16px 0; min-width:0; }
+.savedComposerDraft{
+  display:flex; align-items:center; gap:10px; padding:8px 12px; margin-top:5px;
+  border:1px solid var(--line); border-radius:10px; background:var(--panel);
+}
+.savedComposerDraft > span{ min-width:0; flex:1; }
+.savedComposerDraft b{ display:block; font-size:11px; color:var(--mut); }
+.savedComposerDraft small{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--dim); }
+.savedComposerDraft button{ flex-shrink:0; font-size:11px; }
+.chat .composer .stopEdit{ white-space:nowrap; }
+.chat .composer button:disabled{ cursor:wait; opacity:.6; }
 
 /* the Claude sign-in card — surfaces wherever a next turn could run when the
    server knows Claude is unreachable (login expired / bad API key). Amber
@@ -1066,92 +1077,252 @@ body.dragging iframe{ pointer-events:none; }
 }
 
 /* live job cards — a long-running script's status card (console strip and the
-   ▶ output tab share one component; same palette for julia / R / python).
-   Built once, patched in place: the bar's width transition and the ticking
-   clock must survive every update untouched. */
+   ▶ output tab share one component). v3 styles follow .runJobSlot below. */
 .csJobs{ max-width:700px; margin:8px auto 4px; display:flex; flex-direction:column; gap:8px; }
 .runJobSlot{ flex-shrink:0; }
 .runJobSlot .jobCard{ margin:8px 10px 2px; }
+/* live job cards v3 — the telemetry strip (docs/jobcard-mockups/cards-a.html,
+   IMPLEMENTATION.md §2). One DOM, two compositions: five rows in a 420 px
+   pane, three rows once the container is ≥ 640 px. The band colour follows
+   the HEALTH word (data-hk): run / wait / blue / queue / red / yellow. Built
+   once, patched in place: the bar's width transition and the ticking clock
+   must survive every update untouched. No decorative sweep — a bar is the
+   parsed fraction, a dotted ruler is history, and unknown stays unknown. */
+.csJobs, .runJobSlot{ container-type:inline-size; }
 .jobCard{
+  display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:10px;
+  grid-template-areas:"head tail" "cmd cmd" "prog prog" "track track" "strip strip" "x x";
   border:1px solid var(--ov14); border-radius:11px; background:var(--glass);
-  overflow:hidden; min-width:0;
+  overflow:hidden; min-width:0; position:relative; padding:0 10px 7px 11px;
+  font-size:11.5px; color:var(--mut); cursor:pointer; outline:none;
   transition:opacity .4s ease, transform .4s ease;
 }
+.jobCard:focus-visible{ box-shadow:0 0 0 2px var(--sel); }
+.jobCard:not(.expanded):hover{ background:var(--ov10); }
 .jobCard.gone{ opacity:0; transform:translateY(4px); }
 /* entrance — applied as a one-shot .jobNew class at FIRST build of a job's
    card and removed right after it plays, so DOM re-insertions (renderWB's
    console keep, ▶ output pane rebuilds, strip reordering) never replay it */
 .jobCard.jobNew{ animation:jobIn .28s ease; }
 @keyframes jobIn{ from{ opacity:0; transform:translateY(5px); } }
-.jobHead{
-  display:flex; align-items:center; gap:8px; min-width:0; padding:6px 8px 6px 11px;
+/* the tinted band behind the head row */
+.jobCard::before{
+  content:''; grid-row:1; grid-column:1/-1; margin:0 -10px 0 -11px;
   background:rgb(from var(--run) r g b / 9%); border-bottom:1px solid var(--ov0c);
 }
+.jobCard[data-hk="queue"]::before{ background:rgb(from var(--queue) r g b / 12%); }
+.jobCard[data-hk="wait"]::before{ background:rgb(from var(--wait) r g b / 9%); }
+.jobCard[data-hk="blue"]::before{ background:rgb(from var(--blue) r g b / 9%); }
+.jobCard[data-hk="red"]::before{ background:rgb(from var(--red) r g b / 9%); }
+.jobCard[data-hk="yellow"]::before{ background:rgb(from var(--yellow) r g b / 8%); }
+.jobHead{ grid-area:head; display:flex; align-items:center; gap:7px; min-width:0; padding:6px 0; position:relative; overflow:hidden; }
+/* below ~260 px the head can't hold every word: the health word gives way
+   first, then the chip, then the state word — each ellipsizes, none overlaps
+   the clock and the stop button in the tail */
+.jobTail{ grid-area:tail; display:flex; align-items:center; gap:7px; padding:6px 0; position:relative; }
 .jobDot{ width:8px; height:8px; border-radius:50%; background:var(--run); flex-shrink:0; }
 .jobCard[data-state="running"] .jobDot{ animation:pulse 1.4s infinite; }
+.jobCard[data-hk="queue"] .jobDot{ background:var(--queue); }
+.jobCard[data-hk="wait"] .jobDot{ background:var(--wait); }
+.jobCard[data-hk="blue"] .jobDot{ background:var(--blue); }
+.jobCard[data-hk="red"] .jobDot{ background:var(--red); }
+.jobCard[data-hk="yellow"] .jobDot{ background:var(--yellow); }
+/* the state word: RUNNING / STARTING · PID NOT PINNED / STALLED 48s / ✓ DONE /
+   ✗ FAILED · EXIT 1 / ⊘ STOPPED · BY YOU — when stalled, the health word IS
+   the state word: it owns the band, nothing says RUNNING beside it */
 .jobState{
-  font-size:10.5px; font-weight:800; letter-spacing:.09em; text-transform:uppercase;
-  color:var(--run); white-space:nowrap;
+  font-size:10.5px; font-weight:800; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--run); white-space:nowrap; flex-shrink:1; min-width:0; overflow:hidden; text-overflow:ellipsis;
 }
 .jobCard[data-state="running"] .jobState::before{ content:'▶ '; }
+.jobCard[data-state="running"][data-hk="queue"] .jobState::before{ content:'◌ '; }
 .jobCard[data-state="done"] .jobState::before{ content:'✓ '; }
 .jobCard[data-state="error"] .jobState::before{ content:'✗ '; }
-.jobCard[data-state="stopped"] .jobState::before{ content:'⊘ '; }
-.jobCard.stopping .jobState::before{ content:'⊘ '; }
+.jobCard[data-state="stopped"] .jobState::before, .jobCard.stopping .jobState::before{ content:'⊘ '; }
+.jobCard[data-hk="queue"] .jobState{ color:var(--queue); }
+.jobCard[data-hk="wait"] .jobState{ color:var(--wait); font-size:11.5px; letter-spacing:.07em; }
+.jobCard[data-hk="blue"] .jobState{ color:var(--blue); }
+.jobCard[data-hk="red"] .jobState{ color:var(--red); }
+.jobCard[data-hk="yellow"] .jobState{ color:var(--yellow); }
+/* the runtime chip: julia · detached · precompiling — hover shows the pid,
+   click copies it */
 .jobLang{
-  font-size:10px; color:var(--mut); border:1px solid var(--ov14); border-radius:99px;
-  padding:1px 7px; background:var(--ov06); flex-shrink:0;
+  font-size:10.5px; color:var(--mut); border:1px solid var(--ov14); border-radius:99px;
+  padding:1px 7px; background:var(--ov06); flex-shrink:2; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
+.jobLang.hasPid{ cursor:copy; }
+.jobLang.hasPid:hover{ color:var(--ink); border-color:var(--ov2a); }
+.jobLang.copied{ color:var(--run); border-color:rgb(from var(--run) r g b / 50%); }
+.jobLang.copied .jlTxt{ display:none; }
+.jobLang.copied::after{ content:attr(data-copied); }
+.jobHealth{ font-size:10.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex-shrink:4; }
+.jobHealth:empty{ display:none; }
+.jobHealth.run{ color:var(--run); } .jobHealth.blue{ color:var(--blue); } .jobHealth.wait{ color:var(--wait); }
+/* stale: the tag says how old the last good sample is; numbers grey to --dim
+   (≥ 3:1 on --panel in both themes), the health word disappears, elapsed
+   keeps its ink — never an opacity fade */
+.jobStale{
+  font-size:10.5px; font-weight:700; color:var(--dim); border:1px dashed var(--dim);
+  border-radius:99px; padding:0 5px; white-space:nowrap; flex-shrink:0;
+}
+.jobStale:empty{ display:none; }
+.jobCard.stale .jobCell b, .jobCard.stale .jobCell .pk, .jobCard.stale .jobCell.cores b{ color:var(--dim); }
+.jobCard.stale .jobHealth{ display:none; }
+.jobCard.stale .jobElapsed{ color:var(--ink); }
+.jobElapsed{ font-family:ui-monospace,Menlo,monospace; font-size:11.5px; font-weight:600; color:var(--ink); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .jobStop{
-  margin-left:auto; flex-shrink:0; cursor:pointer; font-size:11px; color:var(--red);
+  flex-shrink:0; cursor:pointer; font-size:11px; color:var(--red);
   background:transparent; border:1px solid rgb(from var(--red) r g b / 38%);
-  border-radius:8px; padding:2px 9px; transition:background .15s ease;
+  border-radius:8px; padding:2px 9px; white-space:nowrap; transition:background .15s ease;
 }
 .jobStop:hover{ background:rgb(from var(--red) r g b / 12%); }
 .jobStop:disabled{ opacity:.55; cursor:default; }
 .jobCard:not([data-state="running"]) .jobStop{ display:none; }
+.jobMore{ color:var(--mut); font-size:12px; width:14px; height:14px; line-height:14px; text-align:center; border-radius:4px; flex-shrink:0; }
+.jobCard:hover .jobMore{ color:var(--ink); background:var(--ov0c); }
+/* 12 px mono like the old well, but unboxed: the well's border + padding is
+   14 px of height the strip needs. Truncates; the full line is the title */
 .jobFile{
-  margin:9px 11px 0; padding:6px 9px; border:1px solid var(--ov0c); border-radius:8px;
-  background:var(--ov06); font-family:ui-monospace,Menlo,monospace;
-  font-size:12px; font-weight:600; color:var(--ink); overflow-wrap:anywhere; line-height:1.35;
+  grid-area:cmd; margin-top:6px; font-family:ui-monospace,Menlo,monospace; font-size:12px; font-weight:600;
+  color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; line-height:1.35;
 }
-.jobStats{
-  display:flex; flex-wrap:wrap; gap:3px 16px; padding:8px 12px 7px;
-  font-size:11px; color:var(--mut); min-width:0;
+.jobCard.expanded .jobFile{ white-space:normal; overflow-wrap:anywhere; text-overflow:clip; }
+/* progress line: parsed counter left · estimate (or its withheld reason) right */
+.jobProg{
+  grid-area:prog; margin-top:4px; display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  min-width:0; font-family:ui-monospace,Menlo,monospace; font-size:11px; font-variant-numeric:tabular-nums;
 }
-.jobStat{ white-space:nowrap; }
-.jobStat b{ font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
-.jobStat b.jobCpu{ color:var(--blue); }
-.jsMem{ display:none; }
-.jsMem.on{ display:inline; }
-.jsQuiet{ display:none; }
-.jsQuiet.on{ display:inline; }
-.jsQuiet b{ color:var(--yellow); }
-.jobTrack{ height:6px; margin:1px 12px 0; border-radius:99px; background:var(--ov0d); overflow:hidden; }
+.jobProg .jpL{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.jobProg .jpR{ flex-shrink:0; white-space:nowrap; }
+.jobProg .jpR:empty{ display:none; }
+.jpMain{ color:var(--ink); font-weight:700; }
+.jpDim{ color:var(--dim); }
+.jpNote{ color:var(--mut); }
+.jpSep{ color:var(--faint); margin:0 1px; }
+.jpWarn{ color:var(--yellow); } .jpBad{ color:var(--red); } .jpStall{ color:var(--wait); }
+.jpNoEta{ color:var(--dim); }
+.jpEnd{ color:var(--ink); font-weight:700; }
+.jpEnd.ok{ color:var(--run); } .jpEnd.bad{ color:var(--red); } .jpEnd.stop{ color:var(--yellow); }
+.jpEnd .jpBad{ color:var(--red); }
+.jpEnd .jpMut{ color:var(--mut); font-weight:500; }
+/* estimates: a leading ≈, lighter ink, a dotted underline in the same ink —
+   never bold, never yellow */
+.jobCard .est, .jobFeedRow .est{ color:var(--dim); font-weight:500; border-bottom:1px dotted currentColor; text-decoration:none; }
+/* the bar: the parsed fraction and nothing else; frozen at 60 % in the state
+   colour once the job has ended ("reached 23 %", not "23 % failed") */
+.jobTrack{ grid-area:track; margin-top:5px; height:4px; border-radius:99px; background:var(--ov0d); overflow:hidden; }
 .jobFill{ height:100%; width:0; border-radius:99px; background:var(--run); transition:width 2.4s linear; }
-.jobFill.indet{
-  width:32%; transition:none;
-  background:linear-gradient(90deg,
-    rgb(from var(--run) r g b / 0%), var(--run) 45%, var(--run) 55%, rgb(from var(--run) r g b / 0%));
-  animation:jobSweep 2.6s ease-in-out infinite;
+.jobCard[data-hk="blue"] .jobFill{ background:var(--blue); }
+.jobCard[data-hk="wait"] .jobFill{ background:var(--wait); }
+.jobCard[data-hk="red"] .jobFill{ background:var(--red); }
+.jobCard[data-hk="yellow"] .jobFill{ background:var(--yellow); }
+.jobCard:not([data-state="running"]) .jobFill{ opacity:.6; transition:none; }
+/* unknown progress + history: a dotted ruler whose right end is the usual
+   duration; the marker is elapsed ÷ usual and pins at the end (amber) */
+.jobRuler{
+  grid-area:track; margin-top:5px; height:4px; position:relative; border-radius:99px;
+  background:repeating-linear-gradient(90deg, var(--ov2a) 0 3px, transparent 3px 6px);
 }
-@keyframes jobSweep{ 0%{ margin-left:-32%; } 100%{ margin-left:100%; } }
-.jobFoot{
-  display:flex; align-items:baseline; justify-content:space-between; gap:4px 12px;
-  flex-wrap:wrap; min-width:0; padding:6px 12px 9px; font-size:11px; color:var(--dim);
+.jobRuler .rNow{ position:absolute; top:-3px; left:0; width:2px; height:10px; margin-left:-1px; background:var(--ink); border-radius:1px; }
+.jobRuler .rTick{ position:absolute; right:0; top:-3px; width:2px; height:10px; background:var(--mut); border-radius:1px; }
+.jobRuler.over{ background:repeating-linear-gradient(90deg, rgb(from var(--wait) r g b / 45%) 0 3px, transparent 3px 6px); }
+.jobTrack.off, .jobRuler.off, .jobX.off{ display:none; }
+/* the telemetry strip: 3.2 cores · mem 759M ▲1.4G · 3 procs · 12.4k ln · 3/s ▶ */
+.jobStats{ grid-area:strip; margin-top:6px; display:flex; flex-wrap:wrap; gap:2px 14px; font-size:11px; color:var(--dim); min-width:0; }
+.jobCell{ white-space:nowrap; font-variant-numeric:tabular-nums; }
+.jobCell b{ font-family:ui-monospace,Menlo,monospace; font-weight:700; color:var(--ink); font-size:11px; }
+.jobCell em{ font-style:normal; color:var(--dim); }
+.jobCell .pk{ color:var(--mut); font-family:ui-monospace,Menlo,monospace; font-size:10.5px; }
+.jobCell.cores b{ color:var(--blue); }
+.jobCell.wait b{ color:var(--wait); }
+.jobCell.dim b, .jobCell.dim .pk{ color:var(--dim); }
+.jobCell.note em{ font-style:italic; color:var(--dim); }
+.jobCell .src{ font-style:normal; color:var(--run); margin-left:2px; }
+.jobStats:empty{ display:none; }
+/* ≥ 640 px of container: three rows — head · command · tail / progress · strip / track */
+@container (min-width:640px){
+  .jobCard{ grid-template-columns:auto minmax(0,1fr) auto; grid-template-areas:"head cmd tail" "prog prog strip" "track track track" "x x x"; }
+  .jobFile{ margin-top:0; padding:6px 0; position:relative; font-weight:500; align-self:center; }
+  .jobCard.expanded .jobFile{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .jobHealth{ max-width:160px; }
+  .jobStats{ flex-wrap:nowrap; margin-top:4px; justify-content:flex-end; }
+  .jobProg{ margin-top:4px; }
+  .jobTrack, .jobRuler{ margin-top:6px; }
 }
-.jobIter{ font-family:ui-monospace,Menlo,monospace; font-weight:700; color:var(--ink); font-size:11.5px; }
-.jobMeta{ font-variant-numeric:tabular-nums; white-space:nowrap; }
-.jobCard.stopping .jobHead{ background:rgb(from var(--yellow) r g b / 8%); }
-.jobCard.stopping .jobState{ color:var(--yellow); }
-.jobCard.stopping .jobDot{ background:var(--yellow); }
-.jobCard[data-state="stopped"] .jobHead{ background:rgb(from var(--yellow) r g b / 8%); }
-.jobCard[data-state="stopped"] .jobState{ color:var(--yellow); }
-.jobCard[data-state="stopped"] .jobDot{ background:var(--yellow); }
-.jobCard[data-state="error"] .jobHead{ background:rgb(from var(--red) r g b / 9%); }
-.jobCard[data-state="error"] .jobState{ color:var(--red); }
-.jobCard[data-state="error"] .jobDot{ background:var(--red); }
-.jobCard[data-state="error"] .jobFill{ background:var(--red); }
+/* ── expanded card: phase timeline · sparklines · output tail · process · footer ── */
+.jobX{ grid-area:x; margin-top:9px; border-top:1px solid var(--ov0c); padding-top:8px; display:grid; grid-template-columns:minmax(0,1fr); gap:10px 18px; min-width:0; cursor:auto; }
+@container (min-width:640px){
+  .jobX{ grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); }
+  .jobX .xPh, .jobX .xFoot{ grid-column:1/-1; }
+}
+.jobX .xH{ font-size:10.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:5px; min-width:0; }
+.jobX .xH b{ font-family:ui-monospace,Menlo,monospace; color:var(--ink); font-weight:700; letter-spacing:0; text-transform:none; font-size:11px; }
+.jobX .xH .est{ text-transform:none; letter-spacing:0; font-weight:500; }
+.jobX .xH .sub, .jobX .sub{ font-weight:500; letter-spacing:0; text-transform:none; color:var(--dim); }
+.jobX .phBar{ position:relative; height:8px; border-radius:99px; background:var(--ov0d); overflow:visible; }
+.jobX .phBar .ph{ position:absolute; top:0; height:8px; }
+.jobX .phBar .ph:first-of-type{ border-radius:99px 0 0 99px; }
+.jobX .ph.queue, .jobX .sw.queue{ background:var(--queue); }
+.jobX .ph.blue, .jobX .sw.blue{ background:var(--blue); }
+.jobX .ph.run, .jobX .sw.run{ background:var(--run); }
+.jobX .ph.wait, .jobX .sw.wait{ background:var(--wait); }
+.jobX .ph.hatch{ background:repeating-linear-gradient(135deg, var(--wait) 0 2px, transparent 2px 5px); }
+.jobX .phBar .phNow{ position:absolute; top:-3px; width:2px; height:14px; margin-left:-1px; background:var(--ink); border-radius:1px; }
+.jobX .phBar .phGhost{ position:absolute; top:-3px; width:0; height:14px; border-left:2px dotted var(--dim); }
+.jobX .phCap{ display:flex; flex-wrap:wrap; gap:3px 12px; font-size:10.5px; color:var(--mut); margin-top:6px; min-width:0; }
+.jobX .phCap span{ white-space:nowrap; }
+.jobX .phCap b{ font-family:ui-monospace,Menlo,monospace; color:var(--ink); font-weight:600; }
+.jobX .sw{ display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+.jobX .spRow{ display:grid; grid-template-columns:96px minmax(0,1fr); gap:10px; align-items:center; margin-top:4px; }
+.jobX .spRow + .spRow{ margin-top:8px; }
+.jobX .spLbl em{ font-style:normal; font-size:10.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); display:block; }
+.jobX .spLbl b{ font-family:ui-monospace,Menlo,monospace; font-size:13px; font-weight:700; color:var(--ink); }
+.jobX .spLbl b.cores{ color:var(--blue); } .jobX .spLbl b.mem{ color:var(--purple); } .jobX .spLbl b.wait{ color:var(--wait); }
+.jobX .spLbl .sub{ display:block; font-size:10.5px; color:var(--dim); white-space:nowrap; }
+.jobX .spBox{ position:relative; height:38px; min-width:0; border-bottom:1px solid var(--ov14); }
+.jobX .spBox svg{ display:block; width:100%; height:38px; overflow:visible; }
+.jobX .spBox .spA{ fill:rgb(from var(--blue) r g b / 14%); stroke:none; }
+.jobX .spBox .spL{ fill:none; stroke:var(--blue); stroke-width:1.4; stroke-linejoin:round; }
+.jobX .spBox.mem .spA{ fill:rgb(from var(--purple) r g b / 14%); } .jobX .spBox.mem .spL{ stroke:var(--purple); }
+.jobX .spBox .spPk{ position:absolute; width:6px; height:6px; border-radius:50%; background:var(--purple); border:1.5px solid var(--sess); transform:translate(-50%,-50%); }
+.jobX .spBox .spNone{ position:absolute; inset:0; display:flex; align-items:center; font-size:10.5px; color:var(--dim); }
+.jobX .xTail{ min-width:0; }
+.jobX .xTailBox{ background:var(--well); border:1px solid var(--ov0c); border-radius:8px; padding:6px 9px; font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:var(--code-ink); line-height:1.5; min-width:0; }
+.jobX .xTailBox div{ white-space:pre-wrap; overflow-wrap:anywhere; }
+.jobX .xTailBox div.bad{ color:var(--err); }
+.jobX .xTailBox div.quiet{ color:var(--wait); }
+.jobX .pidBtn{ font-family:ui-monospace,Menlo,monospace; font-size:10.5px; font-weight:600; color:var(--mut); background:var(--ov06); border:1px solid var(--ov14); border-radius:6px; padding:1px 7px; cursor:copy; letter-spacing:0; text-transform:none; white-space:nowrap; }
+.jobX .pidBtn:hover{ color:var(--ink); border-color:var(--ov2a); }
+.jobX .pidBtn.copied{ color:var(--run); border-color:rgb(from var(--run) r g b / 50%); }
+.jobX .xFoot{ display:flex; flex-wrap:wrap; gap:4px 14px; align-items:baseline; font-size:10.5px; color:var(--dim); border-top:1px solid var(--ov0c); padding-top:7px; min-width:0; }
+.jobX .xFoot b{ font-family:ui-monospace,Menlo,monospace; color:var(--mut); font-weight:600; }
+/* ── feed row: the end summary, verbatim, after the card fades; detached jobs
+   keep a live row (they outlive the turn) with stop still reachable ── */
+.csJobFeed{ max-width:700px; margin:8px auto 4px; display:flex; flex-direction:column; gap:5px; container-type:inline-size; }
+.runJobSlot .jobFeedRow{ margin:8px 10px 2px; }
+.jobFeedRow{
+  display:flex; flex-wrap:wrap; align-items:baseline; gap:1px 8px; min-width:0; padding:5px 10px 5px 9px;
+  border:1px solid var(--ov0c); border-radius:8px; background:var(--ov05); font-size:11.5px; color:var(--mut);
+}
+.jobFeedRow .jfIco{ font-weight:800; width:12px; flex-shrink:0; text-align:center; }
+.jobFeedRow.ok .jfIco{ color:var(--run); } .jobFeedRow.bad .jfIco{ color:var(--red); } .jobFeedRow.stop .jfIco{ color:var(--yellow); }
+.jobFeedRow.live .jfIco{ color:var(--run); animation:pulse 1.4s infinite; }
+.jobFeedRow .jfRt{ font-size:10.5px; color:var(--mut); border:1px solid var(--ov14); border-radius:99px; padding:0 6px; background:var(--ov06); flex-shrink:0; white-space:nowrap; }
+.jobFeedRow .jfCmd{ font-family:ui-monospace,Menlo,monospace; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:60px; }
+.jobFeedRow .jfSum{ font-family:ui-monospace,Menlo,monospace; font-size:11px; flex-basis:100%; order:9; padding-left:20px; min-width:0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+.jobFeedRow .jfSum b{ font-weight:700; color:var(--ink); }
+.jobFeedRow.ok .jfSum .jpBad, .jobFeedRow.bad .jfSum .jpBad{ color:var(--red); }
+.jobFeedRow .jfSum .jpWarn{ color:var(--yellow); } .jobFeedRow .jfSum .jpStall{ color:var(--wait); } .jobFeedRow .jfSum .jpMut{ color:var(--mut); }
+.jobFeedRow .jfTime{ font-size:10.5px; color:var(--dim); white-space:nowrap; flex-shrink:0; }
+.jobFeedRow .jfAct{ font:inherit; font-size:10.5px; color:var(--viewable); cursor:pointer; white-space:nowrap; flex-shrink:0; background:none; border:0; padding:0; }
+.jobFeedRow .jfAct:hover{ color:var(--ink); text-decoration:underline; }
+.jobFeedRow .jfAct.stop{ color:var(--red); }
+.jobFeedRow .jfAct:disabled{ opacity:.55; cursor:default; text-decoration:none; }
+@container (min-width:640px){
+  .jobFeedRow{ flex-wrap:nowrap; }
+  .jobFeedRow .jfCmd{ flex:0 1 auto; max-width:40%; }
+  .jobFeedRow .jfSum{ flex:1; flex-basis:auto; order:0; padding-left:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+}
 
 /* change history (Δ tab) */
 .snapList{ flex:1; overflow-y:auto; padding:10px 14px; }
@@ -2142,6 +2313,18 @@ select.cmIn{ width:auto; }
 .serviceActions .gbtn{ padding:6px 9px; font-size:10px; }
 .serviceActions .danger{ color:var(--red); }
 .serviceNotice,.agentOfflineNote{ margin-top:10px; padding:9px 12px; border:1px solid rgb(from var(--yellow) r g b / 25%); border-radius:10px; color:var(--yellow); background:rgb(from var(--yellow) r g b / 5%); font-size:11px; line-height:1.5; }
+/* toolchains (Settings): the ▶ registry's binaries, one service-style card per runtime */
+.tcCard .serviceMark{ font:800 10px ui-monospace,Menlo,monospace; letter-spacing:.02em; }
+.tcCard .serviceDetail{ white-space:normal; }
+.tcCard .serviceStatus.tcMissing{ color:var(--red); }
+.tcCard .serviceStatus.tcMissing i{ background:var(--red); }
+.tcCard .serviceStatus.tcPartial{ color:var(--yellow); }
+.tcCard .serviceStatus.tcPartial i{ background:var(--yellow); }
+.tcBin{ cursor:help; white-space:nowrap; }
+.tcBin.off{ color:var(--red); }
+.tcHint{ margin-top:5px; color:var(--yellow); font:10.5px ui-monospace,Menlo,monospace; line-height:1.5; word-break:break-word; }
+.tcFoot{ display:flex; align-items:center; gap:10px; margin-top:10px; color:var(--dim); font-size:10.5px; line-height:1.5; }
+.tcFoot .gbtn{ margin-left:auto; padding:6px 9px; font-size:10px; flex:none; }
 .defaultAgentRow{ margin-top:10px; align-items:flex-start; }
 .agentDefaultCtl{ margin-left:auto; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:7px; }
 .agentDefaultCtl select{

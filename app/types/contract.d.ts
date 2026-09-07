@@ -27,6 +27,38 @@ interface ProjectInfo {
   texWatch?: string | null;
   /** 'active' | 'trial' | 'inactive' — inactive hides from nav/overview. */
   status?: string;
+  /** lib/toolchains.js projectToolchains(root): the runtimes the project's
+   *  marker files imply (Cargo.toml → rust, …), the marker per runtime, and
+   *  the needed runtimes whose required toolchain is absent on this server. */
+  toolchains?: { runtimes: string[]; markers: { [id: string]: string }; missing: string[] };
+}
+
+/** snapshot `toolchains[id]` (summary — no paths) / GET /api/toolchains (detail rows). */
+interface ToolchainInfo {
+  id: string;
+  label: string;
+  ok: boolean;
+  missing: string[];
+  missingOptional: string[];
+  /** bin → short version ('1.94.1'), null when unprobed/missing. */
+  versions: { [bin: string]: string | null };
+  /** One-line install suggestion for the missing bins (host platform first), null when complete. */
+  hint: string | null;
+  /** node only: native stripping capability (informational) and the installed
+   * TS/JSX executor. Current runs use tsx; 'node' remains a legacy wire value. */
+  ts?: { strip: boolean; via: 'node' | 'tsx' | null; tsx: string | boolean | null };
+  /** detail only */
+  required?: ToolchainRow[];
+  optional?: ToolchainRow[];
+}
+interface ToolchainRow {
+  bin: string;
+  found: boolean;
+  path: string | null;
+  version: string | null;
+  short: string | null;
+  kind?: 'module';
+  pending?: boolean;
 }
 
 interface CategoryInfo {
@@ -257,6 +289,24 @@ interface EditsAggregate {
 }
 
 /** activeSessions() rows in the snapshot. */
+interface ActiveTurnInfo {
+  turnId: string;
+  requestId?: string | null;
+  startedAt: string;
+  recallUntil?: string | null;
+  phase: string;
+}
+
+interface RecalledTurnInfo {
+  project?: ProjectKey;
+  id?: string;
+  turnId: string;
+  requestId?: string | null;
+  prompt?: string;
+  status: 'recalled';
+  transcript?: TranscriptEntry[];
+}
+
 interface SessionInfo {
   project: ProjectKey;
   id: string;
@@ -266,6 +316,7 @@ interface SessionInfo {
   status?: string;
   agents?: AgentInfo[];
   edits?: EditsAggregate | null;
+  activeTurn?: ActiveTurnInfo | null;
   [k: string]: any;
 }
 
@@ -279,10 +330,71 @@ interface PermRequest {
 
 /* ───────────────────────── runs / jobs ───────────────────────── */
 
+/** One planned step of a ▶ run (lib/runtimes.js resolveRunTarget). */
+interface RunStep {
+  cmd?: string;
+  args?: string[];
+  cwd?: string;
+  env?: { [k: string]: string };
+  /** The job card's phase while this step runs (compiling · running · tests · …). */
+  phase: string;
+  /** Run under script(1) — stdio block-buffers when piped (C/C++). */
+  pty?: boolean;
+  /** jobParsers HANDLERS key for this step's output; null = generic only. */
+  parser?: string | null;
+  /** The footer line for this step. */
+  display?: string;
+  /** Decided after the previous step (cmake/make's produced executable). */
+  deferred?: boolean;
+  [k: string]: any;
+}
+
+/** A registry entry as the client sees it (snapshot `runtimes.byExt[ext]`). */
+interface RuntimeInfo {
+  /** julia · python · r · shell · sql · tex · rust · go · node · c · cpp */
+  id: string;
+  label: string;
+  /** 'self' = the spawned pid is the program; 'child' = pin its deepest matching descendant. */
+  pin?: 'self' | 'child' | string;
+  /** stdout block-buffers when piped → the runner uses a pty for the final step. */
+  buffered?: boolean;
+  [k: string]: any;
+}
+
+/** Per-runtime toolchain presence (snapshot `runtimes.toolchains[id]`). */
+interface ToolchainStatus {
+  ok: boolean;
+  /** Required binaries not found on the server PATH. */
+  missing: string[];
+  bins: { [bin: string]: { path: string | null; version: string | null; optional: boolean } };
+  /** bin → first line of `<bin> --version` (null until probed / when missing). */
+  versions: { [bin: string]: string | null };
+}
+
+/** snapshot `runtimes` — the ▶ registry: runnable extensions, ext → runtime, toolchains. */
+interface RuntimesSnapshot {
+  /** With the dot, registry order: ['.jl', '.py', …, '.rs', '.go', '.js', …, '.c', '.cpp', …]. */
+  exts: string[];
+  byExt: { [ext: string]: RuntimeInfo };
+  toolchains: { [id: string]: ToolchainStatus };
+}
+
 /** runner.js run info (snapshot `runs[project]`, `run:status` payloads). */
 interface RunInfo {
   rel?: string;
+  /** The footer line — the CURRENT step's command while a multi-step run progresses. */
   cmdLine?: string;
+  /** The whole plan on one line ("rustc -o ./hello hello.rs && ./hello"). */
+  display?: string;
+  /** Registry id that claimed the file (RuntimeInfo.id). */
+  runtime?: string;
+  mode?: 'run' | 'test' | string;
+  /** The running/ending step's phase (compiling · running · tests · built · …). */
+  phase?: string | null;
+  /** Planned phases, one per step, in order. */
+  phases?: string[];
+  /** Current step index and count (`i` is the step that ended the run once finished). */
+  step?: { i: number; n: number } | null;
   state?: 'running' | 'done' | 'error' | 'stopped' | string;
   exitCode?: number | null;
   startedAt?: string | number;
@@ -309,6 +421,14 @@ interface JobProgress {
 }
 
 /** lib/jobs.js live job card (snapshot `jobs[]`, `job:status` payloads). */
+/** counters.lastError — the most recent located error diagnostic a parser saw. */
+interface JobLastError {
+  file: string | null;
+  line: number | null;
+  col: number | null;
+  msg: string | null;
+}
+
 interface JobInfo {
   key: string;
   source?: 'session' | 'run' | string;
@@ -331,6 +451,35 @@ interface JobInfo {
   detached?: boolean;
   inline?: boolean;
   description?: string;
+  /* ── v3 measured telemetry (CONTRACT.md "Job cards v3"); null until measurable ── */
+  /** ISO of the last sweep that saw the root pid; null before the first. */
+  sampledAt?: string | null;
+  pollMs?: number;
+  /** Numbers are kept at their last values; the UI greys them. */
+  stale?: boolean;
+  /** Σ Δcputime ÷ Δwall over the tree (EMA); null until two sweeps. */
+  cores?: number | null;
+  coresBasis?: 'cputime' | 'pcpu' | null;
+  hostCores?: number | null;
+  cpuTimeMs?: number | null;
+  /** Preferred memory figure in bytes: footprint when probed, else rss-sum. */
+  memBytes?: number | null;
+  memKind?: 'footprint' | 'rss' | null;
+  memPeakBytes?: number | null;
+  procs?: number | null;
+  threads?: number | null;
+  health?: { state: 'starting' | 'computing' | 'stalled' | 'io' | 'idle' | string; sinceMs: number } | null;
+  output?: { lines?: number; rate?: number; last?: string | null; owned: boolean; buffered?: boolean } | null;
+  history?: { typicalMs: number; n: number } | null;
+  exit?: { code: number | null; signal: string | null; byUser: boolean } | null;
+  phase?: { name: string; n: number | null; m: number | null; mSoft: boolean } | null;
+  /**
+   * Parser counters (lib/jobParsers.js): numbers/strings (passed failed skipped
+   * todo ok errors warnings notes suites suitesFailed coverage modules timeS
+   * exitStatus crate …) plus `lastError`, the most recent located error
+   * diagnostic ({file, line, col, msg} — any half may be null).
+   */
+  counters?: { [k: string]: number | string | JobLastError | null };
   /** Client stamp (perf.now at receipt) driving the local 1s clock. */
   _recvAt?: number;
   [k: string]: any;
@@ -501,7 +650,16 @@ interface StateSnapshot {
   providers: { [provider: string]: ProviderState };
   agentDefaults: AgentDefaults;
   sessions: SessionInfo[];
+  turnStates?: { [key: string]: {
+    activeTurn?: ActiveTurnInfo | null;
+    lastRecalled?: RecalledTurnInfo | null;
+    recalledTurnIds?: string[];
+  } };
   runs: { [key: string]: RunInfo };
+  /** The ▶ registry (lib/runtimes.js): runnable extensions, ext → runtime, toolchain presence. */
+  runtimes?: RuntimesSnapshot | null;
+  /** Per-runtime toolchain summary (lib/toolchains.js): ok, versions, install hint — no paths. */
+  toolchains?: { [id: string]: ToolchainInfo } | null;
   texfix: { [key: string]: TexFixState };
   kaimon: KaimonState;
   update: UpdateStatus;
@@ -523,13 +681,17 @@ type WsEventMap = {
   'state': StateSnapshot;
   'task:update': { project: ProjectKey; task: Task };
   'task:delete': { project: ProjectKey; id: string };
-  'session:stream': { project: ProjectKey; id: string; chunk: string };
+  'session:stream': { project: ProjectKey; id: string; chunk: string; turnId?: string; requestId?: string | null };
+  'session:recalled': RecalledTurnInfo & { project: ProjectKey; id: string };
   'session:activity': { project: ProjectKey; id: string; turnStartedAt: string; activity: { label: string } | null };
   'session:status': {
     project: ProjectKey; id: string; status?: string;
     turnStartedAt?: string;
     tokens?: { in?: number; out?: number }; costUsd?: number;
     error?: string; authNeeded?: boolean; provider?: string;
+    turnId?: string; requestId?: string | null;
+    phase?: string; reason?: string; recallFailed?: boolean;
+    activeTurn?: ActiveTurnInfo | null;
   };
   'session:agents': { project: ProjectKey; id: string; agents: AgentInfo[] };
   'session:edits': { project: ProjectKey; id: string; edits: EditsAggregate | null };

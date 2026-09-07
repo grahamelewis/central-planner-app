@@ -28,6 +28,7 @@ import {
 } from './monacoPane.js';
 import { selectViewer } from './viewers.js';
 import { renderWB } from './workbench.js';
+import { transcriptRevision, replaceTranscript } from './undoSend.js';
 
 const fileLists = {};     // project → { files:[rel,…] } | { loading } — for the pin picker
 const dirCache = {};      // `${project}::${rel}` → { entries, sig, loaded, loading } — sidebar folder browser
@@ -62,19 +63,23 @@ function reconcileFinalTranscriptTail(live, finalText) {
  * Re-fetch a task's server-side transcript into the transcripts cache.
  * @param {string} project
  * @param {string} id task id
- * @param {{ reconcileTail?: boolean }} [options]
+ * @param {{ reconcileTail?: boolean, rebuildTail?: boolean }} [options]
  * @returns {Promise<void>}
  */
-export async function refreshTranscript(project, id, { reconcileTail = false } = {}) {
+export async function refreshTranscript(project, id, { reconcileTail = false, rebuildTail = false } = {}) {
   const k = `${project}/${id}`;
+  const revision = transcriptRevision[k] || 0;
   const data = await apiQuiet('GET', `/api/transcript/${enc(project)}/${enc(id)}`);
+  if ((transcriptRevision[k] || 0) !== revision) return;
   const prev = transcripts[k];
   const entries = (data && Array.isArray(data.transcript)) ? data.transcript : (prev?.entries || []);
   transcripts[k] = {
     entries,
     fetched: true,
   };
-  if (reconcileTail && data && Array.isArray(data.transcript)) {
+  if (rebuildTail && data && Array.isArray(data.transcript)) {
+    replaceTranscript(project, id, data.transcript);
+  } else if (reconcileTail && data && Array.isArray(data.transcript)) {
     const final = [...entries].reverse().find(e => e && e.role === 'assistant' && typeof e.text === 'string');
     if (final) tailBufs[k] = reconcileFinalTranscriptTail(tailBufs[k], final.text);
   }

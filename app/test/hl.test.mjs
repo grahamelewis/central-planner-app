@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import { APP_DIR } from './helpers.mjs';
 
-const { hlText } = await import(path.join(APP_DIR, 'public', 'hl.js'));
+const { hlText, hlFor } = await import(path.join(APP_DIR, 'public', 'hl.js'));
 const UNESC = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"' };
 const stripToText = html => html.replace(/<\/?span[^>]*>/g, '')
   .replace(/&(amp|lt|gt|quot);/g, match => UNESC[match]);
@@ -24,6 +24,21 @@ const SNIPPETS = {
   json: '{\n  "key": "va<l&ue\\"",\n  "n": -1.5e3,\n  "ok": true,\n  "z": null\n}',
   tex: '% comment <x>\n\\section{Title & more}\ntext $x^2 + y$ and $$\\int_0^1$$ done',
   sql: "-- comment <x> & \"q\"\nSELECT a, count(*) AS n\nFROM read_parquet('works_*.parquet')\nWHERE name = 'O''Brien' AND v < 5\n/*\nblock comment < > &\n*/\ngroup by a;",
+  // wave 1 (docs/language-support/RUNTIMES.md): the compact grammars behind
+  // the editor's langFor table — keyed by the extensions the workbench sends
+  rs: 'use std::fmt;\n/// doc <T> & "q"\nfn f<\'a>(x: &\'a str) -> Option<char> { x.chars().next() } // c <a>\n/* block\n< > & */\nlet s = "a<b>&\\"c"; let c = \'<\'; let b = b\'x\';\nprintln!("{} {}", 1u32, 0xFF_u8);\n#[derive(Debug)]\nstruct S;',
+  go: 'package main\n\nimport "fmt"\n\n// comment <x> & "q"\nfunc main() {\n\ts := `raw <a>\n& "multi"`\n\tfmt.Println(s, \'<\', 3.5e2, "a<b>&\\"c")\n\t/* block\n< > & */\n}',
+  js: '// comment <x> & "q"\nexport function add(a, b) { return `t${a} <b> & "q"\nmulti` + a; }\n/* block\n< > & */\nconst s = \'x<y\' + "a<b>&\\"c"; let n = 10n + 0xFF + 1e9;',
+  ts: 'interface Foo<T> { readonly n: number; s: string }\n// comment <x> & "q"\nexport const f = (x: Foo<string>): string => `${x.s} <b>` + "a<b>&\\"c";\n/* block\n< > & */\nenum E { A = 1 }',
+  c: '#include <stdio.h>\n// comment <x> & "q"\nint main(void) {\n  /* block\n  < > & */\n  printf("a<b>&\\"c\\n", 10UL, 1.0f, \'<\');\n  return 0;\n}',
+  cpp: '#include <iostream>\n// comment <x> & "q"\ntemplate <typename T> class A : public B<T> {\n  virtual void f() override { std::cout << "a<b>&\\"c" << 0x1F; }\n  /* block\n  < > & */\n};',
+  hpp: '#pragma once\n#ifndef H_HPP\n#define H_HPP 1\nint add(int a, int b); // <x> &\n#endif',
+  toml: '[package] # <x> &\nname = "a<b>&\\"c"\nversion = \'0.1.0\'\nedition = 2021\nok = true\nwhen = 1979-05-27T07:32:00Z\ndesc = """multi <a>\n& line"""\n[dependencies.serde]\nfeatures = ["derive"]',
+  yml: '---\n# comment <x> & "q"\nname: a<b\nlist:\n  - a: 1\n  - "x<y>&\\"z"\n  - \'q<r\'\nanchor: &base { on: yes }\nref: *base\n...',
+  makefile: '# build <x> & "q"\nCC ?= cc\nCFLAGS := -Wall\nall: hello\n\t$(CC) $(CFLAGS) -o $@ $< "a<b" \'c<d\'\n.PHONY: all clean\nifeq ($(OS),Windows_NT)\n\techo ${HOME}\nendif',
+  mk: 'include common.mk # <x>\nobjs = $(patsubst %.c,%.o,$(wildcard *.c))\n$(BIN): $(objs)\n\t$(CC) -o $@ $^',
+  cmake: 'cmake_minimum_required(VERSION 3.10) # <x> &\nproject(hello LANGUAGES C)\nset(SRC "a<b>&\\"c")\nadd_executable(hello ${SRC})\ntarget_link_libraries(hello $<TARGET_FILE:dep>)',
+  mod: 'module example.com/hello // <x> &\n\ngo 1.22\n\nrequire (\n\tgithub.com/a/b v1.2.3 // indirect\n\tgithub.com/c/d v0.0.0-20240102150405-abcdef123456\n)\nreplace github.com/a/b => ../b',
 };
 
 describe('hlFor / hlText basics', () => {
@@ -144,4 +159,140 @@ describe('tex verbatim + unclosed math containment', () => {
   });
 
 
+});
+
+/* ═══ wave 1 grammars (docs/language-support/RUNTIMES.md, editor row) ═══
+   Each grammar: a keyword gets .kw, a string with an embedded `<` is escaped
+   INSIDE its .st span, a comment gets .cm, and the multiline openers carry
+   across lines and close. hlFor maps every extension the workbench can send
+   (rel.split('.').pop().toLowerCase(), so `Makefile` arrives as 'makefile'). */
+describe('wave 1 grammars', () => {
+  const kw = (html, w) => new RegExp(`<span class="kw">${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</span>`).test(html);
+  const cls = (html, c, w) => new RegExp(`<span class="${c}">${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</span>`).test(html);
+
+  test('hlFor: every wave-1 extension resolves; CMakeLists.txt (txt) stays plain', () => {
+    const map = {
+      rs: 'rs', go: 'go',
+      js: 'js', mjs: 'js', cjs: 'js', jsx: 'js',
+      ts: 'ts', mts: 'ts', cts: 'ts', tsx: 'ts',
+      c: 'c', h: 'c', cc: 'c', cpp: 'c', cxx: 'c', 'c++': 'c', hpp: 'c', hxx: 'c', hh: 'c',
+      toml: 'toml', yaml: 'yaml', yml: 'yaml',
+      makefile: 'make', gnumakefile: 'make', mk: 'make',
+      cmake: 'cmake', mod: 'gomod', sum: 'gomod',
+    };
+    for (const [ext, lang] of Object.entries(map)) assert.equal(hlFor(ext), lang, `hlFor(${ext})`);
+    assert.equal(hlFor('txt'), null, 'CMakeLists.txt is plaintext (no txt grammar)');
+    // the pre-existing map is untouched
+    for (const [ext, lang] of Object.entries({ jl: 'jl', py: 'py', r: 'r', sh: 'sh', tex: 'tex', bib: 'tex', json: 'json', md: 'md', sql: 'sql' })) {
+      assert.equal(hlFor(ext), lang, `existing hlFor(${ext})`);
+    }
+  });
+
+  test('rust: keywords, escaped string, char vs lifetime, macro, attribute, block comment carry', () => {
+    const html = hlText(SNIPPETS.rs, 'rs');
+    assert.ok(kw(html, 'fn') && kw(html, 'let') && kw(html, 'struct') && kw(html, 'Option'), 'keywords');
+    assert.ok(cls(html, 'st', '&quot;a&lt;b&gt;&amp;\\&quot;c&quot;'), 'string with < > & " escaped inside .st');
+    assert.ok(cls(html, 'st', "'&lt;'"), "char literal '<' is a string token");
+    assert.ok(cls(html, 'fn', "'a"), 'lifetime is fn, not the start of a string');
+    assert.ok(cls(html, 'fn', 'println!'), 'macro call');
+    assert.ok(cls(html, 'fn', '#[derive(Debug)]'), 'attribute');
+    assert.ok(cls(html, 'cm', '/// doc &lt;T&gt; &amp; &quot;q&quot;'), 'doc comment');
+    assert.ok(cls(html, 'nm', '1u32') && cls(html, 'nm', '0xFF_u8'), 'suffixed numbers');
+    const lines = html.split('\n');
+    assert.match(lines[3], /^<span class="cm">\/\* block<\/span>$/, 'block comment opener line');
+    assert.match(lines[4], /^<span class="cm">&lt; &gt; &amp; \*\/<\/span>$/, 'carried + closed');
+    assert.ok(kw(lines[5], 'let'), 'highlighting resumes after the close');
+  });
+
+  test('go: keywords + builtins, raw string carries across lines, rune literal', () => {
+    const html = hlText(SNIPPETS.go, 'go');
+    assert.ok(kw(html, 'package') && kw(html, 'import') && kw(html, 'func'), 'keywords');
+    assert.ok(cls(html, 'st', '&quot;a&lt;b&gt;&amp;\\&quot;c&quot;'), 'escaped string');
+    assert.ok(cls(html, 'st', "'&lt;'"), 'rune literal');
+    const lines = html.split('\n');
+    assert.match(lines[6], /<span class="st">`raw &lt;a&gt;<\/span>$/, 'raw string opener carries');
+    assert.match(lines[7], /^<span class="st">&amp; &quot;multi&quot;`<\/span>/, 'raw string closes on the next line');
+    assert.ok(cls(html, 'nm', '3.5e2'), 'float');
+    assert.ok(cls(html, 'cm', '// comment &lt;x&gt; &amp; &quot;q&quot;'), 'line comment');
+  });
+
+  test('js: keywords, template literal carry, both quote styles, bigint/hex/exp numbers', () => {
+    const html = hlText(SNIPPETS.js, 'js');
+    assert.ok(kw(html, 'export') && kw(html, 'function') && kw(html, 'return') && kw(html, 'const'), 'keywords');
+    assert.ok(!kw(html, 'interface'), 'ts-only vocabulary is plain in js');
+    const lines = html.split('\n');
+    assert.match(lines[1], /<span class="st">`t\$\{a\} &lt;b&gt; &amp; &quot;q&quot;<\/span>$/, 'template opener carries');
+    assert.match(lines[2], /^<span class="st">multi`<\/span>/, 'template closes');
+    assert.ok(cls(html, 'st', "'x&lt;y'") && cls(html, 'st', '&quot;a&lt;b&gt;&amp;\\&quot;c&quot;'), 'strings escaped');
+    assert.ok(cls(html, 'nm', '10n') && cls(html, 'nm', '0xFF') && cls(html, 'nm', '1e9'), 'numbers');
+  });
+
+  test('ts: the js tokenizer plus the type vocabulary', () => {
+    const html = hlText(SNIPPETS.ts, 'ts');
+    for (const w of ['interface', 'readonly', 'number', 'string', 'export', 'const', 'enum']) assert.ok(kw(html, w), `kw ${w}`);
+    assert.ok(cls(html, 'st', '&quot;a&lt;b&gt;&amp;\\&quot;c&quot;'), 'escaped string');
+    assert.ok(cls(html, 'nm', '1'), 'number');
+    assert.ok(!cls(html, 'kw', 'Foo'), 'identifiers stay plain');
+  });
+
+  test('c / cpp / hpp: one grammar — preprocessor lines, keywords, block comment carry', () => {
+    const c = hlText(SNIPPETS.c, 'c');
+    assert.ok(cls(c, 'fn', '#include') && kw(c, 'int') && kw(c, 'void') && kw(c, 'return'), 'c tokens');
+    assert.ok(cls(c, 'st', '&quot;a&lt;b&gt;&amp;\\&quot;c\\n&quot;'), 'escaped string');
+    assert.ok(cls(c, 'nm', '10UL') && cls(c, 'nm', '1.0f'), 'suffixed numbers');
+    const lines = c.split('\n');
+    assert.match(lines[3], /<span class="cm">\/\* block<\/span>$/, 'block comment opener');
+    assert.match(lines[4], /^<span class="cm"> {2}&lt; &gt; &amp; \*\/<\/span>$/, 'carried + closed');
+    const cpp = hlText(SNIPPETS.cpp, 'cpp');
+    for (const w of ['template', 'typename', 'class', 'public', 'virtual', 'void', 'override']) assert.ok(kw(cpp, w), `cpp kw ${w}`);
+    assert.ok(cls(cpp, 'fn', '#include') && cls(cpp, 'nm', '0x1F'), 'cpp include + hex');
+    const h = hlText(SNIPPETS.hpp, 'hpp');
+    assert.ok(cls(h, 'fn', '#pragma') && cls(h, 'fn', '#ifndef') && cls(h, 'fn', '#endif') && kw(h, 'int'), 'hpp preprocessor + kw');
+  });
+
+  test('toml: tables, keys, strings, dates, booleans, """ carry', () => {
+    const html = hlText(SNIPPETS.toml, 'toml');
+    assert.ok(cls(html, 'kw', '[package]') && cls(html, 'kw', '[dependencies.serde]'), 'tables');
+    assert.ok(cls(html, 'fn', 'name') && cls(html, 'fn', 'features'), 'keys');
+    assert.ok(cls(html, 'st', '&quot;a&lt;b&gt;&amp;\\&quot;c&quot;') && cls(html, 'st', "'0.1.0'"), 'strings');
+    assert.ok(cls(html, 'nm', '2021') && cls(html, 'nm', '1979-05-27T07:32:00Z'), 'int + datetime');
+    assert.ok(kw(html, 'true'), 'boolean');
+    assert.ok(cls(html, 'cm', '# &lt;x&gt; &amp;'), 'comment');
+    const lines = html.split('\n');
+    assert.match(lines[6], /<span class="st">&quot;&quot;&quot;multi &lt;a&gt;<\/span>$/, '""" opener carries');
+    assert.match(lines[7], /^<span class="st">&amp; line&quot;&quot;&quot;<\/span>/, '""" closes');
+  });
+
+  test('yaml: document markers, keys, anchors, strings, booleans', () => {
+    const html = hlText(SNIPPETS.yml, 'yml');
+    assert.ok(cls(html, 'kw', '---') && cls(html, 'kw', '...'), 'document markers');
+    assert.ok(cls(html, 'fn', 'name') && cls(html, 'fn', 'list') && cls(html, 'fn', '&amp;base') && cls(html, 'fn', '*base'), 'keys + anchor/alias');
+    assert.ok(cls(html, 'st', '&quot;x&lt;y&gt;&amp;\\&quot;z&quot;') && cls(html, 'st', "'q&lt;r'"), 'strings');
+    assert.ok(kw(html, 'yes'), 'boolean');
+    assert.ok(cls(html, 'cm', '# comment &lt;x&gt; &amp; &quot;q&quot;'), 'comment');
+  });
+
+  test('makefile / .mk: targets, automatic + named variables, directives', () => {
+    const html = hlText(SNIPPETS.makefile, 'makefile');
+    assert.ok(cls(html, 'kw', 'all:') && cls(html, 'kw', '.PHONY:'), 'target lines');
+    assert.ok(cls(html, 'fn', '$(CC)') && cls(html, 'fn', '$@') && cls(html, 'fn', '$&lt;') && cls(html, 'fn', '${HOME}'), 'variables');
+    assert.ok(kw(html, 'ifeq') && kw(html, 'endif'), 'directives');
+    assert.ok(cls(html, 'st', '&quot;a&lt;b&quot;') && cls(html, 'st', "'c&lt;d'"), 'strings');
+    assert.ok(cls(html, 'cm', '# build &lt;x&gt; &amp; &quot;q&quot;'), 'comment');
+    assert.ok(!/<span class="kw">CC \?=/.test(html) && !/<span class="kw">CFLAGS :=/.test(html), 'assignments are not targets');
+    const mk = hlText(SNIPPETS.mk, 'mk');
+    assert.ok(kw(mk, 'include') && cls(mk, 'kw', '$(BIN):') && cls(mk, 'fn', '$^'), '.mk tokens');
+  });
+
+  test('cmake (*.cmake) + go.mod: commands any-case, ${VAR} / $<GEN>, directives + versions', () => {
+    const cm = hlText(SNIPPETS.cmake, 'cmake');
+    assert.ok(kw(cm, 'cmake_minimum_required') && kw(cm, 'project') && kw(cm, 'set'), 'commands');
+    assert.ok(cls(cm, 'fn', '${SRC}') && cls(cm, 'fn', '$&lt;TARGET_FILE:dep&gt;'), 'variables / generator expressions');
+    assert.ok(cls(cm, 'st', '&quot;a&lt;b&gt;&amp;\\&quot;c&quot;'), 'string');
+    assert.ok(kw(hlText('SET(x 1)', 'cmake'), 'SET'), 'commands match any case');
+    const mod = hlText(SNIPPETS.mod, 'mod');
+    for (const w of ['module', 'go', 'require', 'replace']) assert.ok(kw(mod, w), `go.mod kw ${w}`);
+    assert.ok(cls(mod, 'nm', 'v1.2.3') && cls(mod, 'nm', 'v0.0.0-20240102150405-abcdef123456'), 'versions');
+    assert.ok(cls(mod, 'cm', '// &lt;x&gt; &amp;'), 'comment');
+  });
 });

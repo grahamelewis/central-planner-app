@@ -9,9 +9,10 @@ import {
   transcripts, fileCache,
   perOf, relOf, isExternalPin, artifactUrl, agentName, taskProvider,
 } from './store.js';
+import { pausedQueues } from './undoSend.js';
 import { api } from './net.js';
 import { ensureFile } from './files.js';
-import { syncJobCards } from './jobs.js';
+import { syncJobCards, syncJobFeed, jobsEnded } from './jobs.js';
 import { getAddedViewers, showProposalInPanel } from './viewers.js';
 import { renderWB } from './workbench.js';
 import { runActivityHtml, syncRunActivities } from './runActivity.js';
@@ -757,9 +758,10 @@ export function updateConsole(box, k, upto) {
       qEl = document.createElement('div');
       qEl.className = 'csQueued';
     }
-    if (qEl._n !== nq) {
+    if (qEl._n !== nq || qEl.dataset.paused !== String(pausedQueues.has(k))) {
       qEl._n = nq;
-      qEl.textContent = `⏳ ${nq === 1 ? 'message' : nq + ' messages'} queued — sends when this turn ends`;
+      qEl.dataset.paused = String(pausedQueues.has(k));
+      qEl.textContent = `⏳ ${nq === 1 ? 'message' : nq + ' messages'} queued — ${pausedQueues.has(k) ? 'paused; return to composer when ready' : 'sends when this turn ends'}`;
     }
   } else if (qEl) {
     qEl.remove();
@@ -852,9 +854,14 @@ export function updateConsole(box, k, upto) {
   // live job cards — long-running scripts this task's turn is executing
   // (job:status events; state.jobs seeds after a reload). Independent of
   // `running`: a just-finished card holds its terminal state while it fades.
+  const mine = (j) => j && j.source === 'session' && j.project === project && j.taskId === taskId;
+  const byStart = (a, b) => (a.startedAt < b.startedAt ? -1 : 1);
+  // a DETACHED job outlives the turn: while the turn runs it keeps its full
+  // card; once the turn has ended it collapses to a live feed row (⊘ stop
+  // still reachable) beside the ended jobs' one-line end summaries
   const myJobs = Object.values(jobsLive)
-    .filter(j => j && j.source === 'session' && j.project === project && j.taskId === taskId)
-    .sort((a, b) => (a.startedAt < b.startedAt ? -1 : 1));
+    .filter(j => mine(j) && (running || !(j.detached && j.state === 'running')))
+    .sort(byStart);
   let jobsEl = box.querySelector(':scope > .csJobs');
   if (myJobs.length) {
     if (!jobsEl) {
@@ -866,6 +873,23 @@ export function updateConsole(box, k, upto) {
     jobsEl.remove();
     jobsEl = null;
   }
+  // the session feed: what stays after a card fades — one row per ended job
+  // (✓ / ✗ / ⊘ + end summary), plus the live row of a detached job after the turn
+  const feedJobs = [
+    ...Object.values(jobsEnded).filter(mine),
+    ...(running ? [] : Object.values(jobsLive).filter(j => mine(j) && j.detached && j.state === 'running')),
+  ].sort(byStart);
+  let feedEl = box.querySelector(':scope > .csJobFeed');
+  if (feedJobs.length) {
+    if (!feedEl) {
+      feedEl = document.createElement('div');
+      feedEl.className = 'csJobFeed';
+    }
+    syncJobFeed(feedEl, feedJobs);
+  } else if (feedEl) {
+    feedEl.remove();
+    feedEl = null;
+  }
   // ── tail placement, move-free when already in order ──
   // The strips ride at the stream's end as: verb, agents, jobs. appendChild
   // on a node that is ALREADY in the document detaches and re-inserts it,
@@ -875,7 +899,7 @@ export function updateConsole(box, k, upto) {
   // ("the running panel disappears then reappears"). New segments append
   // inside .csegWrap, so once the tail is in order it STAYS in order — the
   // common case is zero DOM moves.
-  const tail = [verbEl, qEl, agEl, jobsEl].filter(Boolean);
+  const tail = [verbEl, qEl, agEl, feedEl, jobsEl].filter(Boolean);
   if (tail.length) {
     let inOrder = true;
     let node = box.lastElementChild;

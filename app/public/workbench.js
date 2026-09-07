@@ -29,7 +29,7 @@ import { relativizePaths, updateConsole, shownLen, pumps, seedTailBuf } from './
 import { syncRunJobCard } from './jobs.js';
 import {
   renderTexProblems, armTexfixRetire, startTexFix, texForwardSearch,
-  runFile, stopRunReq, RUNNABLE_EXTS, runPaneHtml,
+  runFile, stopRunReq, runnableExts, runPaneHtml,
 } from './texrun.js';
 import {
   getClosedViewers, persistClosedViewers, selectViewer, getAddedViewers,
@@ -45,6 +45,7 @@ import {
   nextUpSectionHtml, wireNextUp, sideChainHtml, feedSectionHtml,
 } from './sidebar.js';
 import { wireVoice } from './voice.js';
+import { stopOrRecall, restoreSavedDraft, recallPending, persistRecallState, submissionSending } from './undoSend.js';
 import { catGroup } from './views.js';
 import { openModal } from './modal.js';
 import { go } from './app.js';
@@ -284,7 +285,7 @@ function workSurface(key, task, files, fi) {
     const rel = external ? String(f) : relOf(key, f);
     const fkey = rel ? `${key}::${rel}` : null;
     const c = fkey ? fileCache[fkey] : null;
-    const ext = rel ? String(rel).split('.').pop().toLowerCase() : '';
+    const ext = rel ? String(rel).split('/').pop().split('.').pop().toLowerCase() : '';
     // tex ▶ lives in its pdf pane's toolbar once the document HAS a pane
     // — the foot button only bootstraps a never-compiled doc, then
     // yields for good (addedViewers persists, so this is a one-time handoff)
@@ -293,7 +294,7 @@ function workSurface(key, task, files, fi) {
       (state.pdf[key] && relOf(key, state.pdf[key].tex) === rel)
       || getAddedViewers(key).some(v => v.rel === texPdfRel)
       || !!pdfPanes[artPaneKey(key, texPdfRel)]);
-    const runBit = rel && !external && RUNNABLE_EXTS.includes(ext) && !texHasPane
+    const runBit = rel && !external && runnableExts().includes(ext) && !texHasPane
       ? (run?.state === 'running'
         ? `<button id="runFileBtn" class="stopBtn" data-rel="${esc(rel)}" data-running="1">⊘ stop</button>`
         : `<button id="runFileBtn" class="runBtn" data-rel="${esc(rel)}">▶ run</button>`)
@@ -2051,8 +2052,9 @@ function wireWB(root, key, task, files) {
     // on the next frame (after renderAll's .show toggle gives it layout).
     if (input.clientHeight) autosize(); // restored drafts may already be multi-line
     else requestAnimationFrame(autosize);
-    input.addEventListener('input', () => { composerDrafts[ck] = input.value; autosize(); });
+    input.addEventListener('input', () => { composerDrafts[ck] = input.value; persistRecallState(); autosize(); });
     const doSend = () => {
+      if (recallPending(key, task.id)) return;
       const text = input.value;
       if (!text.trim()) return;
       input.value = '';
@@ -2066,16 +2068,17 @@ function wireWB(root, key, task, files) {
       // rest of the answer rendered inside the you-bubble. Queue instead —
       // the session:status turn-end handler delivers it.
       const live = findTask(key, task.id);
-      if (live && live.status === 'running') {
+      if ((live && live.status === 'running') || submissionSending(key, task.id)) {
         (queuedMsgs[ck] ?? (queuedMsgs[ck] = [])).push(text);
+        persistRecallState();
         renderWB(key);
         return;
       }
-      sendMsg(key, task.id, text); // normal-mode jump is settled before render
+      sendMsg(key, task.id, text, { explicit: true }); // normal-mode jump is settled before render
     };
     send.addEventListener('click', doSend);
     input.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); doSend(); }
     });
     // ⏳ queued strip: × pulls a message back out of the queue into the composer
     root.querySelectorAll('[data-unqueue]').forEach(b => b.addEventListener('click', () => {
@@ -2084,8 +2087,11 @@ function wireWB(root, key, task, files) {
       const [t] = q.splice(Number(b.dataset.unqueue), 1);
       if (!q.length) delete queuedMsgs[ck];
       if (t) composerDrafts[ck] = composerDrafts[ck] ? `${t}\n\n${composerDrafts[ck]}` : t;
+      persistRecallState();
       renderWB(key);
     }));
+    root.querySelectorAll('[data-restore-draft]').forEach(b => b.addEventListener('click', () =>
+      restoreSavedDraft(key, task.id, Number(b.getAttribute('data-restore-draft')))));
   }
   const cbox = root.querySelector('#consoleBox');
   if (cbox) {
@@ -2158,13 +2164,7 @@ function wireWB(root, key, task, files) {
   if (task) wireVoice(root, key, task);
 
   const intr = root.querySelector('#interruptBtn');
-  if (intr) intr.addEventListener('click', async () => {
-    per.interrupting = task.id; // acknowledge instantly; cleared on session:status
-    renderWB(key);
-    const r = await api('POST', `/api/tasks/${enc(key)}/${enc(task.id)}/interrupt`);
-    if (r) toast('interrupt sent — the turn stops at the next safe point');
-    else { per.interrupting = null; renderWB(key); } // request failed — don't lie
-  });
+  if (intr) intr.addEventListener('click', () => stopOrRecall(key, task.id));
   const lb = root.querySelector('#launchBtn');
   if (lb) lb.addEventListener('click', async () => {
     lb.disabled = true; lb.textContent = '⟳ launching…';

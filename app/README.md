@@ -135,6 +135,13 @@ Sources checked 2026-09-04:
 - **Task** = unit of work. Oversight: `auto` (runs to completion), `propose` (plan mode),
   `coop` (interactive turns), `manual` (no agent). Category primer + living abstract +
   upstream handoffs + pinned files + notes are assembled into the launch prompt.
+- **Stop & Edit**: for five seconds after sending a prompt, while its turn is
+  still running, Stop & Edit or Esc in the conversation returns that prompt to
+  the composer. Its output is removed only after cancellation and provider
+  conversation restoration succeed. After that window, Stop keeps partial
+  output. Newer drafts are preserved and queued follow-ups pause. File changes,
+  external actions, detached jobs, and consumed usage are not undone. If history
+  restoration is unavailable or fails, the stopped exchange stays visible.
 - **AI services**: Claude and Codex are independent, peer providers. Each task stores an
   explicit provider and model; Codex tasks also store reasoning effort. Settings shows
   separate connection cards and a default for new tasks. Switching an existing task's
@@ -178,7 +185,25 @@ Sources checked 2026-09-04:
 - **Running**: ▶ run (or ⌘⏎ in the editor) executes the open file — `.jl` via julia (auto
   `--project=` from the nearest Project.toml), `.py` via the repo's venv else python3,
   `.r`/`.sh`, `.sql` via DuckDB (in-memory, statement by statement — query parquet/CSV in
-  place, `ATTACH` a database file explicitly).
+  place, `ATTACH` a database file explicitly), and — wave 1 — **Rust, Go, Node/TypeScript
+  and C/C++**: `.rs` inside a `Cargo.toml` crate → `cargo run` at the crate root (a file
+  under `tests/` or named `*_test.rs` → `cargo test`), a lone `.rs` → `rustc` then the
+  binary; `.go` under a `go.mod` → `go run .` (`*_test.go` → `go test ./...`); `.js`/`.ts`
+  → `node` for JavaScript, an installed `tsx` for TypeScript/JSX (or the package's
+  `npm run start` when its `package.json` has one; `npm test` for `*.test.*`).
+  The dashboard bundles a pinned `tsx` fallback; Run never downloads a missing
+  executor through `npx`. This supports enums and JSX, but does not add IDE type
+  checking. Conventional `src/bin/<name>.rs` and `src/bin/<name>/main.rs` select
+  that Cargo binary explicitly; custom/ambiguous binary layouts require an
+  explicit command instead of guessing. `.c`/`.cpp` →
+  the nearest `CMakeLists.txt` (when cmake is installed) or `Makefile`, else `cc`/`c++`
+  then the binary. Every rule comes from one registry (`lib/runtimes.js`): the nearest
+  project marker between the file and the project root wins, never above the root; a
+  missing toolchain is refused up front (`rustc not found on the server PATH`); compiled
+  single files land under the data root (`runs/<project>/bin/`), never in your project.
+  Multi-step runs (compile → run) are one run: the footer shows the step that is running,
+  a failing step ends the run with its exit code. C/C++ binaries run under a pseudo-terminal
+  (`script(1)`) so their block-buffered stdout streams live instead of arriving at exit.
   Unsaved edits are saved first. Output streams into a ▶ output tab; one run per project
   at a time, stoppable from the UI. Server keeps the output tail so reloads don't lose it.
   ▶ on a `.tex` compiles it one-shot and its PDF appears **as its own viewer tab** —
@@ -239,25 +264,29 @@ Sources checked 2026-09-04:
   Its live model catalog and plan rate-limit windows come from `codex app-server`;
   the status bar keeps Claude and Codex usage separate.
 - **Job cards**: a script that runs long enough to matter (~8s) gets a live
-  status card instead of a silent console — green ▶ RUNNING header, the file in
-  mono, `elapsed · %CPU · mem`, a progress bar, and `⊘ stop`, which terminates
-  the real process tree. Same card, same colors for Julia, R, and Python; it
-  appears in two places. In the **session console**, when Claude's turn runs
-  `julia fig3.jl`, `Rscript …`, `python …`, or a notebook (`jupyter nbconvert
-  --execute`, papermill, `quarto render`) the card rides at the stream's end
-  with process-table stats (pid, %CPU — 340% means four hot threads — and
-  memory) and a soft sweeping bar: the script's stdout belongs to the session,
-  so the dashboard won't pretend to know the iteration count. Backgrounded
-  shells get a card too (tagged `background`), so a long download keeps its
-  card while Claude works on other things; truly **detached** launches
-  (nohup / `scripts/bg` / trailing `&`) keep theirs even after the turn ends —
-  the card lives until the process itself exits, and ⊘ stop works throughout. On a **▶ run** the
-  output stream is ours, so the bar is honest: `iter 358/500` counters,
-  ProgressMeter/txtProgressBar percentages and reported ETAs are parsed live,
-  an ETA is estimated when the script doesn't offer one, and an amber
-  `quiet 3m50s` clock warns when a run has printed nothing lately. Quick runs
-  never flash a card; a finished one reports ✓/✗/⊘ + duration, lingers a few
-  seconds, and fades out.
+  telemetry strip instead of a silent console. The band is owned by a
+  **health word** — `▶ RUNNING · computing`, `STALLED 48s`, `waiting on I/O`,
+  `◌ STARTING · pid not pinned` — beside a runtime chip (`julia · detached ·
+  precompiling`; hover shows the pid, click copies it), the command in mono,
+  the elapsed clock and `⊘ stop`, which terminates the real process tree.
+  Below: a progress line (parsed counter left, `≈ETA` right — estimates wear
+  a `≈` and a dotted underline, and a withheld ETA says why: *ETA — stalled*,
+  *total unknown*, *rate uneven*), a bar only when a parser fired on the
+  output (no decorative sweep), a dotted **ruler** against the usual duration
+  from job history when it didn't, and a strip of measured numbers: `3.2
+  cores · mem 759M ▲1.4G · 3 procs · 12.4k ln · 3/s ▶` (`rss` when only the
+  resident set is known; session jobs say `output not visible · session`
+  because their stdout belongs to the agent's shell). A sample older than two
+  polls greys the numbers behind a `stale 6s` tag. Click the strip for the
+  expanded card: phase timeline (stalls hatched), cores and memory sparklines,
+  the last output lines, the process summary, `started · sampled · poll`;
+  Escape collapses. Same card for Julia, R, Python, notebooks, shells and ▶
+  runs; backgrounded shells are tagged `background`, and truly **detached**
+  launches (nohup / `scripts/bg` / trailing `&`) outlive the turn. A finished
+  card shows its end summary — `✓ 4m32s · peak 1.4G · cpu 3.1×`, `✗ exit 137
+  (SIGKILL · often out of memory)`, `⊘ stopped by you at 61%` — lingers a few
+  seconds, then stays in the session feed as one line (a detached job still
+  running keeps a live row with `⊘ stop`).
 - **LaTeX**: a genuine editing loop around the live `.tex` watch. The PDF
   renders in-app (PDF.js) and rebuilds land in place — scroll and zoom are
   kept, pages swap only when their fresh pixels are ready. Compile errors and
@@ -306,7 +335,13 @@ Sources checked 2026-09-04:
 - **Pin kinds**: code pins are read by the session on demand; data pins (.csv/.parquet/
   .dta/.xlsx/…) inject a generated schema card (columns, types, rows, sample) — never the
   contents; folder pins (🗀, trailing `/`) inject a size-annotated tree map. Cards
-  regenerate when the file changes and are viewable in the center pane.
+  regenerate when the file changes and are viewable in the center pane. Project
+  manifests (`Cargo.toml`, `package.json`, `go.mod`, `CMakeLists.txt`, `Makefile`) pin as a
+  ≤40-line manifest card (name, version, dependency counts + names, scripts/targets,
+  workspace members — parsed in node, no shelling out), and build directories (`target/`,
+  `dist/`, `build/`, `out/`, `.next/`, `coverage/`, a go.mod's `vendor/`, …) show as
+  `(ignored)` in tree maps and are never scanned for artifacts (`artifactGlobs.ignoreDirs`
+  in `config.json` replaces the list).
 - **Pinning**: ＋ in the sidebar's Pinned files header opens the native macOS file dialog
   (served via osascript, so it yields real paths); picks must be inside the project root.
   If the dialog can't open, an in-app fuzzy file search appears instead.

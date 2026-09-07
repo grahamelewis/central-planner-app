@@ -44,7 +44,9 @@ export const PROJECTS = {   // key → { name, root, color, texWatch, status }  
   myproject: { name:'My Project', root:'/absolute/path/to/project', color:'#7ef5c2', texWatch:null, status:'active' },
   // … one entry per project …
 };
-export const ARTIFACT_GLOBS;   // { ignoreDirs: [...], maxDepth: 6 }
+export const ARTIFACT_GLOBS;   // { ignoreDirs: [...DEFAULT_IGNORE_DIRS], ignoreDirIfSibling: { vendor: ['go.mod'] }, maxDepth: 6 }
+export const DEFAULT_IGNORE_DIRS; // node_modules .git data … + target dist build out .next .nuxt .turbo .cache coverage .gradle
+export function isIgnoredDir(name, parentDir); // the one rule behind the watcher, the folder-pin map and /api/files
 export const WEEKLY_HOUR_TARGET = 35;
 // FALLBACK usage-meter budgets (user's own targets, not read from Anthropic).
 // null when config has "usageLimits": false — PLAN-ONLY mode: real windows when
@@ -300,9 +302,48 @@ re-read at the start of every turn, so a toggle takes effect on the next turn.
 - on turn start: status `'running'`, broadcast same event
 - on error: status `'waiting'`, broadcast with `error` field; never crash the server
 
-Keep an in-memory transcript per task `{role, text, ts}[]` (user turns + final assistant texts +
-streamed text accumulates into the pending assistant entry). Export it via
-`getTranscript(project,id)` → array. (Server exposes it in /api/state.)
+Keep a persisted transcript per task (user turns + final assistant texts;
+streamed text accumulates into the pending assistant entry). Export the visible
+conversation via `getTranscript(project,id)` and `/api/transcript/:project/:id`.
+Historical entries without turn IDs remain readable.
+
+### Stop & Edit — five-second prompt correction
+
+Explicit composer submissions start immediately. For the first five seconds,
+while that exact turn is active, Stop & Edit (or unconsumed Escape in the
+conversation/composer) requests cancellation and returns the original prompt
+for editing. The backend owns the deadline; rerendering or reconnecting never
+extends it. Completion ends eligibility even inside the five-second window.
+After expiry, Stop interrupts normally and retains the partial conversation.
+
+- Client-generated request IDs identify sends before their HTTP acknowledgement;
+  app turn IDs identify the corresponding stream, status, and recall operation.
+  Stale, duplicate, and mismatched requests must never cancel a replacement turn.
+- Cancellation is latched before provider preparation and remains latched across
+  asynchronous provider startup. An interrupt acknowledgement is not settlement.
+  Replacement sends stay blocked until cancellation/history recovery finishes.
+- The exchange disappears only after provider context restoration and durable
+  local recall bookkeeping succeed. Removing DOM nodes or local transcript rows
+  alone is not an undo: the model must not resume with the withdrawn prompt.
+  Unsupported history controls, missing boundaries, timeouts, or restoration
+  failures keep the interrupted exchange visible and report failure honestly.
+- Recalled exchanges retain an audit record but are excluded from the visible
+  transcript and Task memory input. Previous conversation and memory evidence
+  stay intact. Usage, file snapshots, external effects, and detached jobs are
+  never rolled back or erased by Stop & Edit.
+- Successful recall restores exact text and composer focus. A newer draft must
+  remain separately recoverable, never overwritten. Other tabs reconcile history
+  without overwriting their own drafts. Persisted recall state prevents output
+  resurrection on refresh, reconnect, or late stream/terminal events.
+- Queued follow-ups pause during recall and require an explicit later action;
+  terminal status must not drain them, speak the withdrawn answer, accept a
+  completion/handoff, archive the task, or trigger a success-driven auto-build.
+  This does not undo independent file-watcher activity for changes already made.
+- Escape used by a modal, menu, voice interaction, Monaco/PDF surface, or IME
+  composition is not also a chat cancellation. Stop remains usable regardless
+  of keyboard focus.
+- Provider calls in tests are injected or intercepted; `CP_NO_BILLED` also
+  blocks the recall HTTP route from mutating real provider history.
 
 ## lib/watchers.js (Agent WATCHERS)
 
@@ -536,6 +577,65 @@ its statement (`-- SELECT …`), not just the last; the first error names its st
 fails the run. Job cards: `RUN_LANGS['.sql']`, and session-side detection recognizes
 `duckdb`/`psql`/`sqlite3`/`mysql` running a `.sql` file (lang `'sql'`, matching argv0 set
 in INTERP_ARGV0).
+
+Runtime registry (wave 1 — Rust · Go · Node/TypeScript · C/C++; design in
+`docs/language-support/RUNTIMES.md`, the shipped shape in
+`docs/language-support/PHASE1.md`): `lib/runtimes.js` is the ONE table behind
+the ▶ button, the job card's language rows and the client's runnable list.
+`RUNTIMES[id] = {id, label, exts, project:[{marker, when?, run(ctx), test?(ctx)}],
+file(ctx), pin:'self'|'child', argv0, session?:{names, ext}, env, buffered,
+parser, monaco, hl, testFile?, toolchain:[{bin, version?, optional?}], card?}` —
+the six originals (julia with its Project.toml marker, python with venv
+discovery + PYTHONUNBUFFERED, R's source() wrapper, shell + cargo env, sql via
+the duckdb shim, tex → its build card, `card:false`) moved in unchanged, plus
+rust, go, node, c, cpp. `resolveRunTarget({project, abs, root, mode})` plans a
+run: walk from the file's dir up to the project root ONLY (never above),
+nearest marker level wins, markers tried in the runtime's order at each level
+(a marker's `when(probe)` guard lets CMakeLists.txt fall through when cmake is
+absent), else the standalone `file` recipe; `mode` is `'test'` automatically
+when the file matches `testFile` (the note says so; an explicit mode wins); a
+step whose binary is not on PATH answers `{error: '<bin> not found on the
+server PATH'}` before anything spawns; compiled single files go to
+`<ROOT>/runs/<project>/bin/<basename>` (gitignored, never in the project). The
+plan: `{runtime, label, mode, steps:[{cmd, args, cwd, env, phase, pty, parser,
+display, built?, deferred?}], phases, display, note, projectRoot (the marker
+dir or null), pin, argv0, buffered, bufferedWithoutEnv, parser, card, tex?}`.
+`runner.js` executes the steps SEQUENTIALLY in one run: `run.cmdLine` is the
+running step's display (`run.display` the whole plan, `run.phases` /
+`run.step {i,n}` / `run.phase` the position), a step boundary is written to
+the tail as `[runner] <display>`, a non-zero step ends the run with that
+step's exit code/signal (state error; stderr already in the tail), a
+`deferred` step (cmake/make's produced executable) is decided after its build
+and, absent a single executable, ends the run at phase `built` with a note. A
+step marked `pty` (the C/C++ binary — stdio block-buffers when piped) runs
+under `script -q /dev/null <cmd> [args]` on macOS / `script -qec "<quoted>"
+/dev/null` on Linux (stdin `ignore` — script(1) refuses a socket stdin; the
+`^D\b\b` echo is stripped, `\r\n` → `\n`, stdout+stderr become one stream
+tagged stdout, `output.buffered:false`); if `script` is missing the plain pipe
+is the fallback and `buffered:true` says so on the card. stderr reaches the
+parsers merged in arrival order for every runtime. Runs settle on the child's
+`close` (macOS pipes to node are async — never SIGKILL a finished node early)
+or 1.5 s after `exit` if an orphan keeps the pipe. Snapshot gains
+`runtimes: {exts:['.jl',…,'.rs',…], byExt:{'.rs':{id,label,pin,buffered}},
+toolchains:{[id]:{ok, missing, bins:{[bin]:{path, version, optional}},
+versions}}}` (`toolchainStatus()` — PATH lookups cached 60 s, `--version`
+probed asynchronously so `version` is null until the first probe lands;
+`refreshToolchains()` invalidates PATH and version caches and awaits fresh probes;
+late callbacks from an older refresh must not overwrite the newer result).
+Direct TypeScript/JSX runs use a verified installed `tsx`, preferring the selected
+project's installation and retaining the dashboard's pinned runtime dependency
+as a fallback. No run-time package download through `npx` is permitted. Native
+Node type stripping is not advertised as full TypeScript execution. Conventional
+Cargo binary source selections explicitly select that binary; ambiguous custom
+layouts return an actionable error instead of silently running another target.
+Client: `state.runtimes`; `texrun.js`
+`runnableExts()` / `isRunnable(rel)` read it with the old `RUNNABLE_EXTS` as
+the fallback (workbench's ▶ foot button uses `runnableExts()`), and ⌘⏎ in the
+Monaco pane toasts `no runner for .xyz` instead of POSTing a 400. Regression:
+`runtimes.test.mjs` (resolver, temp trees, toolchain injected via the `probe`
+seam), `api.run.test.mjs` (live rustc / cargo run + failing cargo test (101) /
+node / ts / npm start / cc + c++ under the pty / make; go cases skip without
+`go`).
 
 Tex compile toolbar (v2.11, frontend-only — design study in `docs/texrun-mockups/`): the
 tex ▶ lives in the PDF pane's toolbar, leading the − fit ＋ zoom cluster (`.pzRun`, built by
@@ -778,7 +878,9 @@ latexmk beside the watch's own compile would race the same aux/synctex files.
 ```
 DELETE /api/tasks/:project/:id                       delete task (+ transcript, snapshots)
 POST   /api/tasks/:project/:id/permission            {requestId, allow, message?} approval-card answer
-POST   /api/run               {project, rel}         run a file (runner.js); one per project
+POST   /api/run               {project, rel, mode?}  run a file (runner.js); one per project. mode 'run'|'test'
+                                                     (default: the registry's rule — test files run in test
+                                                     mode); the reply's run carries display/phases/runtime/mode
 DELETE /api/run/:project                             stop the active run
 POST   /api/jobs/:project/stop {key}                 stop a job card's process (see Job cards)
 POST   /api/tasks/:project/:id/retry                 BILLED — re-run the last turn (sign-in card's ↻;
@@ -866,7 +968,11 @@ watch's own tex is skipped (the watch recompiles it by itself), no tab is
 selected, and the DISK version compiles, never an unsaved editor draft.
 `job:status {project, job}` — a long-running script's live status card (see **Job
 cards** below); broadcast per poll tick while the job is visible and on transitions.
-The snapshot carries the same objects as a top-level `jobs` array.
+The snapshot carries the same objects as a top-level `jobs` array. Since v3 the
+job carries measured telemetry beside the legacy `cpu`/`mem` — `sampledAt`,
+`pollMs`, `stale`, `cores` (+`coresBasis`, `hostCores`, `cpuTimeMs`), `memBytes`
+(+`memKind`, `memPeakBytes`), `procs`, `threads`, `health`, `output`, `history`,
+`exit`, `phase`, `counters` — every one null/empty until measurable, never 0.
 `auth:status` — the Claude sign-in state (see **Sign-in card** below); the snapshot
 carries the same object as a top-level `auth` field. `session:status` error
 broadcasts gain `authNeeded: true` when the turn's error classifies as an auth
@@ -1078,8 +1184,9 @@ group — the SDK shell may share it), escalating to SIGKILL after ~6s;
 seams (tests): `CP_JOB_MIN_AGE_MS`, `CP_JOB_POLL_MS`. Snapshot gains `jobs`
 (visible jobs, `[{key, source:'session'|'run', project, taskId, file, lang,
 state, stopping, startedAt, elapsedMs, pid, cpu, mem, progress:{frac, iter,
-total, etaS}|null, quietMs, exitCode, ms}]`); WS event added: `job:status
-{project, job}` (per poll tick + on transitions). Frontend: one `.jobCard`
+total, etaS}|null, quietMs, exitCode, ms}]` — plus the v3 telemetry fields
+below); WS event added: `job:status {project, job}` (per poll tick + on
+transitions). Frontend: one `.jobCard`
 component in two mounts — the session console's strip (under the agents
 roster, filtered to the open task) and a `.runJobSlot` atop the ▶ output tab.
 Cards are built once and PATCHED in place (bar width transitions and the 1s
@@ -1104,6 +1211,70 @@ job whose ancestor still lives is HELD rather than graced out. (3) ⊘ stop
 kills recorded ancestors that have re-parented to launchd FIRST (the loop
 would otherwise just respawn); ancestors still under the SDK's live shell are
 never touched.
+
+Job cards v3 — MEASURED TELEMETRY (2026-09-06; design in
+`docs/jobcard-mockups/`). Every number on a card has a named source; nothing
+is frozen silently and nothing is invented. All v2 fields stay (`cpu` = raw Σ
+pcpu %, `mem` = Σ rss bytes remain as legacy for one release). New on every
+`job:status` / snapshot job: **`sampledAt`** (ISO of the last sweep that SAW
+the root pid; null before the first) · **`pollMs`** · **`stale`** (true when
+the last sweep lacked the root pid, `ps` failed, or now − sampledAt > 2 ×
+pollMs — the numbers are KEPT at their last values so the UI can grey them) ·
+**`cores`** (Σ over the tree of Δcputime ÷ Δwall between consecutive sweeps,
+pids present in BOTH sweeps only — a new child counts from its second sweep —
+EMA α = 1/3, clamped ≥ 0, two decimals; the first sweep falls back to Σ pcpu ÷
+100 with **`coresBasis`** `'pcpu'`, otherwise `'cputime'`; a respawn restarts
+from a pcpu sweep) · **`hostCores`** (`os.availableParallelism()`) ·
+**`cpuTimeMs`** (Σ cumulative cputime of the live tree, for the end summary's
+"cpu 3.7×") · **`memBytes`** / **`memKind`** (`'footprint'` from
+`lib/jobProbe.js` — macOS `top -l 1 -stats pid,mem,th,state -pid …`, Linux
+`/proc/<pid>/smaps_rollup` Pss — summed over
+the tree only when the probe covered every currently live member with that
+measurement kind. Linux `status` VmRSS is RSS, never relabelled as footprint;
+else `'rss'`. The probe is launched every other tick, only while a visible job
+is live, never awaited by the sweep (top takes ~300 ms), 1.5 s timeout, its
+result applied by the following ticks while younger than two probe periods) ·
+**`memPeakBytes`** (running max of memBytes, same kind; restarts when the kind
+flips) · **`procs`** (live non-zombie processes in the tree, root included) ·
+**`threads`** (Σ from a complete current-tree probe; null without complete coverage) · **`health`** `{state,
+sinceMs}` — `starting` until the first sweep sees the pid; then `computing` if
+cores ≥ 0.05; else `io` when the root's ps state is U/D; else `stalled` once
+cores have been < 0.05 for ≥ 20 s continuously AND (the output is not owned OR
+it has been quiet ≥ 20 s); else `idle`. null on terminal cards ·
+**`output`** — ▶ runs: `{lines, rate, last, owned:true, buffered}` (\n-terminated
+lines; lines/s over the last 10 s; last non-empty line ANSI-stripped, a
+\r-redrawn bar collapsed to its final frame, ≤ 160 chars; `buffered` = python
+without PYTHONUNBUFFERED); session jobs: `{owned:false}` — the SDK owns that
+stream · **`history`** `{typicalMs, n}` (median of `jobhist.json` DONE runs of
+the same file in the project; null for inline evals or n = 0) · **`exit`**
+`{code, signal, byUser}` (null while running; the runner carries Node's
+mutually exclusive (code, signal) pair and byUser = our own SIGTERM; session
+jobs report `{code:null, signal:null, byUser}` — an error tool_result never
+invents a code; SIGKILL / 137 is NEVER labelled out-of-memory by the server) ·
+**`phase`** `{name, n, m, mSoft}` and **`counters`** `{…}` from
+`lib/jobParsers.js` (`createJobParser(lang, command)` keyed by
+`detectRuntime`: julia · python/tqdm · pytest · cargo · go · node/tsc/vite ·
+latexmk/pdflatex · R · curl/wget/rsync incl. openrsync's `to-check=`/`xfer#` ·
+make/cmake/ninja · stata batch (deliberately nothing — stdout is empty) ·
+papermill/nbconvert · the sql shim · shell; only the keys a parser produced,
+`{}` when none; the generic `parseProgressLine` remains the fallback for
+`progress`). Fed from the ▶ stream only; `sessionJobOutput(toolUseId, chunk)`
+is the hook for session lines, unwired today. Runner env (from the registry's
+`env`): `.py`/`.sql` runs get `PYTHONUNBUFFERED=1`; `.sh` and `.rs` runs get
+`CARGO_TERM_PROGRESS_WHEN=always` + `CARGO_TERM_PROGRESS_WIDTH=80` (cargo's
+only n/m; rust adds `CARGO_TERM_COLOR=never`). Multi-step ▶ runs call
+`runJobStep(project, {pid, command, phase, parser, buffered, pin, argv0})` at
+each step boundary — a NEW child pid, the step's parser, counters/progress
+reset, telemetry restarting from a pcpu sweep; the card's `phase` chip is
+seeded from the step (compiling → running) only for multi-step plans (a
+single-step run keeps phase null until its parser reads one). `pin:'child'`
+runs (go run, npm scripts, pty-wrapped binaries) start pinned to the launcher
+and re-pin to the deepest fresh descendant whose argv0 matches (`findChildPid`,
+scoped to the launcher's subtree — never the whole table). `jobhist.json` records gain
+`peakMem` and `cpuTimeMs`. Terminal broadcasts and the lingering snapshot keep
+`cpuTimeMs`, `memPeakBytes`, `output.lines`, `exit`, `ms` for the end summary.
+Test seams: `_test.tick({snap, now, probe})`, `_test.parsePs`, `_test.setClock`,
+`_test.setPolling`.
 
 **Manage Categories** (v2.5): the profile menu gains ❏ Manage Categories — a
 two-pane master–detail editor (view key `catman`, reserved in projectStore)

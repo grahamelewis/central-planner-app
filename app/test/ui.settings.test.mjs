@@ -83,6 +83,59 @@ test('Dark forces dark even on a light OS; System returns to following it', opts
   assert.equal(await stored(), 'system');
 });
 
+// Toolchains section: one service-style card per runtime with a status, the
+// versions, the path on hover (from GET /api/toolchains), the hint when
+// something is missing, and a Refresh button that re-probes via the sandbox.
+test('Settings › Toolchains lists a card per runtime with a status; Refresh re-probes', opts, async () => {
+  await page.click('#profileBtn');
+  await page.click('#profileMenu .pmItem[data-pm="Settings"]');
+  await page.waitForSelector('#v-settings.show #tcSec');
+  const { body: snap } = await sb.fetchJson('GET', '/api/state');
+  const ids = Object.keys(snap.toolchains);
+  assert.ok(ids.length >= 10, 'the snapshot lists the runtimes');
+
+  const cards = await page.evaluate(() => [...document.querySelectorAll('#tcSec .tcCard')].map((c) => ({
+    id: c.dataset.tc,
+    status: c.querySelector('.serviceStatus')?.textContent.trim(),
+    bins: [...c.querySelectorAll('.tcBin')].map((b) => ({ text: b.textContent, title: b.title, off: b.classList.contains('off') })),
+    hint: c.querySelector('.tcHint')?.textContent || '',
+  })));
+  assert.deepEqual(cards.map((c) => c.id), ids, 'one card per runtime, snapshot order');
+  for (const c of cards) {
+    assert.ok(['ready', 'partial', 'missing'].includes(c.status), `${c.id} status is ${c.status}`);
+    const t = snap.toolchains[c.id];
+    assert.equal(c.status === 'missing', !t.ok, `${c.id} status mirrors ok`);
+    if (!t.ok) assert.ok(c.hint.length > 8, `${c.id} shows its install hint`);
+    for (const bin of t.missing) assert.ok(c.bins.some((b) => b.off && b.text.startsWith(bin)), `${c.id}: ${bin} shown as missing`);
+  }
+  const nodeCard = cards.find((c) => c.id === 'node');
+  assert.equal(nodeCard.status, 'ready', 'node runs the server');
+  assert.match(nodeCard.bins[0].text, /^node \d+\.\d+/, 'the version rides the row');
+  const nodeDetail = await page.textContent('#tcSec .tcCard[data-tc="node"] .serviceDetail');
+  assert.match(nodeDetail, /installed tsx \(no download\)/, 'bundled executor is reported truthfully');
+  assert.doesNotMatch(nodeDetail, /npx tsx|needs node ≥/);
+
+  // the detail fetch fills the hover paths in
+  await page.waitForFunction(() => /\//.test(document.querySelector('#tcSec .tcCard[data-tc="node"] .tcBin')?.title || ''), { timeout: 5000 });
+  const title = await page.evaluate(() => document.querySelector('#tcSec .tcCard[data-tc="node"] .tcBin').title);
+  assert.match(title, /\/node$/, 'hover shows the binary path');
+
+  // Refresh: the button reports progress, the section re-renders with the same cards
+  await page.click('#tcRefresh');
+  await page.waitForFunction(() => {
+    const b = document.querySelector('#tcRefresh');
+    return b && !b.disabled && b.textContent === 'Refresh';
+  }, { timeout: 15000 });
+  const after = await page.evaluate(() => ({
+    ids: [...document.querySelectorAll('#tcSec .tcCard')].map((c) => c.dataset.tc),
+    summary: document.querySelector('#tcSummary')?.textContent || '',
+    nodeTitle: document.querySelector('#tcSec .tcCard[data-tc="node"] .tcBin')?.title || '',
+  }));
+  assert.deepEqual(after.ids, ids, 'still one card per runtime after the refresh');
+  assert.match(after.summary, /\d+ ready · \d+ missing/);
+  assert.match(after.nodeTitle, /\/node$/, 'paths survive the refresh (the reply is the detail)');
+});
+
 // Dashboard self-update: an update:status 'behind' puts a 1-badge on the
 // profile button (same pill as the project tabs' waiting badge), clicking it
 // jumps to Settings where the Updates card lists the incoming commits and

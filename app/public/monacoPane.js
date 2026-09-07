@@ -20,7 +20,7 @@ import { createTexfixAnchors } from './latex/texfixAnchors.js';
 import { needsEnd, texSymbolMatch } from './latex/texCore.js';
 import { mdPreviewSchedule, mdPreviewCancel } from './viewers.js';
 import {
-  runFile, texForwardSearch, texProblemsFor, openSugs, resolveSug, sugStaleAt, sugPulsed, sugRedraw,
+  runFile, isRunnable, texForwardSearch, texProblemsFor, openSugs, resolveSug, sugStaleAt, sugPulsed, sugRedraw,
 } from './texrun.js';
 import { renderWB } from './workbench.js';
 import { toast, esc, enc, isExtRel, confirmBox } from './util.js';
@@ -143,6 +143,29 @@ function langFor(ext) {
     case 'sql': return 'sql';
     case 'json': return 'json';
     case 'md': case 'rmd': case 'qmd': return 'markdown';
+    // ── wave 1 (docs/language-support/RUNTIMES.md, editor row) ──
+    // Every id below ships in monaco-editor 0.56 (basic-languages/
+    // monaco.contribution.js; `c` is registered by the cpp chunk). Ids are
+    // handed to createModel EXPLICITLY, so Monaco's own extension claims
+    // (objective-c on .m, r on .rmd) never apply — this table is the source.
+    // `ext` is basename(rel).split('.').pop().toLowerCase() (workbench), so a dotless
+    // name arrives whole: Makefile → 'makefile', GNUmakefile → 'gnumakefile'.
+    case 'rs': return 'rust';
+    case 'go': return 'go';
+    case 'js': case 'mjs': case 'cjs': case 'jsx': return 'javascript';
+    case 'ts': case 'mts': case 'cts': case 'tsx': return 'typescript';
+    case 'c': return 'c';                        // .C (C++) folds to 'c' here — same grammar family
+    case 'h': case 'cc': case 'cpp': case 'cxx': case 'c++':
+    case 'hpp': case 'hxx': case 'hh': return 'cpp'; // .h → cpp (RUNTIMES.md)
+    case 'toml': return 'ini';                   // Cargo.toml: no toml grammar in Monaco; ini colours [tables], key = value, "strings", # comments
+    case 'yaml': case 'yml': return 'yaml';
+    // Makefile / *.mk: Monaco has no makefile grammar. `shell` is the nearest
+    // fit — recipe lines ARE shell (commands, $VARS, "strings", # comments);
+    // targets and := assignments stay plain, which is honest rather than wrong.
+    case 'makefile': case 'gnumakefile': case 'mk': return 'shell';
+    // labelled plaintext: go.mod / go.sum ('mod' / 'sum'), *.cmake, and
+    // CMakeLists.txt ('txt' → the default) have no Monaco grammar — on purpose
+    case 'mod': case 'sum': case 'cmake': return 'plaintext';
     default: return 'plaintext';
   }
 }
@@ -196,6 +219,28 @@ function registerTexLanguages(monaco) {
   monaco.languages.register({ id: bibtexLanguageId });
   monaco.languages.setMonarchTokensProvider(bibtexLanguageId, bibtexMonarch());
   monaco.languages.setLanguageConfiguration(bibtexLanguageId, bibtexConfiguration);
+}
+
+/* wave 1 (docs/language-support/RUNTIMES.md, editor row): Monaco's TS/JS
+   language service resolves imports against files it can see — here that is
+   the open models only, never node_modules or a tsconfig — so every bare
+   import (`import x from 'nope'`) would squiggle "Cannot find module" and
+   every DOM/node global would be "not defined". Semantic validation is muted
+   for both services; syntax validation (real typos) stays. The `typescript`
+   namespace ships in editor.main (the worker itself loads lazily), so this
+   runs at INIT; a missing namespace (a trimmed build) is a no-op. */
+function muteTsSemantics(monaco) {
+  try {
+    const ts = monaco.languages && monaco.languages.typescript;
+    if (!ts) return;
+    for (const d of [ts.typescriptDefaults, ts.javascriptDefaults]) {
+      if (d && typeof d.setDiagnosticsOptions === 'function') {
+        d.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false });
+      }
+    }
+  } catch (e) {
+    console.warn('[monaco] could not mute TS semantic diagnostics', e);
+  }
 }
 
 /* ═══════ S2.2 — latex completion provider registration (P10, monaco-s2 §1) ═══════ */
@@ -1131,6 +1176,7 @@ function initWiring() {
   initTrace.length = 0;
   registerTexLanguages(monaco);
   registerLatexProviders(monaco); // S2.2: completions for 'latex' only (P10)
+  muteTsSemantics(monaco);        // wave 1: no "Cannot find module" squiggles
   initTrace.push('langs');
   try {
     cpDefineThemes();
@@ -1191,7 +1237,16 @@ function initWiring() {
     if (activeFkey) requestSave(activeFkey);
   });
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-    if (activeFkey) runAfterSave(activeFkey);
+    if (!activeFkey) return;
+    // gated on the ▶ registry: a file no runtime claims gets a toast, not a
+    // POST that comes back 400
+    const rel = relOfFkey(activeFkey);
+    if (!isRunnable(rel)) {
+      const m = /\.([^./\\]+)$/.exec(String(rel || ''));
+      toast(`no runner for ${m ? `.${m[1]}` : 'this file'}`);
+      return;
+    }
+    runAfterSave(activeFkey);
   });
   // S2.5 (P7): ⌘J forward SyncTeX — same registration shape as ⌘S/⌘⏎ above
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyJ, cmdForwardSync);
@@ -1389,16 +1444,23 @@ export function rebootMonaco() {
 
 let listenersArmed = false;
 
+// Lazy chunk names are vs/<id>-<hash>.js in the 0.56 min build. Every id
+// langFor can return must be here so a failed chunk is attributed (wave 1:
+// rust, go, javascript, typescript, cpp, ini, yaml, shell — all present).
 const LANG_IDS = new Set([
   'python', 'julia', 'markdown', 'r', 'shell', 'sql', 'json', 'yaml', 'html',
   'css', 'xml', 'cpp', 'csharp', 'java', 'typescript', 'javascript', 'ini',
   'dockerfile', 'perl', 'lua', 'rust', 'go', 'ruby', 'php', 'swift', 'bat',
 ]);
+// ids with no chunk of their own: `c` is registered by the cpp chunk, so a
+// failed cpp chunk degrades both
+const LANG_CHUNK_RIDERS = { cpp: ['c'] };
 
 function maybeLangDegraded(src) {
   const m = String(src).match(/\/vs\/([a-z0-9_]+)-[\w-]+\.js(\?|$)/i);
   if (!m || !LANG_IDS.has(m[1]) || langDegradedSet.has(m[1])) return;
   langDegradedSet.add(m[1]);
+  for (const rider of LANG_CHUNK_RIDERS[m[1]] || []) langDegradedSet.add(rider);
   console.warn(`[monaco] language chunk failed — '${m[1]}' stays plaintext (editing unaffected).`, src);
 }
 

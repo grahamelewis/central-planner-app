@@ -1,5 +1,6 @@
 // util.js — pure helpers, formatters, diff/merge algorithms, toast/confirm,
 // tex symbol completion — no app-state reads. Moved verbatim from app.js (phase 2).
+import { DATA_EXTS, isDataExt, manifestOf } from './pinkinds.js';
 
 export const enc = encodeURIComponent;
 
@@ -92,13 +93,23 @@ export const isPdfFile = (f) => String(f || '').toLowerCase().endsWith('.pdf');
 /** @param {unknown} f */
 export const isHtmlFile = (f) => /\.html?$/i.test(String(f || ''));
 
-/* pin kinds: code (read on demand) · data (schema card) · folder (tree map) · pdf (viewer) */
-export const DATA_EXTS_C = ['csv', 'tsv', 'parquet', 'dta', 'rds', 'rdata', 'feather', 'xlsx', 'xls'];
-export const isDataFile = (f) => DATA_EXTS_C.includes(String(f || '').split('.').pop().toLowerCase());
+/* pin kinds: code (read on demand) · data (schema card) · manifest (Cargo.toml /
+   package.json / go.mod / CMakeLists.txt / Makefile → summary card) · folder
+   (tree map) · pdf (viewer). The name/extension lists come from pinkinds.js,
+   the SAME module lib/pins.js imports — edit them there, once. */
+export const DATA_EXTS_C = DATA_EXTS;
+export const isDataFile = (f) => isDataExt(f);
+export { manifestOf };
+/** @param {*} f */
+export const isManifestFile = (f) => manifestOf(f) != null;
 /* server-rendered head-of-table page (pandas) — iframed in the show panel */
 export const dataviewUrl = (key, rel) => `/api/datahead/${enc(key)}?rel=${enc(rel)}`;
 /**
  * Pin card kind for a context.files entry.
+ * Manifests deliberately report 'code' here: on the client a Cargo.toml is an
+ * editable center tab like any source file (the manifest CARD is what the
+ * session gets at launch — see lib/pins.js pinKind, which returns 'manifest');
+ * use isManifestFile()/PIN_ICON.manifest for a manifest-specific badge.
  * @param {*} f pin path ('…/' = folder)
  * @returns {'folder' | 'pdf' | 'data' | 'code'}
  */
@@ -106,14 +117,14 @@ export function pinKindOf(f) {
   const s = String(f || '');
   if (s.endsWith('/')) return 'folder';
   if (isPdfFile(s)) return 'pdf';
-  return DATA_EXTS_C.includes(s.split('.').pop().toLowerCase()) ? 'data' : 'code';
+  return isDataExt(s) ? 'data' : 'code';
 }
 export const pinLabelOf = (f) => {
   const s = String(f || '');
   return s.endsWith('/') ? s.replace(/\/+$/, '').split('/').pop() + '/' : s.split('/').pop();
 };
 /** @type {{ [pinKind: string]: string }} */
-export const PIN_ICON = { code: '▮', data: '▦', folder: '🗀', pdf: '◫' };
+export const PIN_ICON = { code: '▮', data: '▦', manifest: '▤', folder: '🗀', pdf: '◫' };
 
 // A "rel" that is really an absolute path is an external file/dir — the
 // dashboard addresses external context by its absolute path, and the fetch
@@ -434,6 +445,66 @@ export function fmtJobEta(s) {
 export function fmtJobMem(b) {
   if (!Number.isFinite(b) || b <= 0) return '—';
   return b >= 1e9 ? `${(b / 1e9).toFixed(1)}G` : `${Math.max(1, Math.round(b / 1e6))}M`;
+}
+/* ── job card v3 formatters (docs/jobcard-mockups/IMPLEMENTATION.md §2) ── */
+/**
+ * Cores (Δcputime ÷ Δwall) → "3.2" / "0.0" (below 0.1 shows 0.0; '—' unknown).
+ * @param {number | null | undefined} n
+ * @returns {string}
+ */
+export function fmtCores(n) {
+  if (!Number.isFinite(n) || n < 0) return '—';
+  return n < 0.1 ? '0.0' : n.toFixed(1);
+}
+/**
+ * Bytes → binary-consistent "412K" / "759M" / "1.4G" (1024 steps, one decimal
+ * for G; '—' when unknown).
+ * @param {number | null | undefined} b
+ * @returns {string}
+ */
+export function fmtBytes(b) {
+  if (!Number.isFinite(b) || b < 0) return '—';
+  const K = 1024, M = K * 1024, G = M * 1024;
+  if (b >= G) return `${(b / G).toFixed(1)}G`;
+  if (b >= M) return `${Math.round(b / M)}M`;
+  if (b >= K) return `${Math.round(b / K)}K`;
+  return `${Math.round(b)}B`;
+}
+/**
+ * Short duration: "0.4s" / "48s" / "2m10s" / "1h05m".
+ * @param {number | null | undefined} ms
+ * @returns {string}
+ */
+export function fmtDurShort(ms) {
+  const s = Math.max(0, (Number(ms) || 0) / 1000);
+  if (s < 10) return `${s.toFixed(1)}s`;
+  if (s < 60) return `${Math.round(s)}s`;
+  const r = Math.round(s);
+  if (r < 3600) return `${Math.floor(r / 60)}m${String(r % 60).padStart(2, '0')}s`;
+  return `${Math.floor(r / 3600)}h${String(Math.floor((r % 3600) / 60)).padStart(2, '0')}m`;
+}
+/**
+ * Lines per second → "0" / "0.4" / "3" / "12" ('—' unknown).
+ * @param {number | null | undefined} n
+ * @returns {string}
+ */
+export function fmtRate(n) {
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n >= 10) return String(Math.round(n));
+  const one = n.toFixed(1);
+  return one.endsWith('.0') ? one.slice(0, -2) : one;
+}
+/**
+ * Count → "208" / "12.4k" / "1.2M" ('—' unknown).
+ * @param {number | null | undefined} n
+ * @returns {string}
+ */
+export function fmtCount(n) {
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M`;
+  if (n >= 1e5) return `${Math.round(n / 1000)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+  return String(Math.round(n));
 }
 
 /* ── Julia-style LaTeX completion: type \beta then Tab → β ──────────────────

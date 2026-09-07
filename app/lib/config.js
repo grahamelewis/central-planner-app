@@ -59,12 +59,54 @@ export const PROJECTS = env.CP_PROJECTS_JSON
 // shows a neutral placeholder until setup runs.
 export const USER_NAME = (CFG.user && typeof CFG.user.name === 'string') ? CFG.user.name : '';
 
-export const ARTIFACT_GLOBS = (CFG.artifactGlobs && typeof CFG.artifactGlobs === 'object')
-  ? CFG.artifactGlobs
-  : {
-    ignoreDirs: ['node_modules', '.git', 'data', '_literature', 'literature', '.claude', 'renv', '.venv', '__pycache__'],
-    maxDepth: 6,
+// Directory names the artifact watcher, the pin-a-file picker, the folder-pin
+// tree map and the /api/ls listings all skip. Beyond the classic dependency /
+// data dirs this carries the wave-1 language build outputs, so `cargo build`
+// churn in target/ or a `next build` never floods artifact:new or a tree map:
+//   target (cargo)   dist/build/out (bundlers, cmake -B build, tsc outDir)
+//   .next/.nuxt/.turbo/.cache/coverage (node toolchains)   .gradle (jvm)
+// Deliberately NOT here: `bin` (a real source dir in Go's cmd layout and in
+// scripts/bin; cargo and cmake outputs live under target/ and build/ anyway)
+// and `vendor` unconditionally — Go's vendored modules are ignored only when a
+// go.mod sits beside the vendor dir (IGNORE_DIR_IF_SIBLING); a research
+// project's own vendor/ of third-party tex/js stays visible.
+export const DEFAULT_IGNORE_DIRS = Object.freeze([
+  'node_modules', '.git', 'data', '_literature', 'literature', '.claude', 'renv', '.venv', '__pycache__',
+  'target', 'dist', 'build', 'out', '.next', '.nuxt', '.turbo', '.cache', 'coverage', '.gradle',
+]);
+// name → sibling files, any one of which (in the same parent dir) makes the
+// directory ignored. Users can extend this via artifactGlobs.ignoreDirIfSibling.
+export const IGNORE_DIR_IF_SIBLING = Object.freeze({ vendor: ['go.mod'] });
+
+// config.json's `artifactGlobs` overrides per key (a user setting only
+// `maxDepth` keeps the default ignores; `ignoreDirs` REPLACES the whole list).
+export const ARTIFACT_GLOBS = (() => {
+  const o = (CFG.artifactGlobs && typeof CFG.artifactGlobs === 'object') ? CFG.artifactGlobs : {};
+  return {
+    ignoreDirs: Array.isArray(o.ignoreDirs) ? o.ignoreDirs.map(String) : [...DEFAULT_IGNORE_DIRS],
+    ignoreDirIfSibling: (o.ignoreDirIfSibling && typeof o.ignoreDirIfSibling === 'object')
+      ? o.ignoreDirIfSibling : IGNORE_DIR_IF_SIBLING,
+    maxDepth: typeof o.maxDepth === 'number' && o.maxDepth > 0 ? o.maxDepth : 6,
   };
+})();
+
+const IGNORE_DIR_SET = new Set(ARTIFACT_GLOBS.ignoreDirs);
+
+/**
+ * Is a directory entry one the scanners skip? `name` is the entry's basename,
+ * `parentDir` its containing directory (absolute) — needed only for the
+ * sibling-conditional names (vendor/ next to a go.mod); the plain-name check
+ * costs nothing. Never throws.
+ */
+export function isIgnoredDir(name, parentDir) {
+  if (IGNORE_DIR_SET.has(name)) return true;
+  const siblings = ARTIFACT_GLOBS.ignoreDirIfSibling[name];
+  if (!Array.isArray(siblings) || !parentDir) return false;
+  for (const s of siblings) {
+    try { if (fs.existsSync(path.join(parentDir, s))) return true; } catch { /* unreadable → not ignored */ }
+  }
+  return false;
+}
 
 export const WEEKLY_HOUR_TARGET = typeof CFG.weeklyHourTarget === 'number' ? CFG.weeklyHourTarget : 35;
 

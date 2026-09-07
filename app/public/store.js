@@ -27,6 +27,9 @@ export const state = {
   agentDefaults: { provider: 'claude', model: 'claude-opus-5', reasoningEffort: 'high' },
   sessions: [],
   runs: {},       // key → {rel, cmdLine, state, exitCode, startedAt, ms}
+  runtimes: null, // ▶ registry from the snapshot: {exts:['.jl',…], byExt:{'.rs':{id,label}}, toolchains}
+  toolchains: null, // {id → {id,label,ok,missing,versions,hint,…}}: the snapshot summary, or GET /api/toolchains detail (paths) once Settings fetched it
+                  // — null until the first snapshot (texrun's runnableExts() falls back)
   texfix: {},     // key → {state, startedAt, ms, model, taskId, tex,
                   //        suggestions:[{id,file,find,replace,why,status}], note, error, costUsd}
   kaimon: {},     // {enabled, available, julia:{key→bool}, daemon:{state,port,…}|null,
@@ -197,6 +200,23 @@ export function taskProvider(task) { return task?.provider === 'codex' ? 'codex'
  * @returns {string} display name
  */
 export function agentName(provider) { return provider === 'codex' ? 'Codex' : 'Claude'; }
+/**
+ * Fold a snapshot's toolchain summary into `state.toolchains`, keeping the
+ * `required`/`optional` rows (paths) of a GET /api/toolchains detail Settings
+ * already fetched — a state broadcast must not blank the hover paths.
+ * @param {{ [id: string]: any } | null | undefined} summary snapshot.toolchains
+ * @returns {{ [id: string]: any } | null}
+ */
+export function mergeToolchains(summary) {
+  if (!summary) return state.toolchains || null;
+  const prev = state.toolchains || {};
+  const out = {};
+  for (const [id, t] of Object.entries(summary)) {
+    const d = prev[id];
+    out[id] = d && d.required ? { ...t, required: d.required, optional: d.optional } : t;
+  }
+  return out;
+}
 /**
  * Live account/model state for a provider, with an honest fallback row when
  * the snapshot hasn't delivered one (claude synthesizes from `state.auth`).

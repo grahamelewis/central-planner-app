@@ -6,14 +6,14 @@
 import fs from 'fs';
 import { queueTaskMemory } from './taskMemory.js';
 import path from 'path';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, forkSession, getSessionMessages, importSessionToStore } from '@anthropic-ai/claude-agent-sdk';
 import { PROJECTS, ROOT } from './config.js';
 import { getTask, updateTask, listTasks, getCategories, getAbstractInfo, DEFAULT_MODEL, DEFAULT_PROVIDER } from './taskStore.js';
 import { coerceEffort } from './models.js';
 import { projectAppendix, staleAbstractNote } from './decisions.js';
 import { logTokens, weekSummary } from './ledger.js';
 import { recordUsage } from './usage.js';
-import { broadcast } from './events.js';
+import { broadcast as broadcastEvent } from './events.js';
 import { createTracker } from './snapshots.js';
 import { writeFileAtomic, containedPath } from './paths.js';
 import { pinKind, pinCard } from './pins.js';
@@ -24,6 +24,8 @@ import { sessionJobStart, sessionJobProgress, sessionJobEnd, endSessionJobsFor }
 import { classifyAuthError, noteTurnError as noteAuthError, noteTurnSuccess as noteAuthSuccess } from './auth.js';
 import { getCodexClient, refreshCodex } from './codexAppServer.js';
 import { createActivityTracker } from './sessionActivity.js';
+import { createTurnRecall, publicTurn } from './turnRecall.js';
+import { captureClaudeBoundary, captureCodexBoundary, restoreTurnHistory } from './turnHistory.js';
 
 // tool calls whose input names a file Claude is about to modify
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -99,6 +101,34 @@ function httpError(status, message) {
 const registry = new Map();
 // key → Query object for the currently-running turn (one active turn per task)
 const activeTurns = new Map();
+const turnLifecycle = createTurnRecall();
+const recallAudits = new Map();
+
+// Every session event is fenced to the application turn, including events
+// emitted during provider preparation before a provider turn ID exists.
+function broadcast(type, payload) {
+  if (type.startsWith('session:') && payload?.project && payload?.id) {
+    const turn = turnLifecycle.get(keyOf(payload.project, payload.id));
+    if (turn) {
+      if (payload.turnId && payload.turnId !== turn.turnId) return;
+      payload = { ...payload, turnId: payload.turnId || turn.turnId,
+        ...(type.startsWith('session:permission') ? { submissionId: turn.requestId } : { requestId: turn.requestId }),
+        activeTurn: publicTurn(turn), ...(turn.recalling ? { phase: turn.phase } : {}) };
+      if (turn.recalling && type === 'session:status') {
+        payload = { ...payload, status: 'running', phase: turn.phase };
+      }
+    }
+  }
+  broadcastEvent(type, payload);
+}
+
+function broadcastForTurn(type, payload, turn) {
+  if (type.startsWith('session:') && turn) {
+    if (turnLifecycle.get(keyOf(payload.project, payload.id)) !== turn) return;
+    payload = { ...payload, turnId: turn.turnId };
+  }
+  broadcast(type, payload);
+}
 // key → [{ role, text, ts }]
 const transcripts = new Map();
 // key → task.created stamp the in-memory state belongs to. If a task id is
@@ -172,22 +202,32 @@ function loadTranscript(key, task) {
     if (!data || data.created !== ((task && task.created) || null)) {
       return aside('task identity mismatch — id reuse or unreadable task store');
     }
+    recallAudits.set(key, Array.isArray(data.recalls) ? data.recalls : []);
+    const recovery = recallAudits.get(key).find(r => r.phase === 'recall-recovery');
+    if (recovery && !turnLifecycle.get(key)) {
+      turnLifecycle.recover(key, recovery);
+      activeTurns.set(key, null);
+      const [project, id] = key.split('/');
+      registry.set(key, { project, id, provider: recovery.provider, startedAt: recovery.startedAt, status: 'running' });
+    }
     return Array.isArray(data.entries) ? data.entries : [];
   } catch (err) {
     return aside(`load failed: ${err.message}`);
   }
 }
 
-function persistTranscript(key, task) {
+function persistTranscript(key, task, strict = false) {
   try {
     const file = transcriptFile(key);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     writeFileAtomic(file, JSON.stringify({
       created: (task && task.created) || null,
       entries: transcripts.get(key) || [],
+      recalls: recallAudits.get(key) || [],
     }));
   } catch (err) {
     logErr('transcript persist failed:', err.message);
+    if (strict) throw err;
   }
 }
 
@@ -206,6 +246,7 @@ function ensureStateOwner(key, task) {
   if (stateOwner.has(key) && stateOwner.get(key) !== created) {
     transcripts.delete(key);
     registry.delete(key);
+    recallAudits.delete(key);
   }
   stateOwner.set(key, created);
 }
@@ -420,7 +461,7 @@ async function buildContextPacket(project, task) {
   // 5. Last session tail (this task's previous turn, when we still have it)
   if (on('include_last_session')) {
     try {
-      const tail = [...transcriptFor(keyOf(project, task.id))]
+      const tail = [...transcriptFor(keyOf(project, task.id))].filter(e => !e.recalledAt)
         .reverse()
         .find((e) => e && e.role === 'assistant' && e.text && e.text.trim());
       if (tail) {
@@ -791,14 +832,16 @@ function createAgentTracker(emit, onRoster, now = Date.now) {
 
 async function runClaudeTurn(project, id, promptText) {
   const key = keyOf(project, id);
+  const appTurn = turnLifecycle.get(key);
+  const broadcast = (type, payload) => broadcastForTurn(type, payload, appTurn);
   const ts = new Date().toISOString();
 
   try { ensureStateOwner(key, getTask(project, id)); } catch { /* validated later */ }
 
   // transcript: user turn + pending assistant entry that accumulates stream text
   const transcript = transcriptFor(key);
-  transcript.push({ role: 'user', text: promptText, ts });
-  const pending = { role: 'assistant', provider: 'claude', text: '', ts: new Date().toISOString() };
+  transcript.push({ role: 'user', text: promptText, ts, ...publicTurn(appTurn) });
+  const pending = { role: 'assistant', provider: 'claude', text: '', ts: new Date().toISOString(), ...publicTurn(appTurn) };
   transcript.push(pending);
 
   const entry = registry.get(key) || { project, id, provider: 'claude', startedAt: ts, status: 'running' };
@@ -853,8 +896,12 @@ async function runClaudeTurn(project, id, promptText) {
     // managed daemon is (or comes) up — otherwise null, and nothing changes
     // (harmless when absent/down). Skipped in plan mode: propose oversight
     // must not gain silently-executing eval tools.
+    if (appTurn?.recallUntil) {
+      try { appTurn.providerState.claudeBoundary = await captureClaudeBoundary(task.session?.sdkSessionId, PROJECTS[project].root, getSessionMessages, importSessionToStore); }
+      catch (err) { appTurn.providerState.boundaryError = err.message; }
+    }
     const kaimonServers = permissionMode === 'plan' ? null : await mcpFragmentFor(project);
-    if (interruptedDuringPrep.has(key)) {
+    if (appTurn?.cancelRequested || interruptedDuringPrep.has(key)) {
       // the user hit interrupt while we waited on the daemon boot — honor it
       interruptedDuringPrep.delete(key);
       throw new Error('interrupted before the turn started');
@@ -966,6 +1013,10 @@ async function runClaudeTurn(project, id, promptText) {
 
     const q = query({ prompt: promptText, options });
     activeTurns.set(key, q);
+    if (appTurn) {
+      appTurn.providerState.dispatched = true;
+      turnLifecycle.attach(key, q, appTurn).catch(err => logErr('latched interrupt failed:', err.message));
+    }
     turnStarted = true;
     snapTracker = createTracker(project, id, Array.isArray(ctx.files) ? ctx.files : []);
 
@@ -1012,6 +1063,7 @@ async function runClaudeTurn(project, id, promptText) {
 
       if (msg.type === 'system' && msg.subtype === 'init') {
         sdkSessionId = msg.session_id || sdkSessionId;
+        if (appTurn) appTurn.providerState.sessionId = sdkSessionId;
         if (msg.model) emit(`⟐ ${msg.model} · effort ${reasoningEffort} · ${permissionMode}\n`);
       } else if (msg.type === 'system' && msg.subtype === 'permission_denied') {
         // 'auto' mode's classifier can deny without ever reaching canUseTool —
@@ -1164,7 +1216,6 @@ async function runClaudeTurn(project, id, promptText) {
   } finally {
     activity.clear();
     entry.turnStartedAt = null;
-    activeTurns.delete(key);
     interruptedDuringPrep.delete(key);
     // the turn's agents are gone with the turn — clear the live roster
     // (broadcasts an empty session:agents so the console strip disappears).
@@ -1210,7 +1261,10 @@ async function runClaudeTurn(project, id, promptText) {
       // The turn failed before query() was created — no SDK work happened.
       // Do not fabricate a session record or touch task status; just report.
       const reg0 = registry.get(key);
-      if (reg0) reg0.status = 'waiting';
+      if (reg0) reg0.status = appTurn?.recalling ? 'running' : 'waiting';
+      if (appTurn?.cancelRequested) {
+        try { updateTask(project, id, { status: 'waiting' }); } catch (err) { logErr(err.message); }
+      }
       const failPayload = { project, id, status: 'waiting', error: resultError || 'turn failed to start' };
       failedTurns.add(key); // never-started turns are retryable too
       if (classifyAuthError(resultError)) failPayload.authNeeded = true;
@@ -1284,7 +1338,7 @@ async function runClaudeTurn(project, id, promptText) {
     }
 
     const reg = registry.get(key);
-    if (reg) reg.status = status; // only the user closes tasks (settleSession)
+    if (reg) reg.status = appTurn?.recalling ? 'running' : status;
 
     const payload = {
       project, id, status,
@@ -1374,12 +1428,14 @@ function codexTurnError(turn) {
 
 async function runCodexTurn(project, id, promptText) {
   const key = keyOf(project, id);
+  const appTurn = turnLifecycle.get(key);
+  const broadcast = (type, payload) => broadcastForTurn(type, payload, appTurn);
   const ts = new Date().toISOString();
   try { ensureStateOwner(key, getTask(project, id)); } catch { /* validated below */ }
 
   const transcript = transcriptFor(key);
-  transcript.push({ role: 'user', text: promptText, ts });
-  const pending = { role: 'assistant', provider: 'codex', text: '', ts: new Date().toISOString() };
+  transcript.push({ role: 'user', text: promptText, ts, ...publicTurn(appTurn) });
+  const pending = { role: 'assistant', provider: 'codex', text: '', ts: new Date().toISOString(), ...publicTurn(appTurn) };
   transcript.push(pending);
 
   const entry = registry.get(key) || { project, id, provider: 'codex', startedAt: ts, status: 'running' };
@@ -1559,7 +1615,12 @@ async function runCodexTurn(project, id, promptText) {
     }
     threadId = thread?.id;
     if (!threadId) throw new Error('Codex did not return a thread id');
-    if (interruptedDuringPrep.has(key)) {
+    if (appTurn) appTurn.providerState.threadId = threadId;
+    if (appTurn?.recallUntil) {
+      try { appTurn.providerState.codexBoundary = await captureCodexBoundary(threadId, client); }
+      catch (err) { appTurn.providerState.boundaryError = err.message; }
+    }
+    if (appTurn?.cancelRequested || interruptedDuringPrep.has(key)) {
       interruptedDuringPrep.delete(key);
       throw new Error('interrupted before the turn started');
     }
@@ -1591,6 +1652,7 @@ async function runCodexTurn(project, id, promptText) {
     client.on('exit', onExit);
     emit(`⟐ Codex · ${actualModel || 'default model'} · effort ${task.reasoningEffort || 'high'}\n`);
 
+    if (appTurn) appTurn.providerState.dispatched = true;
     const startedTurn = await client.request('turn/start', {
       threadId,
       input: [{ type: 'text', text: promptText, text_elements: [] }],
@@ -1604,9 +1666,14 @@ async function runCodexTurn(project, id, promptText) {
     turnId = startedTurn?.turn?.id;
     if (!turnId) throw new Error('Codex did not return a turn id');
     turnStarted = true;
-    activeTurns.set(key, {
+    const handle = {
       interrupt: () => client.request('turn/interrupt', { threadId, turnId }),
-    });
+    };
+    activeTurns.set(key, handle);
+    if (appTurn) {
+      appTurn.providerState.turnId = turnId;
+      turnLifecycle.attach(key, handle, appTurn).catch(err => logErr('latched Codex interrupt failed:', err.message));
+    }
     await completion;
     resultError = resultError || codexTurnError(completedTurn);
     if (!finalText && Array.isArray(completedTurn?.items)) {
@@ -1627,7 +1694,6 @@ async function runCodexTurn(project, id, promptText) {
     client.off('notification', onNotification);
     client.off('serverRequest', onServerRequest);
     client.off('exit', onExit);
-    activeTurns.delete(key);
     interruptedDuringPrep.delete(key);
     try { endSessionJobsFor(project, id); } catch { /* display only */ }
     try { const r = registry.get(key); if (r) r.edits = null; } catch { /* display only */ }
@@ -1642,7 +1708,10 @@ async function runCodexTurn(project, id, promptText) {
 
   try {
     if (!turnStarted) {
-      const reg0 = registry.get(key); if (reg0) reg0.status = 'waiting';
+      const reg0 = registry.get(key); if (reg0) reg0.status = appTurn?.recalling ? 'running' : 'waiting';
+      if (appTurn?.cancelRequested) {
+        try { updateTask(project, id, { status: 'waiting' }); } catch (err) { logErr(err.message); }
+      }
       failedTurns.add(key);
       refreshCodex({ force: true }).catch(() => {});
       broadcast('session:status', { project, id, provider: 'codex', status: 'waiting', error: resultError || 'turn failed to start', authNeeded: /auth|login|unauthor/i.test(resultError || '') });
@@ -1682,7 +1751,7 @@ async function runCodexTurn(project, id, promptText) {
     };
     if (!resultError) patch.handoff = handoff;
     updateTask(project, id, patch);
-    const reg = registry.get(key); if (reg) reg.status = 'waiting';
+    const reg = registry.get(key); if (reg) reg.status = appTurn?.recalling ? 'running' : 'waiting';
     if (resultError) failedTurns.add(key); else failedTurns.delete(key);
     const authFail = !!resultError && /auth|login|unauthor|credential/i.test(resultError);
     if (resultError) refreshCodex({ force: true }).catch(() => {});
@@ -1713,13 +1782,32 @@ async function runTurn(project, id, promptText) {
     : runClaudeTurn(project, id, promptText);
 }
 
-function startTurn(project, id, promptText) {
+function settleAppTurn(project, id, turn) {
   const key = keyOf(project, id);
-  if (activeTurns.has(key)) {
-    throw httpError(409, `Task ${id} in ${project} already has an active turn`);
-  }
-  // reserve the slot synchronously so overlapping calls are rejected
+  if (turnLifecycle.get(key) !== turn) return;
+  turnLifecycle.settle(key, turn);
+  if (turn.recalling) return; // recall owns the lock through its durable commit
+  activeTurns.delete(key);
+  turnLifecycle.finish(key, turn);
+  if (!turn.cancelRequested && !failedTurns.has(key)) queueTaskMemory(project, id);
+}
+
+function reserveAppTurn(project, id, prompt, options = {}) {
+  const key = keyOf(project, id);
+  const task = requireTask(project, id);
+  ensureStateOwner(key, task);
+  transcriptFor(key); // loads durable recall-recovery locks before admission
+  if (activeTurns.has(key)) throw httpError(409, 'a turn is running or being recalled');
+  const turn = turnLifecycle.begin(key, { prompt, provider: providerOf(task),
+    requestId: options.requestId || null, recallable: !!options.requestId });
+  turn.originalTask = { session: task.session || null, question: task.question || null, handoff: task.handoff || null };
   activeTurns.set(key, null);
+  return turn;
+}
+
+function startTurn(project, id, promptText, options = {}) {
+  const key = keyOf(project, id);
+  const turn = reserveAppTurn(project, id, promptText, options);
   runTurn(project, id, promptText)
     .catch((err) => {
       // runTurn handles its own errors; this is a last-resort guard
@@ -1730,9 +1818,9 @@ function startTurn(project, id, promptText) {
       } catch { /* swallow */ }
     })
     .finally(() => {
-      activeTurns.delete(key);
-      if (!failedTurns.has(key)) queueTaskMemory(project, id);
+      settleAppTurn(project, id, turn);
     });
+  return publicTurn(turn);
 }
 
 // ---------------------------------------------------------------------------
@@ -1748,15 +1836,16 @@ export async function launchTask(project, id) {
   // Reserve the turn slot BEFORE the (async) packet build — otherwise a
   // delete/second-launch can slip into the gap while data cards generate.
   const key = keyOf(project, id);
-  if (activeTurns.has(key)) {
-    throw httpError(409, `Task ${id} in ${project} already has an active turn`);
-  }
-  activeTurns.set(key, null);
+  const turn = reserveAppTurn(project, id, '');
   let prompt;
   try {
     prompt = await buildContextPacket(project, task);
+    turn.prompt = prompt;
   } catch (err) {
-    activeTurns.delete(key);
+    // No exchange was appended. Retry must not resurrect an older prompt
+    // (particularly a recalled one); launching again rebuilds this packet.
+    failedTurns.delete(key);
+    settleAppTurn(project, id, turn);
     throw err;
   }
   runTurn(project, id, prompt)
@@ -1768,12 +1857,11 @@ export async function launchTask(project, id) {
       } catch { /* swallow */ }
     })
     .finally(() => {
-      activeTurns.delete(key);
-      if (!failedTurns.has(key)) queueTaskMemory(project, id);
+      settleAppTurn(project, id, turn);
     });
 }
 
-export function sendMessage(project, id, text) {
+export function sendMessage(project, id, text, options = {}) {
   const task = requireTask(project, id);
   if (task.oversight === 'manual') {
     throw httpError(400, `Task ${id} has oversight 'manual' and has no session`);
@@ -1782,7 +1870,19 @@ export function sendMessage(project, id, text) {
   if (typeof text !== 'string' || !text.trim()) {
     throw httpError(400, 'Message text must be a non-empty string');
   }
-  startTurn(project, id, text);
+  const key = keyOf(project, id);
+  ensureStateOwner(key, task);
+  const entries = transcriptFor(key);
+  if (options.requestId) {
+    const previous = entries.find(e => e.role === 'user' && e.requestId === options.requestId);
+    if (previous) {
+      if (previous.text !== text) throw httpError(409, 'requestId already belongs to different prompt text');
+      const active = turnLifecycle.get(key);
+      return publicTurn(active?.turnId === previous.turnId ? active
+        : { ...previous, recallUntil: null, phase: previous.recalledAt ? 'recalled' : 'settled' });
+    }
+  }
+  return startTurn(project, id, text, options);
 }
 
 /** Re-run the LAST turn — the sign-in card's "↻ Retry turn". The failed
@@ -1807,7 +1907,7 @@ export function retryLastTurn(project, id) {
   const transcript = transcriptFor(key);
   let ui = -1;
   for (let i = transcript.length - 1; i >= 0; i--) {
-    if (transcript[i] && transcript[i].role === 'user') { ui = i; break; }
+    if (transcript[i] && transcript[i].role === 'user' && !transcript[i].recalledAt) { ui = i; break; }
   }
   if (ui === -1) throw httpError(400, 'nothing to retry — this task has no previous turn');
   const prompt = transcript[ui].text;
@@ -1833,22 +1933,99 @@ export function resolvePermission(project, id, requestId, allow, message) {
   broadcast('session:permission:resolved', { project, id, requestId, allow });
 }
 
-export function interrupt(project, id) {
+export async function interrupt(project, id, ids = {}) {
   requireTask(project, id);
   const key = keyOf(project, id);
-  const q = activeTurns.get(key);
-  if (q && typeof q.interrupt === 'function') {
-    q.interrupt().catch((err) => {
-      logErr(`interrupt failed for ${key}:`, err && err.message ? err.message : err);
-    });
-  } else if (registry.get(key) && registry.get(key).status === 'running') {
-    // turn is in PREP (context packet / kaimon daemon-boot wait) — no Query
-    // yet; flag it so runTurn aborts before query() is created
-    interruptedDuringPrep.add(key);
+  const turn = turnLifecycle.get(key);
+  if ((ids.turnId && ids.turnId !== turn?.turnId) || (ids.requestId && ids.requestId !== turn?.requestId)) {
+    throw httpError(409, 'that submitted turn is no longer active');
+  }
+  if (!turn) return;
+  if (turn.recalling) throw httpError(409, 'Stop & Edit is still restoring this turn');
+  interruptedDuringPrep.add(key);
+  await turnLifecycle.wait(turn, turnLifecycle.cancel(key));
+}
+
+/** Stop the exact submitted turn, restore provider context, then hide only
+ * that exchange. Full text, costs and effects remain in the durable audit. */
+export async function recallTurn(project, id, ids) {
+  const task = requireTask(project, id);
+  const key = keyOf(project, id);
+  ensureStateOwner(key, task);
+  transcriptFor(key);
+  const matches = r => (!ids?.turnId || ids.turnId === r.turnId) && (!ids?.requestId || ids.requestId === r.requestId);
+  if (!ids?.turnId && !ids?.requestId) throw httpError(400, 'turnId or requestId is required');
+  const already = (recallAudits.get(key) || []).find(r => r.phase === 'recalled' && matches(r));
+  if (already) return { status: 'recalled', turnId: already.turnId, requestId: already.requestId,
+    prompt: already.prompt, transcript: getTranscript(project, id) };
+  const turn = turnLifecycle.get(key);
+  try {
+    return await turnLifecycle.recall(key, ids, async current => {
+      const restoration = await restoreTurnHistory(current, {
+        codex: getCodexClient(), forkClaude: forkSession, readClaude: getSessionMessages,
+        importClaude: importSessionToStore, dir: PROJECTS[project].root,
+      });
+      // Persist the branch receipt BEFORE switching the task's provider
+      // pointer. A crash between task-store and transcript writes then leaves
+      // a recoverable lock, never a sendable task with divergent histories.
+      const receipt = { ...publicTurn(current), provider: current.provider, prompt: current.prompt,
+        originalTask: current.originalTask, restoration, phase: 'recall-recovery' };
+      const oldReceipts = recallAudits.get(key) || [];
+      recallAudits.set(key, [...oldReceipts.filter(r => r.turnId !== current.turnId), receipt]);
+      try { persistTranscript(key, getTask(project, id), true); }
+      catch (err) { recallAudits.set(key, oldReceipts); throw err; }
+      return restoration;
+    }, async current => {
+      const before = requireTask(project, id);
+      const restoration = current.restoration;
+      const patch = { status: 'waiting', question: current.originalTask?.question || null,
+        handoff: current.originalTask?.handoff || null };
+      if (!restoration.unchanged) {
+        const session = { ...(before.session || {}), provider: current.provider,
+          ...(current.provider === 'codex' ? { threadId: restoration.threadId } : { sdkSessionId: restoration.sdkSessionId }) };
+        patch.session = session;
+        patch.providerSessions = providerSessionsWith(before, current.provider, session);
+      }
+      updateTask(project, id, patch);
+      const recalledAt = new Date().toISOString();
+      const entries = transcriptFor(key);
+      const oldEntries = entries.slice();
+      const oldAudits = recallAudits.get(key) || [];
+      transcripts.set(key, entries.map(e => e.turnId === current.turnId ? { ...e, recalledAt } : e));
+      const audit = { ...publicTurn(current), provider: current.provider, prompt: current.prompt,
+        phase: 'recalled', recalledAt, restoration, effectsNotReverted: true };
+      recallAudits.set(key, [...oldAudits.filter(r => r.turnId !== current.turnId), audit]);
+      try { persistTranscript(key, getTask(project, id), true); }
+      catch (err) { transcripts.set(key, oldEntries); recallAudits.set(key, oldAudits); throw err; }
+      failedTurns.delete(key); // a recalled prompt cannot reappear via Retry
+      const reg = registry.get(key);
+      if (reg) { reg.status = 'waiting'; reg.turnStartedAt = null; reg.activity = null; }
+      activeTurns.delete(key);
+      const result = { status: 'recalled', turnId: current.turnId, requestId: current.requestId,
+        prompt: current.prompt, transcript: getTranscript(project, id) };
+      // Explicit authoritative event, not a terminal stream chunk. Bypass the
+      // generic recalling decorator so clients can release their pending UI.
+      broadcastEvent('session:recalled', { project, id, ...result });
+      return result;
+    }, () => broadcast('session:status', { project, id, status: 'running', phase: 'recalling' }));
+  } catch (err) {
+    if (turn && !turnLifecycle.get(key)) activeTurns.delete(key);
+    if (turn?.restored) {
+      broadcast('session:status', { project, id, status: 'running', phase: 'recall-recovery', recallFailed: true,
+        error: 'History restored, but local recovery is unfinished. Retry Stop & Edit before sending another message.' });
+    } else if (turn && matches(turn)) {
+      broadcastEvent('session:status', { project, id, status: turn.settled ? 'waiting' : 'running',
+        turnId: turn.turnId, requestId: turn.requestId, recallFailed: true,
+        error: `Stop & Edit failed: ${err.message || err}. The exchange was kept.` });
+    }
+    if (!err.status) err.status = 502;
+    throw err;
   }
 }
 
 export function hasActiveTurn(project, id) {
+  const task = getTask(project, id);
+  if (task) { ensureStateOwner(keyOf(project, id), task); transcriptFor(keyOf(project, id)); }
   return activeTurns.has(keyOf(project, id));
 }
 
@@ -1863,6 +2040,7 @@ export function settleSession(project, id) {
 export function forgetTask(project, id) {
   const key = keyOf(project, id);
   transcripts.delete(key);
+  recallAudits.delete(key);
   registry.delete(key);
   stateOwner.delete(key);
   for (const [pkey, entry] of [...pendingPermissions.entries()]) {
@@ -1878,6 +2056,7 @@ export function forgetTask(project, id) {
 export function activeSessions() {
   return Array.from(registry.values()).map(({ project, id, provider, startedAt, status, agents, edits, turnStartedAt, activity }) => ({
     project, id, provider: provider || 'claude', startedAt, status,
+    activeTurn: turnLifecycle.state(keyOf(project, id)),
     turnStartedAt: status === 'running' ? turnStartedAt || null : null,
     activity: status === 'running' ? activity || null : null,
     // live subagent roster + ✎ edit aggregate of the current turn (empty
@@ -1891,5 +2070,25 @@ export function getTranscript(project, id) {
   const task = requireTask(project, id);
   const key = keyOf(project, id);
   ensureStateOwner(key, task);
-  return transcriptFor(key).slice();
+  return transcriptFor(key).filter(e => !e.recalledAt);
+}
+
+export function getTurnState(project, id) {
+  const task = requireTask(project, id);
+  const key = keyOf(project, id);
+  ensureStateOwner(key, task);
+  transcriptFor(key);
+  const recalled = (recallAudits.get(key) || []).filter(r => r.phase === 'recalled');
+  const last = recalled.at(-1);
+  return { activeTurn: turnLifecycle.state(key),
+    lastRecalled: last ? { turnId: last.turnId, requestId: last.requestId, prompt: last.prompt, recalledAt: last.recalledAt } : null,
+    recalledTurnIds: recalled.map(r => r.turnId) };
+}
+
+export function getAllTurnStates() {
+  const result = {};
+  for (const project of Object.keys(PROJECTS)) {
+    for (const task of listTasks(project)) result[keyOf(project, task.id)] = getTurnState(project, task.id);
+  }
+  return result;
 }

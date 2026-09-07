@@ -13,7 +13,7 @@ import {
   snapsCache, pendingPerms, composerDrafts, queuedMsgs,
   turnTexTouched, pendingComplete, consoleView,
   projKeys, tasksOf, findTask, taskProvider, agentName,
-  perOf, artifactUrl, pdfSrc,
+  perOf, artifactUrl, pdfSrc, mergeToolchains,
 } from './store.js';
 import { api, apiQuiet, connectWS } from './net.js';
 import {
@@ -21,13 +21,17 @@ import {
 } from './files.js';
 import { pumps, pumpConsole } from './console.js';
 import { noteRunStatus, noteRunActivity, seedRunActivities, syncRunActivities } from './runActivity.js';
-import { syncRunJobCard, fadeJobCard } from './jobs.js';
+import { syncRunJobCard, scheduleJobFade, absorbJob } from './jobs.js';
 import {
   renderTexProblems, noteTurnTex, queueAutoTexRuns, pumpAutoRun,
   updateTexRunCard, syncTexRunPane,
 } from './texrun.js';
 import { pdfStateTxt, artPaneKey } from './viewers.js';
 import { sendMsg } from './session.js';
+import {
+  applyRecall, isRecalledEvent, noteRecallStatus, pausedQueues, stopOrRecall,
+  syncRecallState, hydrateRecallState, persistRecallState,
+} from './undoSend.js';
 import { voiceOnStream, voiceOnStatus } from './voice.js';
 import {
   renderOverview, renderPlan, renderSettings, aboutCache,
@@ -79,7 +83,14 @@ window.addEventListener('scroll', (e) => {
  * @returns {void}
  */
 export function handleEvent(type, p) {
+  if (type !== 'session:recalled' && isRecalledEvent(p)) return;
   switch (type) {
+    case 'session:recalled': {
+      applyRecall(p);
+      renderNav();
+      if (ui.view === 'ov') renderOverview();
+      break;
+    }
     case 'state': {
       applyState(p);
       renderAll();
@@ -211,18 +222,17 @@ export function handleEvent(type, p) {
       break;
     }
     case 'job:status': {
-      // a long-running script's live card: elapsed/CPU/mem (+ parsed progress
+      // a long-running script's live card: health/cores/mem (+ parsed progress
       // for ▶ runs). Cards patch in place; a finished job holds its terminal
-      // state briefly, then fades away.
+      // state briefly, then fades into a feed row. absorbJob carries the
+      // client-side sample history (sparklines, phases, output tail) across.
       if (!p || !p.job || !p.job.key) break;
       const j = p.job;
       j._recvAt = performance.now();
-      jobsLive[j.key] = j;
+      jobsLive[j.key] = absorbJob(jobsLive[j.key], j);
       if (j.state !== 'running') {
         refreshFeed(j.project); // a finished run lands in the activity feed
-        if (!jobTimers[j.key]) {
-          jobTimers[j.key] = setTimeout(() => { delete jobTimers[j.key]; fadeJobCard(j.key); }, 6000);
-        }
+        scheduleJobFade(j);
       }
       if (j.source === 'run') {
         syncRunJobCard(j.project);
@@ -234,9 +244,10 @@ export function handleEvent(type, p) {
     }
     case 'session:status': {
       if (!p) break;
+      const recalling = noteRecallStatus(p);
       if (p.status) noteRunStatus(p);
-      if (perOf(p.project).interrupting === p.id) perOf(p.project).interrupting = null;
-      if (p.status && p.status !== 'running') {
+      if (!recalling && perOf(p.project).interrupting === p.id) perOf(p.project).interrupting = null;
+      if (!recalling && p.status && p.status !== 'running') {
         delete agentsLive[`${p.project}/${p.id}`];
         delete editsLive[`${p.project}/${p.id}`];
         // belt: the server ends the turn's jobs itself, but if that broadcast
@@ -246,9 +257,7 @@ export function handleEvent(type, p) {
           if (j.source === 'session' && j.project === p.project && j.taskId === p.id
             && j.state === 'running' && !j.detached) {
             j.state = 'stopped';
-            if (!jobTimers[j.key]) {
-              jobTimers[j.key] = setTimeout(() => { delete jobTimers[j.key]; fadeJobCard(j.key); }, 6000);
-            }
+            scheduleJobFade(j);
           }
         }
         // messages typed during the turn were queued (one turn at a time) —
@@ -257,7 +266,7 @@ export function handleEvent(type, p) {
         // park the text in the composer instead of starting a turn under it.
         const ck = `${p.project}/${p.id}`;
         const q = queuedMsgs[ck];
-        if (q && q.length) {
+        if (q && q.length && !pausedQueues.has(ck)) {
           delete queuedMsgs[ck];
           if (pendingComplete[ck]) {
             composerDrafts[ck] = [...q, composerDrafts[ck]].filter(Boolean).join('\n\n');
@@ -292,7 +301,7 @@ export function handleEvent(type, p) {
           ? `[${p.project} · ${p.id}] turn couldn’t reach ${agent} — sign-in needed (see the session pane)`
           : `[${p.project} · ${p.id}] ${p.error}`);
       }
-      if (p.status && p.status !== 'running') {
+      if (!recalling && p.status && p.status !== 'running') {
         // Sync the canonical final answer and repair any legacy Codex stream
         // that glued it directly to commentary (e.g. `sentence. ```latex`).
         refreshTranscript(p.project, p.id, {
@@ -304,7 +313,7 @@ export function handleEvent(type, p) {
       else if (ui.view === p.project) renderWB(p.project);
       // AFTER the re-render: the karaoke highlight must land on the settled
       // formatted console, not the raw tail the render is about to replace
-      voiceOnStatus(p.project, p.id, p.status, prevStatus);
+      if (!recalling) voiceOnStatus(p.project, p.id, p.status, prevStatus);
       break;
     }
     case 'artifact:new': {
@@ -584,6 +593,7 @@ function applyState(p) {
   state.providers = p.providers || {};
   state.agentDefaults = p.agentDefaults || state.agentDefaults;
   state.sessions = Array.isArray(p.sessions) ? p.sessions : [];
+  hydrateRecallState();
   seedRunActivities(state.sessions);
   // fleet board + ✎ strip: the snapshot is authoritative, exactly like jobs
   // below — a reload or ws reconnect mid-turn re-seeds the live strips, and
@@ -621,6 +631,9 @@ function applyState(p) {
     }
     if (typeof rest.bytes === 'number') runOff[k] = rest.bytes; // replay guard baseline
   }
+  state.runtimes = p.runtimes || null; // ▶ registry (runnable exts + toolchains)
+  // toolchain summary — keep a fetched detail (paths) when the snapshot only carries the summary
+  state.toolchains = mergeToolchains(p.toolchains);
   state.texfix = p.texfix || {};
   state.kaimon = p.kaimon || {};
   state.update = p.update || {};
@@ -628,15 +641,14 @@ function applyState(p) {
   state.plan = p.plan || { deadlines: {}, cal: { sources: [], routes: {}, events: [] } };
   // job cards: the snapshot is authoritative — a reload mid-run re-seeds the
   // live cards, and jobs that ended while we were away disappear
+  const previousJobs = { ...jobsLive };
   for (const k of Object.keys(jobsLive)) delete jobsLive[k];
   for (const j of (Array.isArray(p.jobs) ? p.jobs : [])) {
     if (!j || !j.key) continue;
     j._recvAt = performance.now();
-    jobsLive[j.key] = j;
+    jobsLive[j.key] = absorbJob(previousJobs[j.key], j); // preserve history only for the same invocation
     // a just-ended job in the snapshot still needs its fade-away timer
-    if (j.state !== 'running' && !jobTimers[j.key]) {
-      jobTimers[j.key] = setTimeout(() => { delete jobTimers[j.key]; fadeJobCard(j.key); }, 6000);
-    }
+    if (j.state !== 'running') scheduleJobFade(j);
   }
   // release PDF panes belonging to projects that vanished or went inactive —
   // each holds a worker-side document, canvases, observers, and timers
@@ -647,6 +659,7 @@ function applyState(p) {
       delete pdfPanes[pk];
     }
   }
+  syncRecallState(p.turnStates);
 }
 
 /**
@@ -981,7 +994,20 @@ function wireGlobal() {
       const k = projKeys()[+e.key - 1];
       if (k) go(k);
     }
-    if (e.key === 'Escape') { closeModal(); closeGitPanel(); }
+    if (e.key === 'Escape') {
+      if (e.defaultPrevented || e.repeat || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      // Dismissal always wins over interruption. Native dialog/Monaco/iframe
+      // Escape remains owned by that surface, not the session underneath it.
+      const overlay = document.querySelector('#modalBack.show, #gitBack.show, dialog[open], #dropPortal .dropMenu');
+      if (overlay) { closeModal(); closeGitPanel(); return; }
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target || target.closest('.monaco-editor, .pinSearch, .usagePopover, .texOutlineMenu, [role="menu"]')) return;
+      if (!target.matches('#composerInput, #interruptBtn, #sendBtn') && !target.closest('#consoleBox')) return;
+      const project = ui.view, id = perOf(project).taskId;
+      if (!id || !state.projects[project]) return;
+      e.preventDefault();
+      stopOrRecall(project, id);
+    }
   });
 }
 

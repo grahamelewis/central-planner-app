@@ -14,13 +14,15 @@ import { isPathGranted } from './lib/extpins.js';
 import { logTime, logTokens, weekSummary, dailyActivity } from './lib/ledger.js';
 import { memorySettings } from './lib/memorySettings.js';
 import { configureTaskMemory } from './lib/taskMemory.js';
-import { launchTask, sendMessage, retryLastTurn, interrupt, activeSessions, getTranscript, resolvePermission, hasActiveTurn, forgetTask, settleSession } from './lib/sessions.js';
+import { launchTask, sendMessage, retryLastTurn, interrupt, recallTurn, getAllTurnStates, activeSessions, getTranscript, resolvePermission, hasActiveTurn, forgetTask, settleSession } from './lib/sessions.js';
 import { getAuthStatus, checkAuth, startLogin, startAuthChecks } from './lib/auth.js';
 import { getProvidersSnapshot } from './lib/providers.js';
 import { getAgentDefaults, updateAgentDefaults } from './lib/agentSettings.js';
 import { refreshCodex, startCodexLogin, logoutCodex, startCodexChecks, stopCodex } from './lib/codexAppServer.js';
 import { startArtifactWatchers, getArtifacts, watchTex, unwatchTex, pokeTex, getPdfWatches, listProjectFiles } from './lib/watchers.js';
 import { startRun, stopRun, getRuns } from './lib/runner.js';
+import { runtimesSnapshot } from './lib/runtimes.js';
+import { describeToolchains, toolchainsSummary, refreshToolchains, projectToolchains } from './lib/toolchains.js';
 import { getJobs, stopSessionJob, getJobHistory } from './lib/jobs.js';
 import { listSnapshots, getSnapshotFile, revertSnapshot, purgeTask, checkEolNormalize, recordEditorSave } from './lib/snapshots.js';
 import { containedPath, writeFileAtomic } from './lib/paths.js';
@@ -136,7 +138,11 @@ function safeCall(label, fn, fallback) {
 function snapshot() {
   const projects = {};
   for (const [key, p] of Object.entries(PROJECTS)) {
-    projects[key] = { name: p.name, root: p.root, color: p.color, texWatch: p.texWatch, status: projectStatus(p) };
+    projects[key] = {
+      name: p.name, root: p.root, color: p.color, texWatch: p.texWatch, status: projectStatus(p),
+      // which toolchains the project's markers imply, and which are absent here
+      toolchains: safeCall(`toolchains:${key}`, () => projectToolchains(p.root), { runtimes: [], markers: {}, missing: [] }),
+    };
   }
   const abstracts = {};
   for (const key of Object.keys(PROJECTS)) {
@@ -153,7 +159,12 @@ function snapshot() {
     pdf: safeCall('pdf', () => getPdfWatches(), {}),
     ledger: safeCall('ledger', () => weekSummary(), {}),
     sessions: safeCall('sessions', () => activeSessions(), []),
+    turnStates: safeCall('turnStates', () => getAllTurnStates(), {}),
     runs: safeCall('runs', () => getRuns(), {}),
+    // the ▶ registry: runnable extensions, ext → runtime, toolchain presence
+    runtimes: safeCall('runtimes', () => runtimesSnapshot(), { exts: [], byExt: {}, toolchains: {} }),
+    // per-runtime toolchain summary (ok, versions, install hint — no paths); GET /api/toolchains has the detail
+    toolchains: safeCall('toolchains', () => toolchainsSummary(), {}),
     jobs: safeCall('jobs', () => getJobs(), []),
     texfix: safeCall('texfix', () => getTexfix(), {}),
     kaimon: safeCall('kaimon', () => getKaimonStatus(), {}),
@@ -393,7 +404,7 @@ app.post('/api/tasks/:project/:id/launch', route(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/tasks/:project/:id/message', route((req, res) => {
+app.post('/api/tasks/:project/:id/message', route(async (req, res) => {
   const { project, id } = req.params;
   assertProjectKey(project);
   const text = req.body && req.body.text;
@@ -402,15 +413,16 @@ app.post('/api/tasks/:project/:id/message', route((req, res) => {
     e.status = 400;
     throw e;
   }
+  const requestId = req.body?.requestId;
+  if (requestId !== undefined && (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(requestId))) {
+    return res.status(400).json({ error: 'requestId must be an 8–128 character identifier' });
+  }
   // after validation, so refusal-path tests still see their 400s
   if (process.env.CP_NO_BILLED) {
     return res.status(403).json({ error: 'billed agent dispatch is disabled in this environment' });
   }
-  const result = sendMessage(project, id, text);
-  if (result && typeof result.then === 'function') {
-    result.catch((err) => console.error('[core] sendMessage async error:', err && err.message));
-  }
-  res.json({ ok: true });
+  const result = await sendMessage(project, id, text, { requestId });
+  res.json({ ok: true, ...result });
 }));
 
 // BILLED — re-runs the last turn (the sign-in card's ↻ Retry). Same class as
@@ -454,6 +466,20 @@ app.post('/api/providers/codex/models', route(async (req, res) => {
   res.json(await refreshCodex({ force: true }));
 }));
 
+// Toolchain discovery (lib/toolchains.js): what ▶ and the job cards depend on,
+// with paths and install hints. Cached 60 s; refresh re-probes PATH and the
+// `--version`s (local, fast, never billed) and re-broadcasts the snapshot so
+// per-project "missing" notices update everywhere.
+app.get('/api/toolchains', route((req, res) => {
+  res.json(describeToolchains());
+}));
+
+app.post('/api/toolchains/refresh', route(async (req, res) => {
+  const detail = await refreshToolchains();
+  broadcast('state', snapshot());
+  res.json(detail);
+}));
+
 app.patch('/api/providers/defaults', route((req, res) => {
   const defaults = updateAgentDefaults(req.body || {});
   broadcast('provider:defaults', defaults);
@@ -473,8 +499,33 @@ app.post('/api/tasks/:project/:id/permission', route((req, res) => {
 app.post('/api/tasks/:project/:id/interrupt', route(async (req, res) => {
   const { project, id } = req.params;
   assertProjectKey(project);
-  await interrupt(project, id);
+  const { turnId, requestId } = req.body || {};
+  for (const value of [turnId, requestId]) {
+    if (value !== undefined && (typeof value !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(value))) {
+      return res.status(400).json({ error: 'turnId and requestId must be valid submission identifiers' });
+    }
+  }
+  await interrupt(project, id, { turnId, requestId });
   res.json({ ok: true });
+}));
+
+// Stop & Edit changes provider history, but never starts a new model turn.
+// Keep sandbox tests on mocked providers; never mutate real provider sessions.
+app.post('/api/tasks/:project/:id/recall', route(async (req, res) => {
+  const { project, id } = req.params;
+  assertProjectKey(project);
+  const { turnId, requestId } = req.body || {};
+  const validId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(value);
+  if ((!turnId && !requestId)
+      || (turnId !== undefined && !validId(turnId))
+      || (requestId !== undefined && !validId(requestId))) {
+    return res.status(400).json({ error: 'a valid turnId or requestId is required' });
+  }
+  if (process.env.CP_NO_BILLED) {
+    return res.status(403).json({ error: 'provider history changes are disabled in this environment' });
+  }
+  const result = await recallTurn(project, id, { turnId, requestId });
+  res.json({ ok: true, ...result });
 }));
 
 // One-click Kaimon install (the warm-REPL enable card). Not a billed Claude
@@ -737,9 +788,14 @@ app.get('/api/files/:project', route((req, res) => {
 }));
 
 app.post('/api/run', route((req, res) => {
-  const { project, rel } = req.body || {};
+  const { project, rel, mode } = req.body || {};
   assertProjectKey(project);
-  const result = startRun(project, rel);
+  // mode: 'run' | 'test' | omitted (the registry decides — test files run
+  // in test mode). The response's run carries the resolved display + phases.
+  if (mode != null && mode !== 'run' && mode !== 'test') {
+    return res.status(400).json({ error: `mode must be 'run' or 'test'` });
+  }
+  const result = startRun(project, rel, { mode: mode || null });
   if (result.error) return res.status(400).json(result);
   res.json(result);
 }));
@@ -797,6 +853,18 @@ app.post('/api/jobs/:project/stop', route((req, res) => {
   const { project } = req.params;
   assertProjectKey(project);
   const key = String((req.body || {}).key || '');
+  const startedAt = req.body?.startedAt;
+  if (startedAt !== undefined) {
+    if (typeof startedAt !== 'string' || !Number.isFinite(Date.parse(startedAt))) {
+      return res.status(400).json({ error: 'startedAt must identify the displayed job instance' });
+    }
+    // Project runs reuse their key. A delayed click on an old card must not
+    // stop its replacement. This check and the stop dispatch are synchronous.
+    const current = getJobs().find(job => job.key === key && job.project === project);
+    if (!current || current.startedAt !== startedAt) {
+      return res.status(409).json({ error: 'That job instance is no longer current; refresh the card before stopping it.' });
+    }
+  }
   if (key === `run:${project}`) {
     const result = stopRun(project);
     if (result.error) return res.status(500).json(result);

@@ -398,6 +398,15 @@ export function voiceOnStatus(project, id, status, prev) {
   voiceEnqueue(k, sentences.slice(cursor));
 }
 
+/** A recalled turn must not continue narrating text removed from history. */
+export function voiceCancelTurn(project, id) {
+  const k = `${project}/${id}`;
+  clearTimeout(voiceSt.narrTimers[k]);
+  delete voiceSt.narrTimers[k];
+  delete voiceSt.sentAt[k];
+  if (voiceSt.sp.k === k) voiceStopSpeaking();
+}
+
 /* ── UI sync + wiring ── */
 
 /* re-applies mic/countdown/hint state onto whatever the last render produced —
@@ -578,9 +587,10 @@ export function voiceSecWire(host) {
 if (SR_CTOR || TTS) {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (voiceSt.status === 'listening') { voiceStopListening(false); return; }
-      if (voiceSt.status === 'counting') { voiceCancelCountdown(); return; }
-      if (voiceSt.sp.q.length) voiceStopSpeaking();
+      if (e.defaultPrevented || e.isComposing || e.repeat) return;
+      if (voiceSt.status === 'listening') { e.preventDefault(); voiceStopListening(false); return; }
+      if (voiceSt.status === 'counting') { e.preventDefault(); voiceCancelCountdown(); return; }
+      if (voiceSt.sp.q.length) { e.preventDefault(); voiceStopSpeaking(); }
       return;
     }
     if (e.code !== 'Space' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;

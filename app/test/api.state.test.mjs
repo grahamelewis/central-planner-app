@@ -13,6 +13,15 @@ before(async () => {
     seed: ({ projRoots }) => {
       // a pre-existing artifact the native watcher scan must index on startup
       fs.writeFileSync(path.join(projRoots.alpha, 'report.html'), '<html><body>hi</body></html>');
+      // toolchain markers: alpha is a rust + go project (node's package.json
+      // sits in a dir the scan ignores; the deep one is below depth 2)
+      fs.writeFileSync(path.join(projRoots.alpha, 'Cargo.toml'), '[package]\nname = "alpha"\n');
+      fs.mkdirSync(path.join(projRoots.alpha, 'svc'), { recursive: true });
+      fs.writeFileSync(path.join(projRoots.alpha, 'svc', 'go.mod'), 'module alpha/svc\n');
+      fs.mkdirSync(path.join(projRoots.alpha, 'node_modules', 'dep'), { recursive: true });
+      fs.writeFileSync(path.join(projRoots.alpha, 'node_modules', 'dep', 'package.json'), '{}');
+      fs.mkdirSync(path.join(projRoots.alpha, 'a', 'b', 'c'), { recursive: true });
+      fs.writeFileSync(path.join(projRoots.alpha, 'a', 'b', 'c', 'package.json'), '{}');
     },
   });
 });
@@ -21,7 +30,7 @@ after(async () => { if (sb) await sb.stop(); });
 test('snapshot has every key the frontend reads, with the right shapes', async () => {
   const { status, body } = await sb.fetchJson('GET', '/api/state');
   assert.equal(status, 200);
-  for (const key of ['projects', 'categories', 'abstracts', 'tasks', 'artifacts', 'pdf', 'ledger', 'sessions', 'runs', 'tailnet']) {
+  for (const key of ['projects', 'categories', 'abstracts', 'tasks', 'artifacts', 'pdf', 'ledger', 'sessions', 'runs', 'tailnet', 'toolchains']) {
     assert.ok(key in body, `snapshot is missing '${key}'`);
   }
   assert.deepEqual(Object.keys(body.projects).sort(), ['alpha', 'beta']);
@@ -100,4 +109,72 @@ test('POST /api/kaimon/install refuses in the sandbox (CP_NO_BILLED)', async () 
   const { status, body } = await sb.fetchJson('POST', '/api/kaimon/install');
   assert.equal(status, 403);
   assert.match(body.error, /disabled/);
+});
+
+// Toolchains (lib/toolchains.js): the snapshot carries a per-runtime summary
+// (no paths) and per-project needs; the detail lives on /api/toolchains.
+// Presence itself is machine-dependent (go is absent on the dev Mac) — the
+// assertions are about shape and internal consistency, never about a bin.
+const TC_IDS = ['rust', 'go', 'node', 'c', 'cpp', 'julia', 'python', 'r', 'sql', 'tex'];
+
+test('snapshot.toolchains: a summary per runtime — ok, missing, versions, hint, no paths', async () => {
+  const { body } = await sb.fetchJson('GET', '/api/state');
+  const tc = body.toolchains;
+  assert.deepEqual(Object.keys(tc), TC_IDS);
+  for (const id of TC_IDS) {
+    const t = tc[id];
+    assert.equal(t.id, id);
+    assert.equal(typeof t.label, 'string');
+    assert.equal(typeof t.ok, 'boolean');
+    assert.ok(Array.isArray(t.missing) && Array.isArray(t.missingOptional));
+    assert.equal(typeof t.versions, 'object');
+    assert.ok(t.hint === null || typeof t.hint === 'string');
+    assert.equal(t.ok, t.missing.length === 0, `${id}.ok mirrors missing`);
+    if (!t.ok) assert.ok(t.hint, `${id} missing → hint`);
+    assert.ok(!('required' in t) && !('optional' in t), `${id} summary carries no rows/paths`);
+  }
+  // node runs this server, so node/npm are present and the .ts decision is made
+  assert.equal(tc.node.ok, true);
+  assert.equal(typeof tc.node.ts.strip, 'boolean');
+  assert.ok(['node', 'tsx', null].includes(tc.node.ts.via));
+  assert.equal(JSON.stringify(tc).includes(process.execPath), false, 'no paths in the snapshot');
+});
+
+test('snapshot.projects[*].toolchains: the markers found (depth ≤ 2, deps ignored) and what is missing', async () => {
+  const { body } = await sb.fetchJson('GET', '/api/state');
+  const alpha = body.projects.alpha.toolchains;
+  assert.deepEqual(alpha.runtimes, ['rust', 'go']);
+  assert.deepEqual(alpha.markers, { rust: 'Cargo.toml', go: 'svc/go.mod' });
+  assert.ok(Array.isArray(alpha.missing));
+  for (const id of alpha.missing) {
+    assert.ok(alpha.runtimes.includes(id), 'missing ⊆ needed');
+    assert.equal(body.toolchains[id].ok, false, `missing ${id} is not ok in the summary`);
+  }
+  for (const id of alpha.runtimes) {
+    if (body.toolchains[id].ok) assert.ok(!alpha.missing.includes(id));
+    else assert.ok(alpha.missing.includes(id), `needed-but-absent ${id} is reported`);
+  }
+  assert.deepEqual(body.projects.beta.toolchains, { runtimes: [], markers: {}, missing: [] });
+});
+
+test('GET /api/toolchains: the detail with rows and paths; POST refresh re-probes', async () => {
+  const { status, body } = await sb.fetchJson('GET', '/api/toolchains');
+  assert.equal(status, 200);
+  assert.deepEqual(Object.keys(body), TC_IDS);
+  const node = body.node;
+  assert.ok(Array.isArray(node.required) && Array.isArray(node.optional));
+  const row = node.required.find((r) => r.bin === 'node');
+  assert.ok(row, 'a row per registry binary');
+  for (const f of ['bin', 'found', 'path', 'version', 'short']) assert.ok(f in row, `row has '${f}'`);
+  assert.equal(row.found, true);
+  assert.ok(row.path && row.path.includes('/'), 'the detail carries the path');
+  assert.deepEqual(body.c.optional.map((r) => r.bin), ['cmake', 'ninja']);
+  const mod = body.sql.required.find((r) => r.kind === 'module');
+  assert.equal(mod.bin, 'duckdb (python module)');
+
+  const r = await sb.fetchJson('POST', '/api/toolchains/refresh');
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body), TC_IDS);
+  assert.equal(r.body.node.required.find((x) => x.bin === 'node').found, true);
+  assert.ok(r.body.node.versions.node, 'versions have landed after an awaited refresh');
 });

@@ -22,6 +22,19 @@ const span = (cls, s) => cls ? `<span class="${cls}">${esc(s)}</span>` : esc(s);
 const JL_MULTI = { '#=': { cls: 'cm', end: '=#' }, '"""': { cls: 'st', end: '"""' } };
 const PY_MULTI = { '"""': { cls: 'st', end: '"""' }, "'''": { cls: 'st', end: "'''" } };
 const SQL_MULTI = { '/*': { cls: 'cm', end: '*/' } };
+// wave 1 (docs/language-support/RUNTIMES.md): the C-family block comment,
+// plus the backtick literal where it spans lines (JS templates, Go raw strings)
+const C_MULTI = { '/*': { cls: 'cm', end: '*/' } };
+const JS_MULTI = { '/*': { cls: 'cm', end: '*/' }, '`': { cls: 'st', end: '`' } };
+const TOML_MULTI = { '"""': { cls: 'st', end: '"""' }, "'''": { cls: 'st', end: "'''" } };
+// shared C-family pieces: numbers with any suffix (1u64, 10UL, 1.0f, 10n,
+// 1e9) and the "…" string — spliced into per-language regexes below
+const C_NUM = String.raw`\b0[xXbBoO][\da-fA-F_]+\w*|\b\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?\w*`;
+const C_STR = String.raw`"(?:\\.|[^"\\])*"`;
+const JS_KW = ('async await break case catch class const continue debugger default delete do else export '
+  + 'extends finally for from function if import in instanceof let new of return static super switch this '
+  + 'throw try typeof var void while with yield true false null undefined NaN Infinity get set '
+  + 'constructor').split(' ');
 
 const LANGS = {
   jl: {
@@ -65,6 +78,86 @@ const LANGS = {
       + 'primary key unique default if returning sample tablesample true false').split(' ')),
   },
   tex: { custom: texLine },
+  rs: {
+    // char literals are ONE char ('a', '\n'); a bare 'a is a lifetime (fn),
+    // so "fn f<'a>(x: &'a str)" never reads as a string. Macros (println!)
+    // and #[attributes] share the fn colour.
+    re: new RegExp(String.raw`(?<open>/\*)|(?<cm>//[^\n]*)|(?<st>b?${C_STR}|b?'(?:\\.|[^'\\])')|(?<fn>#!?\[[^\]\n]*\]|'[A-Za-z_]\w*|[A-Za-z_]\w*!(?=\s*[({\[]))|(?<nm>${C_NUM})|(?<id>[A-Za-z_]\w*)`, 'g'),
+    multi: C_MULTI,
+    kw: new Set(('as async await break const continue crate dyn else enum extern false fn for if impl in let '
+      + 'loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where '
+      + 'while union macro_rules i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize f32 f64 bool char str '
+      + 'String Vec Option Some None Result Ok Err Box').split(' ')),
+  },
+  go: {
+    re: new RegExp(String.raw`(?<open>/\*|\`)|(?<cm>//[^\n]*)|(?<st>${C_STR}|'(?:\\.|[^'\\])*')|(?<nm>${C_NUM})|(?<id>[A-Za-z_]\w*)`, 'g'),
+    multi: JS_MULTI, // the backtick opener is Go's raw string
+    kw: new Set(('break case chan const continue default defer else fallthrough for func go goto if import '
+      + 'interface map package range return select struct switch type var true false nil iota bool byte rune '
+      + 'string error int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 uintptr float32 float64 '
+      + 'complex64 complex128 any append cap close copy delete len make new panic print println recover').split(' ')),
+  },
+  js: {
+    re: new RegExp(String.raw`(?<open>/\*|\`)|(?<cm>//[^\n]*)|(?<st>${C_STR}|'(?:\\.|[^'\\])*')|(?<fn>@[A-Za-z_][\w.]*)|(?<nm>${C_NUM})|(?<id>[A-Za-z_$][\w$]*)`, 'g'),
+    multi: JS_MULTI,
+    kw: new Set(JS_KW),
+  },
+  ts: {
+    // same tokenizer as js (spliced in below LANGS); the keyword set adds
+    // the type-level vocabulary
+    re: /$^/g,
+    multi: JS_MULTI,
+    kw: new Set(JS_KW.concat(('abstract as declare enum implements interface is keyof namespace never private '
+      + 'protected public readonly satisfies type unknown any number string boolean symbol bigint object '
+      + 'override module require').split(' '))),
+  },
+  c: {
+    // one grammar for C and C++: preprocessor lines share the fn colour;
+    // the keyword set is the union (harmless on a .c file)
+    re: new RegExp(String.raw`(?<open>/\*)|(?<cm>//[^\n]*)|(?<st>${C_STR}|'(?:\\.|[^'\\])*')|(?<fn>#\s*[a-z]+)|(?<nm>${C_NUM})|(?<id>[A-Za-z_]\w*)`, 'g'),
+    multi: C_MULTI,
+    kw: new Set(('auto break case char const continue default do double else enum extern float for goto if '
+      + 'inline int long register restrict return short signed sizeof static struct switch typedef union '
+      + 'unsigned void volatile while _Bool _Complex bool true false NULL nullptr class namespace template '
+      + 'typename public private protected virtual override final new delete this friend using operator '
+      + 'explicit constexpr consteval constinit static_cast dynamic_cast reinterpret_cast const_cast try '
+      + 'catch throw noexcept mutable decltype export import module concept requires co_await co_return '
+      + 'co_yield size_t ssize_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t').split(' ')),
+  },
+  // the files that ride along: labelled, lightly coloured, never wrong
+  toml: {
+    re: /(?<open>"""|''')|(?<cm>#[^\n]*)|(?<st>"(?:\\.|[^"\\])*"|'[^'\n]*')|(?<kwp>^\s*\[[^\]\n]*\])|(?<fn>^\s*[A-Za-z0-9_.-]+(?=\s*=))|(?<nm>\b\d{4}-\d\d-\d\d[^\s,\]}]*|[+-]?\b\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?\b)|(?<id>[A-Za-z_][\w-]*)/g,
+    multi: TOML_MULTI,
+    kw: new Set(['true', 'false', 'inf', 'nan']),
+  },
+  yaml: {
+    re: /(?<cm>#[^\n]*)|(?<st>"(?:\\.|[^"\\])*"|'[^'\n]*')|(?<kwp>^---\s*$|^\.\.\.\s*$)|(?<fn>^\s*(?:-\s+)?[A-Za-z0-9_.\/-]+(?=\s*:(?:\s|$))|[&*][\w-]+|![\w!\/]+)|(?<nm>\b-?\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(?<id>[A-Za-z_]\w*)/g,
+    multi: {},
+    kw: new Set(['true', 'false', 'null', 'yes', 'no', 'on', 'off', 'True', 'False', 'Null', 'TRUE', 'FALSE', 'NULL']),
+  },
+  make: {
+    // a target line "name: deps" is kw; $(VAR) / ${VAR} / $@ / $< are fn
+    re: /(?<cm>#[^\n]*)|(?<st>"(?:\\.|[^"\\])*"|'[^'\n]*')|(?<kwp>^[A-Za-z0-9_.$(){}%\/-][^:=#\n]*?:(?!=))|(?<fn>\$\([^)\n]*\)|\$\{[^}\n]*\}|\$[@<^*?%+|]|\$\w)|(?<nm>\b\d+\b)|(?<id>[A-Za-z_.][\w.]*)/g,
+    multi: {},
+    kw: new Set(('ifeq ifneq ifdef ifndef else endif include define endef export unexport override vpath '
+      + '.PHONY .SUFFIXES .DEFAULT .PRECIOUS .SECONDARY').split(' ')),
+  },
+  cmake: {
+    re: /(?<cm>#[^\n]*)|(?<st>"(?:\\.|[^"\\])*")|(?<fn>\$\{[^}\n]*\}|\$<[^>\n]*>)|(?<nm>\b\d[\d.]*\b)|(?<id>[A-Za-z_]\w*)/g,
+    multi: {},
+    kwLower: true,
+    kw: new Set(('cmake_minimum_required project add_executable add_library add_subdirectory add_test '
+      + 'target_link_libraries target_include_directories target_compile_options target_compile_features '
+      + 'target_compile_definitions set unset if else elseif endif foreach endforeach while endwhile function '
+      + 'endfunction macro endmacro include find_package find_library option message install enable_testing '
+      + 'return list string file configure_file on off true false').split(' ')),
+  },
+  gomod: {
+    // go.mod / go.sum: directives + versions
+    re: /(?<cm>\/\/[^\n]*)|(?<st>"[^"\n]*")|(?<nm>\bv\d[\w.+-]*)|(?<id>[A-Za-z_]\w*)/g,
+    multi: {},
+    kw: new Set(['module', 'go', 'require', 'replace', 'exclude', 'retract', 'toolchain']),
+  },
   json: {
     re: /(?<st>"(?:\\.|[^"\\])*")|(?<nm>-?\b\d[\d.]*(?:[eE][+-]?\d+)?\b)|(?<id>[A-Za-z]\w*)/g,
     multi: {},
@@ -72,12 +165,23 @@ const LANGS = {
   },
   md: { custom: mdLine },
 };
+LANGS.ts.re = LANGS.js.re; // one tokenizer, two keyword sets (lineTok resets lastIndex per line)
 
 const EXT_LANG = {
   jl: 'jl', py: 'py', r: 'r', sh: 'sh', bash: 'sh', zsh: 'sh',
   tex: 'tex', sty: 'tex', cls: 'tex', bib: 'tex',
   json: 'json', md: 'md', rmd: 'md', qmd: 'md', markdown: 'md',
   sql: 'sql',
+  // wave 1 — the read-only fallback for the editor's langFor table. Keys are
+  // rel.split('.').pop().toLowerCase(), so a dotless name arrives whole
+  // (Makefile → makefile); CMakeLists.txt is 'txt' and stays unhighlighted.
+  rs: 'rs', go: 'go',
+  js: 'js', mjs: 'js', cjs: 'js', jsx: 'js',
+  ts: 'ts', mts: 'ts', cts: 'ts', tsx: 'ts',
+  c: 'c', h: 'c', cc: 'c', cpp: 'c', cxx: 'c', 'c++': 'c', hpp: 'c', hxx: 'c', hh: 'c',
+  toml: 'toml', yaml: 'yaml', yml: 'yaml',
+  makefile: 'make', gnumakefile: 'make', mk: 'make',
+  cmake: 'cmake', mod: 'gomod', sum: 'gomod',
 };
 
 /** Is there a highlighter for this (lowercase) extension? */

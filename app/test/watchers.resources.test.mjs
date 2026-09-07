@@ -47,3 +47,41 @@ test('artifacts created inside the large output tree still arrive live', async (
   ));
   assert.ok(state.artifacts.some((a) => a.project === 'alpha' && a.rel === rel));
 });
+
+// Build directories: a `cargo build` (target/), a bundler (dist/), a go.mod's
+// vendor/ — none of it may become an artifact, live or on rescan, while a
+// sibling report written afterwards must arrive. Ordering is the oracle: the
+// build files are written FIRST, so by the time the later sibling has been
+// indexed, any event for them would already have landed.
+test('writes under target/ dist/ and a go.mod vendor/ produce no artifact events; a sibling report does', async () => {
+  const alpha = sb.projRoots.alpha;
+  const noise = [
+    path.join('target', 'debug', 'build-report.html'),
+    path.join('target', 'doc', 'crate', 'index.html'),
+    path.join('target', 'release', 'manual.pdf'),
+    path.join('dist', 'index.html'),
+    path.join('gomod', 'vendor', 'github.com', 'x', 'doc.html'),
+  ];
+  fs.mkdirSync(path.join(alpha, 'gomod'), { recursive: true });
+  fs.writeFileSync(path.join(alpha, 'gomod', 'go.mod'), 'module x\n\ngo 1.22\n');
+  for (const rel of noise) {
+    fs.mkdirSync(path.dirname(path.join(alpha, rel)), { recursive: true });
+    fs.writeFileSync(path.join(alpha, rel), '<h1>noise</h1>');
+  }
+  // a vendor/ WITHOUT a go.mod beside it is a real source dir and stays visible
+  const plainVendor = path.join('texproj', 'vendor', 'notes.html');
+  fs.mkdirSync(path.dirname(path.join(alpha, plainVendor)), { recursive: true });
+  fs.writeFileSync(path.join(alpha, plainVendor), '<h1>vendored notes</h1>');
+  const sibling = 'report.html';
+  fs.writeFileSync(path.join(alpha, sibling), '<h1>report</h1>');
+
+  const state = await sb.poll('/api/state', (s) => (
+    (s.artifacts || []).some((a) => a.project === 'alpha' && a.rel === sibling)
+    && (s.artifacts || []).some((a) => a.project === 'alpha' && a.rel === plainVendor)
+  ));
+  const rels = state.artifacts.filter((a) => a.project === 'alpha').map((a) => a.rel);
+  for (const rel of noise) assert.ok(!rels.includes(rel), `${rel} must not be indexed; got ${JSON.stringify(rels)}`);
+  assert.ok(!rels.some((r) => /^(target|dist)\//.test(r)), 'nothing under target/ or dist/');
+  assert.ok(rels.includes(sibling));
+  assert.ok(rels.includes(plainVendor));
+});

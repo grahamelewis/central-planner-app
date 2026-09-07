@@ -25,8 +25,9 @@
     "turnEnd": true
   },
   "artifactGlobs": {
-    "//": "Optional — directories the artifact/file scanners skip. Omit to use the built-in defaults.",
-    "ignoreDirs": ["node_modules", ".git", "data", "_literature", "literature", ".claude", "renv", ".venv", "__pycache__"],
+    "//": "Optional — directories the artifact/file scanners, folder-pin tree maps and file listings skip. Omit to use the built-in defaults (this list). ignoreDirs REPLACES the default list, so keep the build-output names (target, dist, build, out, .next, coverage, …) when you add your own; ignoreDirIfSibling ignores a dir only when a named file sits beside it (Go's vendor/ next to go.mod).",
+    "ignoreDirs": ["node_modules", ".git", "data", "_literature", "literature", ".claude", "renv", ".venv", "__pycache__", "target", "dist", "build", "out", ".next", ".nuxt", ".turbo", ".cache", "coverage", ".gradle"],
+    "ignoreDirIfSibling": { "vendor": ["go.mod"] },
     "maxDepth": 6
   },
   "//kaimon": "Warm Julia REPL (github.com/kahliburke/Kaimon.jl) — ON by default and fully dashboard-managed: sessions in auto-detected Julia projects get a persistent REPL that keeps packages+state loaded across turns. Nothing to configure; if kaimon isn't installed, a one-click enable card appears in Julia projects (needs Julia >= 1.12). Set \"kaimon\": false to disable, or tune with {\"bin\": \"/path/to/kaimon\", \"idleMinutes\": 30}.",

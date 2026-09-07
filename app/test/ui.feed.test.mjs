@@ -243,6 +243,49 @@ test('a null-task change-set (P-EOL-5 editor-save ledger) renders in the feed wi
   assert.equal(after2.sdv, false, 'no task-scoped Δ view opened for a task-less entry');
 });
 
+test('the session feed keeps a one-line row per ended job (✓ / ✗ / ⊘) and a live row for a detached job', opts, async () => {
+  // job card v3 (docs/jobcard-mockups/IMPLEMENTATION.md §2): after a finished
+  // card fades, its end summary stays in the console as a feed row; a
+  // detached job still running after the turn keeps a LIVE row with ⊘ stop
+  const key = await page.evaluate(() => document.querySelector('#v-alpha #consoleBox')?.dataset.key);
+  assert.ok(key, 'a task console is showing');
+  const taskId = key.split('/')[1];
+  const stopPosts = [];
+  await page.route('**/api/jobs/**', (r) => { stopPosts.push(JSON.parse(r.request().postData() || '{}')); r.fulfill({ json: { ok: true } }); });
+  const iso = (ago) => new Date(Date.now() - ago).toISOString();
+  const startedAt = iso(60000);
+  const job = (k, over) => ({
+    key: `sess:alpha/${taskId}/${k}`, source: 'session', project: 'alpha', taskId, lang: 'julia', state: 'running', stopping: false,
+    startedAt, elapsedMs: 60000, pid: 100, cpu: 100, mem: 1e8, progress: null, quietMs: null, exitCode: null, ms: null,
+    sampledAt: iso(500), pollMs: 2000, stale: false, cores: 1.0, coresBasis: 'cputime', hostCores: 8, cpuTimeMs: 60000,
+    memBytes: 1e8, memKind: 'footprint', memPeakBytes: 2e8, procs: 1, threads: 2,
+    health: { state: 'computing', sinceMs: 1000 }, output: { owned: false }, history: null, exit: null, phase: null, counters: {}, ...over,
+  });
+  await ui.wsPush('job:status', { project: 'alpha', job: job('ok', { file: 'sweep/fig3.jl', command: 'julia sweep/fig3.jl', state: 'done', ms: 272000, exit: { code: 0, signal: null, byUser: false }, exitCode: 0, memPeakBytes: 1.5 * 1024 ** 3, cpuTimeMs: 843000 }) });
+  await ui.wsPush('job:status', { project: 'alpha', job: job('bad', { file: 'tests/', lang: 'python', command: 'pytest tests/', state: 'error', ms: 41000, exit: { code: 1, signal: null, byUser: false }, exitCode: 1, counters: { passed: 138, failed: 2, skipped: 3 } }) });
+  await ui.wsPush('job:status', { project: 'alpha', job: job('stop', { file: 'sync', lang: 'shell', command: 'rsync -avz a b', state: 'stopped', ms: 80000, exit: { code: null, signal: 'SIGTERM', byUser: true }, progress: { frac: 0.61, iter: null, total: null, etaS: null } }) });
+  await ui.wsPush('job:status', { project: 'alpha', job: job('det', { file: 'sim.jl', command: 'nohup julia sim.jl &', detached: true, elapsedMs: 520000, progress: { frac: 0.86, iter: 860, total: 1000, etaS: 120 }, output: { lines: 6800, rate: 12, last: 'iter 860/1000', owned: true, buffered: false } }) });
+  await sleep(7000); // the terminal cards hold ~6 s, fade, then leave feed rows
+  const r = await page.evaluate(() => ({
+    cards: document.querySelectorAll('#consoleBox .csJobs .jobCard').length,
+    rows: [...document.querySelectorAll('#consoleBox .csJobFeed .jobFeedRow')].map((row) => ({
+      cls: row.className, txt: [...row.children].map((c) => c.textContent.trim()).join(' '), stop: !!row.querySelector('.jfAct.stop'),
+    })),
+    indet: !!document.querySelector('.indet'),
+  }));
+  assert.equal(r.cards, 0, 'no card lingers: the task is not running, so even the detached job is a feed row');
+  assert.ok(!r.indet);
+  const by = (k) => r.rows.find((x) => x.cls === `jobFeedRow ${k}`);
+  assert.match(by('ok').txt, /^✓ julia fig3\.jl 4m32s · peak 1\.5G · cpu 3\.1× \d+:\d\d/);
+  assert.match(by('bad').txt, /^✗ python tests\/ exit 1 · 138 passed · 2 failed · 3 skipped · 41s · peak 191M \d+:\d\d/);
+  assert.match(by('stop').txt, /^⊘ shell sync stopped by you at 61% · peak 191M \d+:\d\d/);
+  assert.match(by('live').txt, /^▶ julia · detached sim\.jl still running · 86% · 8m4\ds · ≈2m00s left ⊘ stop$/);
+  assert.ok(by('live').stop, 'the detached row keeps ⊘ stop');
+  await page.click('#consoleBox .csJobFeed .jobFeedRow.live .jfAct.stop');
+  await sleep(150);
+  assert.deepEqual(stopPosts, [{ key: `sess:alpha/${taskId}/det`, startedAt }], '⊘ stop fences the displayed invocation');
+});
+
 test('afNum compacts counts to a ≤4-char body so no value can overflow its column', () => {
   const { afNum } = loadPrivateFns(path.join(APP_DIR, 'public', 'app.js'), ['afNum']);
   const out = [0, 8, 236, 999, 1236, 5000, 9949, 9950, 43210, 999499, 999500, 1200000].map(afNum);

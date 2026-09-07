@@ -604,7 +604,35 @@ export function syncTexRunControls(key) {
   }
 }
 
+// the pre-registry list — the FALLBACK until the first snapshot delivers
+// state.runtimes (lib/runtimes.js is the source of truth; no dots here)
 export const RUNNABLE_EXTS = ['jl', 'py', 'r', 'sh', 'tex', 'sql'];
+
+/**
+ * Extensions the ▶ button runs (lower-case, no dot), from the server's
+ * registry when the snapshot has arrived, else the old fixed list.
+ * @returns {string[]}
+ */
+export function runnableExts() {
+  const exts = state.runtimes && Array.isArray(state.runtimes.exts) ? state.runtimes.exts : null;
+  if (!exts || !exts.length) return RUNNABLE_EXTS;
+  const out = [];
+  for (const e of exts) {
+    const k = String(e).replace(/^\./, '').toLowerCase();
+    if (k && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+/**
+ * Is `rel` something ▶ can run? (lower-case extension against runnableExts())
+ * @param {string} rel
+ * @returns {boolean}
+ */
+export function isRunnable(rel) {
+  const m = /\.([^./\\]+)$/.exec(String(rel || ''));
+  return !!m && runnableExts().includes(m[1].toLowerCase());
+}
 
 function runStatTxt(run) {
   if (!run) return '';
