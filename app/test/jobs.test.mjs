@@ -959,13 +959,14 @@ test('phase + counters: the per-runtime parser feeds ▶ runs (pytest); session 
     runJobOutput('alpha', '=========== 1 failed, 4 passed in 0.31s ===========\n');
     j = pub('run:alpha');
     assert.equal(j.phase.name, 'report');
-    // the session hook (not wired today): parser only, output stays un-owned
+    // the session hook (the tool result, v3.1): parser + line count, output stays un-owned
     const s = sessionJobStart('alpha', 'tsk-syn', 'toolu_syn_out', 'cargo build --release && julia x.jl');
     sessionJobOutput('toolu_syn_out', '   Compiling polars-core v0.41.0\nwarning: unused import\n');
     const sj = pub(s.key);
     assert.deepEqual(sj.phase, { name: 'compiling', n: 1, m: null, mSoft: false });
     assert.deepEqual(sj.counters, { crate: 'polars-core', warnings: 1 });
-    assert.deepEqual(sj.output, { owned: false });
+    assert.deepEqual(sj.output, { lines: 2, owned: false, fromToolResult: true });
+    assert.equal(sj.verified, false, 'still running — nothing verified yet');
     sessionJobOutput('toolu_missing', 'ignored\n'); // unknown id → no-op
   });
 });

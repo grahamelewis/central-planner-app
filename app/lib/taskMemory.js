@@ -7,7 +7,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { ROOT } from './config.js';
 import { writeFileAtomic } from './paths.js';
 import { memorySettings, MEMORY_MODELS, memoryError } from './memorySettings.js';
-import { requestCodexMemory } from './codexMemory.js';
+import { requestCodexMemory, preflightCodexMemory } from './codexMemory.js';
 import { collectClaudeWorker, memoryAccounting } from './backgroundUsage.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -82,8 +82,12 @@ export async function requestClaudeSdk(body, { run = query, cwd = ROOT, timeoutM
 }
 
 export function createMemoryService({ root = ROOT, settings = memorySettings, getTask, getTranscript, isActive,
-  request = requestMemory, notify = () => {}, logUsage = () => {}, now = () => new Date() }) {
+  request = requestMemory, preflight = request === requestMemory ? (body, connection) =>
+    connection === 'codex-subscription' ? preflightCodexMemory(body) : undefined : () => {},
+  notify = () => {}, logUsage = () => {}, now = () => new Date(), debounceMs = 30000 }) {
   const queue = new Map();
+  const preparing = new Set();
+  const volatilePauses = new Map(); // fail closed in-process if durable pause storage fails
   let draining = false;
   let timer = null;
   let closed = false;
@@ -132,6 +136,88 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
   function jobsToday() {
     const day = now().toISOString().slice(0, 10);
     return budget().reservations.filter(r => r.day === day && r.connection === 'codex-subscription').length;
+  }
+  const diagnosticKeys = ['code', 'eventType', 'itemType', 'stage', 'exitCode', 'version', 'warningCount', 'warningEventType', 'warningItemType'];
+  const diagnosticCodes = new Set(['memory-disabled', 'memory-auth-required', 'memory-model-unavailable',
+    'memory-readiness-failed', 'memory-protocol-unsupported', 'memory-tool-forbidden', 'memory-protocol-malformed',
+    'memory-provider-failure', 'memory-timeout', 'memory-worker-start-failed', 'memory-worker-setup-failed',
+    'memory-input-interrupted', 'memory-output-limit', 'memory-incomplete', 'memory-worker-incompatible']);
+  const diagnosticValues = {
+    stage: new Set(['preflight', 'setup', 'startup', 'stream', 'completed', 'close', 'timeout', 'unknown']),
+    eventType: new Set(['thread.started', 'turn.started', 'turn.completed', 'turn.failed', 'item.started', 'item.updated', 'item.completed', 'error', 'warning', 'unknown']),
+    itemType: new Set(['agent_message', 'reasoning', 'error', 'warning', 'todo_list', 'command_execution', 'file_change', 'mcp_tool_call', 'web_search', 'collab_tool_call', 'computer_use', 'tool_call', 'unknown']),
+  };
+  function diagnostics(error) {
+    const source = { ...error?.diagnostics, code: error?.code || error?.diagnostics?.code };
+    return Object.fromEntries(diagnosticKeys.flatMap(key => {
+      const value = source[key];
+      if (key === 'code') return diagnosticCodes.has(value) ? [[key, value]] : [];
+      if (key === 'warningCount') return Number.isInteger(value) && value >= 0 && value <= 10000 ? [[key, value]] : [];
+      if (key === 'exitCode') return Number.isInteger(value) && Math.abs(value) <= 255 ? [[key, value]] : [];
+      if (key === 'version') return typeof value === 'string' && /^\d{1,4}(?:\.\d{1,4}){1,3}$/.test(value) ? [[key, value]] : [];
+      const allowed = key === 'warningEventType' ? diagnosticValues.eventType
+        : key === 'warningItemType' ? new Set(['error', 'warning', 'unknown']) : diagnosticValues[key];
+      return typeof value === 'string' ? [[key, allowed?.has(value) ? value : 'unknown']] : [];
+    }));
+  }
+  function controls() {
+    const value = read(safePath('control.json'), { version: 1, pauses: {} });
+    if (!value || value.version !== 1 || !value.pauses || Array.isArray(value.pauses)
+      || typeof value.pauses !== 'object' || Object.keys(value).some(k => !['version', 'pauses'].includes(k))
+      || Object.entries(value.pauses).some(([key, pause]) => !['codex-subscription', 'claude-sdk'].includes(key)
+        || !pause || pause.connection !== key || typeof pause.reason !== 'string' || pause.reason.length > 300
+        || !diagnosticCodes.has(pause.code) || Object.keys(pause).some(k => !['connection', 'reason', 'code', 'createdAt', 'diagnostics'].includes(k))
+        || !Number.isFinite(Date.parse(pause.createdAt)) || !pause.diagnostics || Array.isArray(pause.diagnostics)
+        || typeof pause.diagnostics !== 'object' || JSON.stringify(diagnostics({ diagnostics: pause.diagnostics })) !== JSON.stringify(pause.diagnostics))) {
+      throw memoryError('Memory pause record is invalid; requests remain blocked. Inspect memory/control.json.', 409);
+    }
+    return value;
+  }
+  function saveControls(value) { writeFileAtomic(safePath('control.json'), JSON.stringify(value, null, 2) + '\n'); }
+  function pauseFor(s, error) {
+    if (error?.deterministic !== true || error?.pauseWorthy !== true) return;
+    clearTimeout(timer); timer = null; // resume must not awaken a timer armed before the pause
+    if (!volatilePauses.has(s.connection)) {
+      const code = diagnostics(error).code || 'memory-worker-incompatible';
+      const pause = { connection: s.connection, code,
+        reason: 'Memory worker is paused after a compatibility or safety failure. Review the diagnostic, then explicitly resume.',
+        createdAt: now().toISOString(), diagnostics: diagnostics(error) };
+      volatilePauses.set(s.connection, pause);
+      try {
+        const control = controls();
+        if (!control.pauses[s.connection]) { control.pauses[s.connection] = pause; saveControls(control); }
+      } catch {
+        pause.persistenceWarning = 'Pause could not be saved; this process remains paused. Repair memory storage before restarting.';
+      }
+    }
+  }
+  function status() {
+    const s = settings.get(), count = jobsToday();
+    const day = now(); day.setUTCHours(24, 0, 0, 0);
+    return { pause: volatilePauses.get(s.connection) || controls().pauses[s.connection] || null, jobsToday: count,
+      billingBlocked: process.env.CP_NO_BILLED === '1',
+      dailyJobLimit: s.dailyJobLimit, remainingJobs: Math.max(0, s.dailyJobLimit - count),
+      resetAt: day.toISOString(), pendingCount: queue.size };
+  }
+  function resume(connection) {
+    if (connection !== settings.get().connection) throw memoryError('Choose the currently configured memory connection to resume.', 400);
+    const control = controls(); delete control.pauses[connection]; saveControls(control); volatilePauses.delete(connection);
+    return status(); // no request, reservation change, or automatic queue drain
+  }
+  const defer = (message, reason) => Object.assign(memoryError(message, 409), { deferred: true, reason });
+  function admission(info, s) {
+    if (!s.enabled) throw defer('Task memory is disabled in Settings.', 'disabled');
+    if (request === requestMemory && process.env.CP_NO_BILLED === '1') throw defer('Billed memory calls are disabled in this environment.', 'billing-blocked');
+    if (volatilePauses.has(s.connection) || controls().pauses[s.connection]) throw defer('Task memory is paused; review the failure and explicitly resume.', 'paused');
+    if (isActive(info.project, info.id)) throw defer('A task turn is running; memory waits until it finishes.', 'busy');
+    if (s.connection === 'codex-subscription' && jobsToday() >= s.dailyJobLimit) {
+      throw defer('Memory budget reached: daily subscription job limit; no request sent.', 'budget');
+    }
+  }
+  function assertDollarBudget(s, ceiling) {
+    if (s.connection !== 'codex-subscription' && (ceiling > s.maxJobUsd || spentToday() + ceiling > s.dailyBudgetUsd)) {
+      throw defer('Memory budget reached; no request sent.', 'budget');
+    }
   }
   // Bill pessimistically even on timeouts/crashes. Reservations are not released
   // using an estimated actual cost, so a restart cannot erase uncertain charges.
@@ -210,7 +296,22 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
     const current = record.revisions.at(-1) || null;
     const events = source(project, id);
     const jobs = record.jobs.map(j => ({ ...j, status: j.status === 'running' && running.get(info.key) !== j.id ? 'interrupted' : j.status }));
+    const health = status();
+    let eligibility = { eligible: true, reason: null };
+    try {
+      const s = settings.get(); admission(info, s);
+      if (s.connection !== 'codex-subscription') {
+        const prepared = prepare(s, current, events), model = MEMORY_MODELS.find(m => m.id === s.model);
+        if (prepared && model) assertDollarBudget(s, (prepared.inputCeiling * model.input * model.cacheWrite + s.maxOutputTokens * model.output) / 1e6);
+      }
+    } catch (error) { eligibility = { eligible: false, reason: error.reason || 'unavailable' }; }
     return { current, revisions: record.revisions.slice().reverse(), jobs: jobs.slice(-30).reverse(),
+      pause: health.pause, budget: health, eligibility,
+      counts: { successful: record.revisions.length, failed: jobs.filter(j => j.status === 'failed').length,
+        blocked: jobs.filter(j => j.status === 'blocked').length },
+      coverage: { coveredEvents: current?.coverage.cursor.index || 0, totalEvents: events.length,
+        partialEvent: current?.coverage.cursor.offset || 0,
+        complete: !!current && matches(events, current.coverage) && current.coverage.cursor.index >= events.length },
       status: running.has(info.key) ? 'running' : queue.has(info.key) ? 'queued' : jobs.at(-1)?.status || 'empty',
       pending: current ? !matches(events, current.coverage) || current.coverage.cursor.index < events.length : events.length > 0,
       settings: settings.publicSettings(), reservedTodayUsd: spentToday(),
@@ -222,12 +323,11 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
         reservedUsd: record.jobs.reduce((n, j) => n + (j.reservedUsd || 0), 0) },
     };
   }
-  async function run(project, id) {
+  async function runAttempt(project, id) {
     const info = identity(project, id);
     if (running.has(info.key)) return;
     const s = settings.get();
-    if (!s.enabled) throw memoryError('Task memory is disabled in Settings.', 409);
-    if (isActive(project, id)) throw memoryError('A task turn is running; memory waits until it finishes.', 409);
+    admission(info, s);
     const record = load(info), previous = record.revisions.at(-1) || null;
     const prepared = prepare(s, previous, source(project, id));
     if (!prepared) return;
@@ -235,10 +335,24 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
     const model = MEMORY_MODELS.find(m => m.id === s.model);
     if (!subscription && !model) throw memoryError('Unknown memory model.', 409);
     const ceiling = subscription ? 0 : (prepared.inputCeiling * model.input * model.cacheWrite + s.maxOutputTokens * model.output) / 1e6;
-    if (subscription && jobsToday() >= s.dailyJobLimit) throw memoryError('Memory budget reached: daily subscription job limit; no request sent.', 409);
-    if (!subscription && (ceiling > s.maxJobUsd || spentToday() + ceiling > s.dailyBudgetUsd)) throw memoryError('Memory budget reached; no request sent.', 409);
+    assertDollarBudget(s, ceiling);
+    try { await preflight(prepared.body, s.connection); }
+    catch (error) {
+      pauseFor(s, error);
+      record.jobs.push({ id: randomUUID(), status: 'failed', startedAt: now().toISOString(), finishedAt: now().toISOString(),
+        configuration: s, reservedUsd: 0, reservationHeld: false, notDispatched: true,
+        error: 'Memory readiness check failed; no generation request sent.', diagnostics: diagnostics(error) });
+      if (getTask(project, id)?.created === info.task.created) save(info, record);
+      emit(project, id);
+      return;
+    }
+    if (closed || getTask(project, id)?.created !== info.task.created) return;
+    admission(info, s); // the task, pause or global budget may change during readiness I/O
+    if (JSON.stringify(settings.get()) !== JSON.stringify(s)
+      || hash(JSON.stringify(source(project, id))) !== prepared.sourceHash) throw defer('Task or memory settings changed during readiness; waiting for a fresh trigger.', 'changed');
+    assertDollarBudget(s, ceiling); // another task may have reserved dollars during readiness I/O
     const job = { id: randomUUID(), status: 'running', startedAt: now().toISOString(), configuration: s,
-      baseRevision: previous?.revision || 0, reservedUsd: ceiling, inputTokenCeiling: prepared.inputCeiling };
+      baseRevision: previous?.revision || 0, reservedUsd: ceiling, reservationHeld: true, inputTokenCeiling: prepared.inputCeiling };
     reserve(job); // must be durable before dispatch
     record.jobs.push(job); save(info, record); running.set(info.key, job.id);
     emit(project, id);
@@ -286,8 +400,11 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
         if (!deleted.has(info.key)) save(info, record);
       }
     };
+    let transportPending = true;
     try {
       const response = await request(prepared.body, s.connection, { onUsage: checkpointUsage });
+      transportPending = false;
+      job.diagnostics = diagnostics(response);
       captureUsage(response);
       if (response.status !== 'completed') throw memoryError('Memory response was incomplete; previous checkpoint retained.', 502);
       const parts = (response.output || []).filter(o => o.type === 'message').flatMap(o => o.content || []);
@@ -313,8 +430,11 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
         captureUsage({ usage: { input_tokens: 0, output_tokens: 0 }, usageCompleteness: 'complete', costUsd: 0 });
       }
       job.status = 'failed';
+      job.diagnostics = diagnostics(e);
+      pauseFor(s, e);
       // Do not persist arbitrary transport exceptions, which may contain credentials.
-      job.error = e?.status ? e.message : 'Memory request or validation failed; no automatic retry. Previous checkpoint retained.';
+      job.error = !transportPending && e?.status ? e.message
+        : 'Memory worker request failed; inspect its safe diagnostic. Previous checkpoint retained; no automatic retry.';
     } finally {
       acceptingUsage = false; // late transport events cannot resurrect deleted or newer memory
       if (!job.usage) captureUsage();
@@ -329,18 +449,30 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
       deleted.delete(info.key); emit(project, id);
     }
   }
+  async function run(project, id) {
+    const info = identity(project, id);
+    if (preparing.has(info.key)) return;
+    preparing.add(info.key);
+    try { return await runAttempt(project, id); }
+    finally { preparing.delete(info.key); }
+  }
   function enqueue(project, id) {
     if (closed || !settings.get().enabled) return false;
     const info = identity(project, id);
-    if (queue.has(info.key)) return false;
-    queue.set(info.key, { project, id, created: info.task.created });
+    const added = !queue.has(info.key);
+    if (added) queue.set(info.key, { project, id, created: info.task.created });
     emit(project, id);
-    if (!timer) { timer = setTimeout(() => { timer = null; drain().catch(() => {}); }, 1500); timer.unref?.(); }
-    return true;
+    try { admission(info, settings.get()); }
+    catch (error) { if (error?.deferred) return added; throw error; }
+    clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; drain().catch(() => {}); }, debounceMs); timer.unref?.();
+    return added;
   }
   async function drain() {
     if (draining || closed) return;
+    clearTimeout(timer); timer = null;
     draining = true;
+    const deferred = new Map();
     try {
       for (const [key, item] of queue) {
         queue.delete(key);
@@ -349,6 +481,7 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
           if (getTask(item.project, item.id)?.created !== item.created) continue;
           await run(item.project, item.id);
         } catch (e) {
+          if (e?.deferred) { deferred.set(key, item); continue; }
           try {
             if (getTask(item.project, item.id)?.created !== item.created) continue;
             const info = identity(item.project, item.id), record = load(info);
@@ -357,7 +490,10 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
           } catch { /* task deletion or corrupt storage: do not recreate/overwrite */ }
         }
       }
-    } finally { draining = false; }
+    } finally {
+      for (const [key, item] of deferred) if (!closed && getTask(item.project, item.id)?.created === item.created && !queue.has(key)) queue.set(key, item);
+      draining = false;
+    }
   }
   function evidence(project, id, revision, sourceId, offset = 0) {
     const info = identity(project, id), record = load(info);
@@ -382,7 +518,7 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
     if (running.has(info.key)) deleted.add(info.key);
     try { fs.unlinkSync(info.file); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
-  return { view, evidence, enqueue, run, drain, spentToday, jobsToday, forget,
+  return { view, evidence, enqueue, run, drain, spentToday, jobsToday, forget, status, resume,
     close() { closed = true; clearTimeout(timer); queue.clear(); },
   };
 }

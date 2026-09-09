@@ -704,7 +704,7 @@ test('background + detached + notebook chips; the turn ends → detached becomes
   const det = rows.find((r) => r[0] === detKey);
   assert.ok(det, 'the detached job left a feed row');
   assert.equal(det[1], 'jobFeedRow stop');
-  assert.equal(det[2], 'stopped by you at 90% · peak 1.3G');
+  assert.equal(det[2], 'stopped by you at 90% · ▲1.3G');
 });
 
 test('terminal states: ✓ done / ✗ failed / ⊘ stopped end summaries, frozen bar, then feed rows', opts, async () => {
@@ -719,10 +719,10 @@ test('terminal states: ✓ done / ✗ failed / ⊘ stopped end summaries, frozen
   await wsPush('job:status', { project: 'alpha', job: sessJob({ ...base, key: stopKey, file: 'sync', lang: 'shell', command: 'rsync -avz cluster:/scratch data/', progress: { frac: 0.61, iter: null, total: null, etaS: null } }) });
   await sleep(300);
   const t = (over) => sessJob({ ...base, ...over, sampledAt: iso(100) });
-  await wsPush('job:status', { project: 'alpha', job: t({ key: doneKey, file: 'fit_model.jl', command: 'julia fit_model.jl', state: 'done', ms: 272000, exit: { code: 0, signal: null, byUser: false }, exitCode: 0, memPeakBytes: 1.4e9 * 1024 / 1000, cpuTimeMs: 843000, progress: { frac: 1, iter: 10, total: 10, etaS: null }, output: { lines: 12400, rate: 0, last: 'x', owned: true, buffered: false } }) });
-  await wsPush('job:status', { project: 'alpha', job: t({ key: failKey, file: 'tests/', lang: 'python', command: 'pytest tests/ --maxfail=5', state: 'error', ms: 41200, exit: { code: 1, signal: null, byUser: false }, exitCode: 1, memPeakBytes: 340 * 1024 * 1024, cpuTimeMs: 37000, counters: { passed: 138, failed: 2, skipped: 3 } }) });
-  await wsPush('job:status', { project: 'alpha', job: t({ key: oomKey, file: 'train.py', lang: 'python', command: 'python scripts/train.py --epochs 30', state: 'error', ms: 724000, exit: { code: null, signal: 'SIGKILL', byUser: false }, exitCode: null, memPeakBytes: 14.2 * 1024 ** 3, cpuTimeMs: 724000, progress: { frac: 0.23, iter: null, total: null, etaS: null } }) });
-  await wsPush('job:status', { project: 'alpha', job: t({ key: stopKey, file: 'sync', lang: 'shell', command: 'rsync -avz cluster:/scratch data/', state: 'stopped', ms: 80000, exit: { code: null, signal: 'SIGTERM', byUser: true }, memPeakBytes: 24 * 1024 * 1024, cpuTimeMs: 4000, progress: { frac: 0.61, iter: null, total: null, etaS: null } }) });
+  await wsPush('job:status', { project: 'alpha', job: t({ key: doneKey, createdAt: iso(20000), file: 'fit_model.jl', command: 'julia fit_model.jl', state: 'done', ms: 272000, exit: { code: 0, signal: null, byUser: false }, exitCode: 0, memPeakBytes: 1.4e9 * 1024 / 1000, cpuTimeMs: 843000, progress: { frac: 1, iter: 10, total: 10, etaS: null }, output: { lines: 12400, rate: 0, last: 'x', owned: true, buffered: false } }) });
+  await wsPush('job:status', { project: 'alpha', job: t({ key: failKey, createdAt: iso(40000), file: 'tests/', lang: 'python', command: 'pytest tests/ --maxfail=5', state: 'error', ms: 41200, exit: { code: 1, signal: null, byUser: false }, exitCode: 1, memPeakBytes: 340 * 1024 * 1024, cpuTimeMs: 37000, counters: { passed: 138, failed: 2, skipped: 3 } }) });
+  await wsPush('job:status', { project: 'alpha', job: t({ key: oomKey, createdAt: iso(30000), file: 'train.py', lang: 'python', command: 'python scripts/train.py --epochs 30', state: 'error', ms: 724000, exit: { code: null, signal: 'SIGKILL', byUser: false }, exitCode: null, memPeakBytes: 14.2 * 1024 ** 3, cpuTimeMs: 724000, progress: { frac: 0.23, iter: null, total: null, etaS: null } }) });
+  await wsPush('job:status', { project: 'alpha', job: t({ key: stopKey, createdAt: iso(50000), file: 'sync', lang: 'shell', command: 'rsync -avz cluster:/scratch data/', state: 'stopped', ms: 80000, exit: { code: null, signal: 'SIGTERM', byUser: true }, memPeakBytes: 24 * 1024 * 1024, cpuTimeMs: 4000, progress: { frac: 0.61, iter: null, total: null, etaS: null } }) });
   await sleep(300);
   const cards = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.csJobs .jobCard')].map((el) => [el.dataset.jobkey, {
     state: el.dataset.state, hk: el.dataset.hk, stateTxt: el.querySelector('.jobState').textContent,
@@ -755,23 +755,32 @@ test('terminal states: ✓ done / ✗ failed / ⊘ stopped end summaries, frozen
   assert.equal(done.right, '', 'the end summary owns the whole progress line');
   // fade → feed rows
   await sleep(7000);
+  // run ledger (docs/runfeed-mockups/): the row prints the runtime's two
+  // essentials — elapsed · ▲peak for a script, passed · failed for a test run,
+  // the signal once for a kill, stopped by you at N% — never the card's
+  // "peak … · cpu …" strip; the turn's rows sit under one tally header
   const feed = await page.evaluate(() => ({
     cards: document.querySelectorAll('.csJobs .jobCard').length,
     rows: Object.fromEntries([...document.querySelectorAll('.csJobFeed .jobFeedRow')].map((r) => [r.dataset.jobkey, {
       cls: r.className, txt: [...r.children].map((c) => c.textContent.trim()).join(' '), sum: r.querySelector('.jfSum').textContent, time: r.querySelector('.jfTime')?.textContent,
+      h: Math.round(r.getBoundingClientRect().height), auxHidden: r.querySelector('.jfAux')?.hidden ?? null,
     }])),
+    head: document.querySelector('.cs-jobs .csJobFeed .lgHead')?.textContent ?? null,
     indet: !!document.querySelector('.indet'),
   }));
   assert.equal(feed.cards, 0, 'every terminal card left the layout');
   assert.ok(!feed.indet);
   assert.equal(feed.rows[doneKey].cls, 'jobFeedRow ok');
-  assert.match(feed.rows[doneKey].txt, /^✓ julia fit_model\.jl 4m32s · peak 1\.3G · cpu 3\.1× \d+:\d\d/);
+  assert.match(feed.rows[doneKey].txt, /^✓ julia fit_model\.jl 4m32s · ▲1\.3G \d+:\d\d/);
+  assert.equal(feed.rows[doneKey].h, 26, 'a fixed 26 px row');
   assert.equal(feed.rows[failKey].cls, 'jobFeedRow bad');
-  assert.equal(feed.rows[failKey].sum, 'exit 1 · 138 passed · 2 failed · 3 skipped · 41s · peak 340M');
-  assert.equal(feed.rows[oomKey].sum, 'SIGKILL · often out of memory · 12m04s · peak 14.2G');
+  assert.equal(feed.rows[failKey].sum, '138 passed · 2 failed · 3 skipped', 'pytest: passed · failed, skipped as the aux');
+  assert.equal(feed.rows[failKey].auxHidden, false, 'the aux cell fits whole at the console width');
+  assert.equal(feed.rows[oomKey].sum, 'SIGKILL · often out of memory · 12m04s · ▲14.2G', 'the kill printed once');
   assert.equal(feed.rows[stopKey].cls, 'jobFeedRow stop');
-  assert.equal(feed.rows[stopKey].sum, 'stopped by you at 61% · peak 24M');
+  assert.equal(feed.rows[stopKey].sum, 'stopped by you at 61% · ▲24M');
   assert.match(feed.rows[doneKey].time, /^\d+:\d\d/);
+  assert.match(feed.head, /^\d+ runs · 1 ✓ · 2 ✗ · \d+ ⊘ · \d/, 'the tally header over the turn\'s rows (earlier jobs of this turn ended ⊘ with it)');
   // the ▶ run's card fades into a feed row in its slot, with an "output" action
   await page.click('.sessTabs .stab.runT');
   await sleep(300);
@@ -789,7 +798,7 @@ test('terminal states: ✓ done / ✗ failed / ⊘ stopped end summaries, frozen
     out: !!document.querySelector('.runJobSlot .jobFeedRow .jfAct.out'),
   }));
   assert.ok(!slot.card, 'card left the layout after its farewell');
-  assert.match(slot.row, /^✓ julia fig3\.jl 45s · peak 496M · cpu 3\.1×/);
+  assert.match(slot.row, /^✓ julia fig3\.jl 45s · ▲496M/);
   assert.ok(slot.out, 'a ▶ run row offers "output"');
   assert.equal(pageErrors.length, 0, `no page errors: ${pageErrors.join(' | ')}`);
 });

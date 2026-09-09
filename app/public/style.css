@@ -111,6 +111,12 @@ body{
 .tab:hover{ background:var(--glass); border-color:var(--line); }
 .tab.on{ background:var(--ink); color:var(--ink-inv); font-weight:600; }
 .tab .dot{ width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+/* the ⌘n shortcut hint on a pinned tab (docs/projects-mockups/pin-only/manage.html):
+   absolutely placed so the tab's layout is unchanged; shown while ⌘ is held
+   (body.cmd, app.js) or on hover */
+#navProjects .tab{ position:relative; }
+.tab .k{ position:absolute; top:-7px; right:6px; font-family:ui-monospace,Menlo,monospace; font-size:9.5px; color:var(--dim); background:var(--bg); padding:0 3px; border-radius:3px; opacity:0; transition:opacity .15s; pointer-events:none; }
+body.cmd .tab .k, .tab:hover .k{ opacity:1; }
 .dot.run{ background:var(--run); animation:pulse 1.6s infinite; }
 .dot.wait{ background:var(--wait); }
 .dot.off{ background:var(--off); }
@@ -340,7 +346,7 @@ body.dragging iframe{ pointer-events:none; }
    the log stops scrolling itself and the console (flex:1) scrolls with its
    own follow-the-stream logic, exactly as in the center tab */
 .wb.focus .chat .log.logFocus{ display:flex; flex-direction:column; overflow:hidden; padding:0; gap:0; }
-.wb.focus .chat .log.logFocus > .consoleBox{ flex:1; min-height:0; padding:18px 20px; }
+.wb.focus .chat .log.logFocus > .consoleBox{ flex:1; min-height:0; padding:18px 20px; --console-pad:18px; }
 
 .focusTog{
   display:inline-flex; align-items:center; cursor:pointer; padding:3px 7px;
@@ -921,7 +927,7 @@ body.dragging iframe{ pointer-events:none; }
      computes overflow-x to auto too, so any hairline child overflow raised a
      nuisance horizontal scrollbar. Prose just wraps; genuinely-wide children
      (pre, .katex-display) scroll inside their own boxes, so nothing is clipped. */
-  flex:1; overflow-y:auto; overflow-x:hidden; padding:24px 28px; overflow-anchor:none;
+  flex:1; overflow-y:auto; overflow-x:hidden; padding:24px 28px; --console-pad:24px; overflow-anchor:none;
 }
 .csEmpty{ color:var(--faint); font-style:italic; font-size:12px; padding:8px 0; }
 .cseg{ max-width:700px; margin:0 auto 4px; }
@@ -1296,34 +1302,77 @@ body.dragging iframe{ pointer-events:none; }
 .jobX .pidBtn.copied{ color:var(--run); border-color:rgb(from var(--run) r g b / 50%); }
 .jobX .xFoot{ display:flex; flex-wrap:wrap; gap:4px 14px; align-items:baseline; font-size:10.5px; color:var(--dim); border-top:1px solid var(--ov0c); padding-top:7px; min-width:0; }
 .jobX .xFoot b{ font-family:ui-monospace,Menlo,monospace; color:var(--mut); font-weight:600; }
-/* ── feed row: the end summary, verbatim, after the card fades; detached jobs
-   keep a live row (they outlive the turn) with stop still reachable ── */
-.csJobFeed{ max-width:700px; margin:8px auto 4px; display:flex; flex-direction:column; gap:5px; container-type:inline-size; }
+/* ── the run ledger: what stays in the session feed after the card fades.
+   One fixed 26 px row per run (42 with the error line), a tally header that
+   sticks to the console scroller while an expanded block scrolls under it,
+   a ×n fold with its glyph ladder, and one dim count line per hidden stretch.
+   A detached job still running keeps a live row with stop reachable.
+   Design: docs/runfeed-mockups/direction-a.html (+ B's ladder and ○ state). ── */
+.csJobFeed{ max-width:700px; margin:8px auto 4px; display:flex; flex-direction:column; gap:3px; container-type:inline-size; position:relative; }
 .runJobSlot .jobFeedRow{ margin:8px 10px 2px; }
-.jobFeedRow{
-  display:flex; flex-wrap:wrap; align-items:baseline; gap:1px 8px; min-width:0; padding:5px 10px 5px 9px;
-  border:1px solid var(--ov0c); border-radius:8px; background:var(--ov05); font-size:11.5px; color:var(--mut);
+/* group header — sticky against the console (the scroll container); opaque so rows pass under it */
+.csJobFeed .lgHead{
+  display:flex; align-items:baseline; gap:6px; min-width:0; position:sticky; top:0; z-index:2;
+  font-family:ui-monospace,Menlo,monospace; font-size:11px; line-height:20px; color:var(--mut);
+  padding:2px 10px 2px 9px; margin-bottom:1px; background:var(--sess); border-bottom:1px solid var(--ov12);
+  white-space:nowrap; font-variant-numeric:tabular-nums;
 }
+/* the console's padding lies inside its scrollport: the header sticks flush at
+   the visible top edge — the offset follows --console-pad, which each
+   .consoleBox layout sets beside its padding (24 px; 18 px in focus mode) */
+.consoleBox .csJobFeed .lgHead{ top:calc(-1 * var(--console-pad, 24px)); }
+.csJobFeed .lgHead .lgN{ color:var(--ink); font-weight:700; }
+.csJobFeed .lgHead .ok{ color:var(--run); } .csJobFeed .lgHead .bad{ color:var(--red); }
+.csJobFeed .lgHead .stop{ color:var(--yellow); } .csJobFeed .lgHead .unv{ color:var(--dim); }
+.csJobFeed .lgHead .lgSpan{ color:var(--dim); }
+.csJobFeed .lgHead .lgAct{ margin-left:auto; font:inherit; font-size:10.5px; color:var(--viewable); background:none; border:0; padding:0; cursor:pointer; white-space:nowrap; }
+.csJobFeed .lgHead .lgAct:hover{ color:var(--ink); text-decoration:underline; }
+/* rows: ONE line, fixed 26 px; the essentials never truncate; the file yields
+   first (flex-shrink 20, down to 70 px); the aux cell is hidden whole by
+   jobs.js when it does not fit. A failed row adds a fixed 16 px second line. */
+.jobFeedRow{
+  position:relative; display:flex; flex-wrap:nowrap; align-items:baseline; gap:0 8px; min-width:0; padding:0 10px 0 9px;
+  border:1px solid var(--ov0c); border-radius:8px; background:var(--ov05); font-size:11.5px; color:var(--mut);
+  line-height:24px; height:26px; overflow:hidden; overflow-anchor:none;
+}
+.jobFeedRow:has(> .jfErr){ height:42px; }
+.jobFeedRow.child{ margin-left:20px; background:transparent; }
+.jobFeedRow.fold{ cursor:pointer; }
 .jobFeedRow .jfIco{ font-weight:800; width:12px; flex-shrink:0; text-align:center; }
-.jobFeedRow.ok .jfIco{ color:var(--run); } .jobFeedRow.bad .jfIco{ color:var(--red); } .jobFeedRow.stop .jfIco{ color:var(--yellow); }
+.jobFeedRow.ok .jfIco{ color:var(--run); } .jobFeedRow.bad .jfIco{ color:var(--red); } .jobFeedRow.stop .jfIco{ color:var(--yellow); } .jobFeedRow.unv .jfIco{ color:var(--dim); }
 .jobFeedRow.live .jfIco{ color:var(--run); animation:pulse 1.4s infinite; }
-.jobFeedRow .jfRt{ font-size:10.5px; color:var(--mut); border:1px solid var(--ov14); border-radius:99px; padding:0 6px; background:var(--ov06); flex-shrink:0; white-space:nowrap; }
-.jobFeedRow .jfCmd{ font-family:ui-monospace,Menlo,monospace; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:60px; }
-.jobFeedRow .jfSum{ font-family:ui-monospace,Menlo,monospace; font-size:11px; flex-basis:100%; order:9; padding-left:20px; min-width:0; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
-.jobFeedRow .jfSum b{ font-weight:700; color:var(--ink); }
-.jobFeedRow.ok .jfSum .jpBad, .jobFeedRow.bad .jfSum .jpBad{ color:var(--red); }
-.jobFeedRow .jfSum .jpWarn{ color:var(--yellow); } .jobFeedRow .jfSum .jpStall{ color:var(--wait); } .jobFeedRow .jfSum .jpMut{ color:var(--mut); }
-.jobFeedRow .jfTime{ font-size:10.5px; color:var(--dim); white-space:nowrap; flex-shrink:0; }
+.jobFeedRow .jfRt{ font-size:10.5px; line-height:16px; color:var(--mut); border:1px solid var(--ov14); border-radius:99px; padding:0 6px; background:var(--ov06); flex-shrink:0; white-space:nowrap; }
+.jobFeedRow .jfCmd{ font-family:ui-monospace,Menlo,monospace; font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 20 auto; min-width:70px; max-width:45%; }
+/* the sum yields only after the file has reached its floor, and then ellipsises
+   (the full text rides in its title) — the aux cell is dropped whole before that */
+.jobFeedRow .jfSum{ font-family:ui-monospace,Menlo,monospace; font-size:11px; flex:0 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+.jobFeedRow .jfSum b, .jobFeedRow .jfSum .jfV{ font-weight:700; color:var(--ink); }
+.jobFeedRow .jfSum .jfLbl{ color:var(--mut); font-weight:500; }
+.jobFeedRow.unv .jfSum .jfV{ color:var(--mut); font-weight:600; }
+.jobFeedRow .jfSum .jpBad{ color:var(--red); font-weight:700; } .jobFeedRow .jfSum .jpWarn{ color:var(--yellow); font-weight:700; }
+.jobFeedRow .jfSum .jpStall{ color:var(--wait); } .jobFeedRow .jfSum .jpMut{ color:var(--mut); }
+.jobFeedRow .jfSum .jfAux{ color:var(--dim); } .jobFeedRow .jfSum .jfAux[hidden]{ display:none; }
+.jobFeedRow .jfTime{ font-size:10.5px; color:var(--dim); white-space:nowrap; flex-shrink:0; margin-left:auto; }
 .jobFeedRow .jfAct{ font:inherit; font-size:10.5px; color:var(--viewable); cursor:pointer; white-space:nowrap; flex-shrink:0; background:none; border:0; padding:0; }
 .jobFeedRow .jfAct:hover{ color:var(--ink); text-decoration:underline; }
 .jobFeedRow .jfAct.stop{ color:var(--red); }
 .jobFeedRow .jfAct:disabled{ opacity:.55; cursor:default; text-decoration:none; }
-@container (min-width:640px){
-  .jobFeedRow{ flex-wrap:nowrap; }
-  .jobFeedRow .jfCmd{ flex:0 1 auto; max-width:40%; }
-  .jobFeedRow .jfSum{ flex:1; flex-basis:auto; order:0; padding-left:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.jobFeedRow.live{ height:auto; min-height:26px; flex-wrap:wrap; }
+.jobFeedRow.live .jfSum{ flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; }
+/* the error line: file:line[:col] · message, one line, ellipsised, full text in the title */
+.jobFeedRow .jfErr{
+  position:absolute; left:29px; right:10px; top:23px; line-height:16px;
+  font-family:ui-monospace,Menlo,monospace; font-size:10.5px; color:var(--errink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
 }
-
+.jobFeedRow .jfErr b{ color:var(--red-soft); font-weight:600; }
+/* fold (same file ran n times): ×n badge + the glyph ladder oldest → newest */
+.jobFeedRow .jfN{ font-size:10.5px; line-height:16px; color:var(--ink); background:var(--ov0c); border:1px solid var(--ov14); border-radius:6px; padding:0 5px; flex-shrink:0; white-space:nowrap; }
+.jobFeedRow.fold:hover .jfN{ border-color:var(--ov2a); }
+.jobFeedRow .jfSeq{ letter-spacing:.08em; font-weight:800; margin-right:8px; flex-shrink:0; }
+.jfSeq .ok{ color:var(--run); } .jfSeq .bad{ color:var(--red); } .jfSeq .stop{ color:var(--yellow); } .jfSeq .unv{ color:var(--dim); }
+/* elision line: the ✓ runs between the kept rows, as one count */
+.csJobFeed .lgMore{ font-family:ui-monospace,Menlo,monospace; font-size:10.5px; line-height:20px; color:var(--dim); padding-left:29px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.csJobFeed .lgMore:hover{ color:var(--mut); }
 /* change history (Δ tab) */
 .snapList{ flex:1; overflow-y:auto; padding:10px 14px; }
 .snapEntry{
@@ -1980,13 +2029,17 @@ body.dragging iframe{ pointer-events:none; }
 .mpHead h2{ margin:0; font-size:16px; letter-spacing:-.01em; }
 .mpHead .mpOpen{ font-size:10.5px; color:var(--dim); cursor:pointer; }
 .mpHead .mpOpen:hover{ color:var(--green); }
-.mpCount{ font-size:10.5px; color:var(--dim); font-weight:400; }
-/* Manage Projects — per-project edit controls (rename / color / designation) */
-.mpColor{ width:18px; height:18px; padding:0; border:1px solid var(--line); border-radius:5px; background:none; cursor:pointer; flex-shrink:0; }
+/* Manage Projects — per-project edit controls (rename / designation / colour) */
+/* recolour: the swatch left the row, so the native picker hides behind a dim
+   "colour" text link at the far right (after "open ›") that only shows on row
+   hover or keyboard focus — nothing coloured sits on the row at rest */
+.mpHue{ position:relative; font-size:10.5px; color:var(--dim); cursor:pointer; opacity:0; transition:opacity .15s; flex-shrink:0; }
+.mpHead:hover .mpHue, .mpHue:focus-within{ opacity:1; }
+.mpHue:hover{ color:var(--green); }
+.mpHue input{ position:absolute; inset:0; width:100%; height:100%; opacity:0; padding:0; border:0; cursor:pointer; }
 .mpName{ font-size:15px; font-weight:600; letter-spacing:-.01em; color:var(--ink); background:transparent; border:1px solid transparent; border-radius:7px; padding:3px 7px; min-width:120px; }
 .mpName:hover{ border-color:var(--line); }
 .mpName:focus{ outline:none; border-color:var(--green); background:var(--well); }
-.mpKey{ font-family:ui-monospace,Menlo,monospace; font-size:9.5px; color:var(--dim); background:var(--ov0c); padding:1px 6px; border-radius:4px; }
 .mpStatus{ display:flex; gap:4px; margin-left:auto; }
 .mpStPill{ font-size:9px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; padding:2px 8px; border-radius:6px; cursor:pointer; color:var(--dim); background:var(--ov0c); border:1px solid transparent; }
 .mpStPill:hover{ color:var(--ink); border-color:var(--line); }
@@ -2008,7 +2061,6 @@ body.dragging iframe{ pointer-events:none; }
 .mpCat:hover{ color:var(--ink); border-color:var(--ov2a); }
 .mpCat.open{ color:var(--ink); border-bottom-left-radius:0; border-bottom-right-radius:0; }
 .mpCat .caret{ color:var(--dim); width:10px; flex-shrink:0; }
-.mpCat .mpCount{ margin-left:auto; }
 .mpList{
   border:1px solid var(--line); border-top:none; border-radius:0 0 9px 9px;
   background:var(--sess-88); padding:4px 6px 6px;
@@ -2030,6 +2082,25 @@ body.dragging iframe{ pointer-events:none; }
 .mpTask.done{ opacity:.5; }
 .mpTask.done .mpTitle{ text-decoration:line-through; text-decoration-color:var(--ov3a); }
 .mpTask.done .mpSt{ color:var(--green); }
+/* Manage Projects — the pin control (docs/projects-mockups/pin-only/manage.html):
+   ☆ pin / ★ n in place of the colour swatch, ▲▼ slot order (a hidden ghost on
+   unpinned rows keeps the names aligned), and the "n of 7 pinned" line */
+.mpPin{ display:inline-flex; align-items:center; justify-content:center; gap:4px; height:24px; min-width:52px; padding:0 9px; border-radius:99px; border:1px solid var(--line); background:transparent; color:var(--dim); font:inherit; font-size:11px; cursor:pointer; position:relative; flex-shrink:0; }
+.mpPin:hover{ color:var(--ink); border-color:var(--ov2a); }
+.mpPin.on{ color:var(--ink-inv); background:var(--ink); border-color:var(--ink); font-weight:700; }
+.mpPin.on .slot{ font-family:ui-monospace,Menlo,monospace; font-size:10.5px; }
+/* disabled: dim the glyph and border to 45% rather than the button's opacity —
+   opacity would fade the ::after tooltip with it (and the mockup's opaque
+   tooltip is the whole point of the disabled state) */
+.mpPin:disabled, .mpPin:disabled:hover{ cursor:not-allowed; color:color-mix(in srgb, var(--dim) 45%, transparent); border-color:color-mix(in srgb, var(--line) 45%, transparent); }
+.mpPin[data-tip]:hover::after{ content:attr(data-tip); position:absolute; left:0; top:calc(100% + 6px); z-index:10; white-space:nowrap; background:var(--panel); color:var(--ink); border:1px solid var(--ov2a); border-radius:8px; padding:6px 10px; font-size:11px; font-weight:400; opacity:1; box-shadow:0 8px 24px #00000055; }
+.mpOrder{ display:inline-flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; flex-shrink:0; margin-right:2px; }
+.mpOrder button{ border:0; background:transparent; color:var(--dim); width:20px; height:22px; cursor:pointer; font-size:11px; line-height:1; }
+.mpOrder button:hover{ background:var(--glass); color:var(--ink); }
+.mpOrder button:disabled{ opacity:.3; cursor:default; }
+.mpOrder.ghost{ visibility:hidden; }
+.pinSummary{ font-size:12px; color:var(--dim); margin:4px 0 0; }
+.pinSummary.full{ color:var(--wait); }
 .catHead{ display:flex; align-items:baseline; gap:14px; }
 .catHead h1{ font-size:20px; font-weight:800; }
 .catHead .sub{ color:var(--dim); font-size:12.5px; }

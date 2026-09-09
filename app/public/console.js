@@ -674,17 +674,27 @@ export function updateConsole(box, k, upto) {
     const block = blocks.get(owner) || 0;
     blocks.set(owner, block + 1);
     const prefix = JSON.stringify([owner, block]);
-    segs.push(...parseConsole(relativizePaths(slice.text, project, taskId))
-      .map((seg, index) => ({ ...seg, key: `${prefix}:${index}` })));
+    /** @type {Array<{ type: string, text: string, key: string, jobs?: JobInfo[], turnId?: string }>} */
+    const parsed = parseConsole(relativizePaths(slice.text, project, taskId))
+      .map((seg, index) => ({ ...seg, key: `${prefix}:${index}` }));
     // A single owned segment participates in normal keyed/indexed reconciliation.
     // Never insert unrelated children into the text segment wrapper.
     if (slice.turnId && !slices.slice(0, i).some(s => s.turnId === slice.turnId)) {
       const jobs = [...terminal.values()].filter(j => j.appTurnId === slice.turnId)
         .sort((a, b) => String(a.createdAt || a.startedAt).localeCompare(String(b.createdAt || b.startedAt)));
-      if (jobs.length) segs.push({ type: 'jobs', text: JSON.stringify({ jobs,
-        held: jobs.filter(j => jobsLive[j.key]?.jobRunId === j.jobRunId).map(j => j.jobRunId) }), jobs, turnId: slice.turnId,
-        key: `${prefix}:jobs` });
+      if (jobs.length) {
+        // The run ledger sits between the answer prose and the `— turn done —`
+        // divider: splice it before the slice's trailing `turn` seg (append
+        // while the turn still streams and no divider exists yet). The key is
+        // position-independent, so the keyed pass MOVES the .cs-jobs node
+        // when the divider lands instead of rebuilding it.
+        const turnAt = parsed.map(s => s.type).lastIndexOf('turn');
+        parsed.splice(turnAt === -1 ? parsed.length : turnAt, 0, { type: 'jobs', text: JSON.stringify({ jobs,
+          held: jobs.filter(j => jobsLive[j.key]?.jobRunId === j.jobRunId).map(j => j.jobRunId) }), jobs, turnId: slice.turnId,
+          key: `${prefix}:jobs` });
+      }
     }
+    segs.push(...parsed);
   }
   // the tail renders raw only while the turn is live; once it stops running the
   // last segment settles into formatted markdown + KaTeX (one paint). Opening a
@@ -982,6 +992,47 @@ export function updateConsole(box, k, upto) {
       if (box.scrollTop !== before) box._prog = (box._prog || 0) + 1;
     }
   }
+}
+
+/**
+ * Grow or shrink a block inside the console WITHOUT moving what the reader is
+ * looking at. For a click handler that expands/collapses a `.cs-jobs` group
+ * (show all / fold) outside the pump: `#consoleBox` has `overflow-anchor:none`,
+ * so the browser will not compensate on its own.
+ *
+ * Rule: when `el`'s top is above the box's viewport, the reader sits below the
+ * block, so its height delta is added to scrollTop (their content stays put);
+ * otherwise the block starts inside or below the viewport and expansion simply
+ * grows downward — nothing above the reader moved, so scrollTop is untouched.
+ * The target is computed from the PRE-mutation scrollTop and set absolutely
+ * (never `+= delta`): a shrink at the end of the console clamps scrollTop
+ * during `mutate()` and a relative add would double-apply that clamp.
+ * @template T
+ * @param {Element} box #consoleBox (the scroll container)
+ * @param {Element} el the block that `mutate` resizes
+ * @param {() => T} mutate the DOM change
+ * @returns {T}
+ */
+export function expandInPlace(box, el, mutate) {
+  const boxTop = box.getBoundingClientRect().top;
+  const r0 = el.getBoundingClientRect();
+  const above = r0.top < boxTop - 0.5;
+  const inside = above && r0.bottom > boxTop + 0.5; // the reader is INSIDE the block (its header stuck)
+  const top0 = box.scrollTop;
+  const out = mutate();
+  if (!above) return out;
+  const delta = el.getBoundingClientRect().height - r0.height;
+  if (Math.abs(delta) < 0.5) return out;
+  // box.scrollTop may already differ from top0 here (end-of-console shrink):
+  // set the absolute target, and flag ONE programmatic scroll for the single
+  // (per-frame coalesced) scroll event the net change fires.
+  // A SHRINK while the reader is inside the block (collapse from the stuck
+  // header) cannot keep their rows — they are gone — so the block's top is
+  // pinned to the scrollport's top edge instead of jumping the reader by the
+  // full delta, which would land them on the prose above.
+  box.scrollTop = inside && delta < 0 ? top0 + (r0.top - boxTop) : top0 + delta; // setter clamps to the real maximum
+  if (box.scrollTop !== top0) box._prog = (box._prog || 0) + 1; // our write, not a user scroll
+  return out;
 }
 
 /* smooth sequential reveal: incoming chunks land in tailBufs instantly, but

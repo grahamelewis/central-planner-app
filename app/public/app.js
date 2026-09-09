@@ -12,7 +12,7 @@ import {
   jobTimers, drafts, runBufs, runSegs, runOff, htmlEdits,
   snapsCache, pendingPerms, composerDrafts, queuedMsgs,
   turnTexTouched, pendingComplete, consoleView,
-  projKeys, tasksOf, findTask, taskProvider, agentName,
+  projKeys, pinnedKeys, tasksOf, findTask, taskProvider, agentName,
   perOf, artifactUrl, pdfSrc, mergeToolchains,
 } from './store.js';
 import { api, apiQuiet, connectWS } from './net.js';
@@ -232,6 +232,23 @@ export function handleEvent(type, p) {
       const previous = jobsLive[j.key] || jobsEnded[j.key];
       if (!shouldAcceptJobSnapshot(previous, j)) break;
       j._recvAt = performance.now();
+      if (j.short && j.state !== 'running') {
+        // ran, but never earned a live card (under MIN_AGE, recorded from its
+        // tool result alone — lib/jobs.js finish()): straight into the run
+        // ledger, never a held card. Mirrors fadeJobCard's hand-off.
+        j._endedAt = j._endedAt || new Date().toISOString();
+        delete jobsLive[j.key];
+        jobsEnded[j.key] = j;
+        const keys = Object.keys(jobsEnded);
+        if (keys.length > 40) delete jobsEnded[keys[0]];
+        refreshFeed(j.project);
+        if (j.source === 'run') syncRunJobCard(j.project);
+        else if (j.taskId) {
+          const k = `${j.project}/${j.taskId}`;
+          if (!pumps[k]) pumps[k] = requestAnimationFrame(() => pumpConsole(j.project, k));
+        }
+        break;
+      }
       jobsLive[j.key] = absorbJob(previous, j);
       if (j.state !== 'running') {
         refreshFeed(j.project); // a finished run lands in the activity feed
@@ -586,6 +603,9 @@ function applyState(p) {
   if (!p || typeof p !== 'object') return;
   state.user = p.user || {};
   state.projects = p.projects || {};
+  // the top-bar set, in slot order (null when the server predates pins →
+  // pinnedKeys() falls back to the first visible projects)
+  state.pinned = Array.isArray(p.pinned) ? p.pinned.map(String) : null;
   // if the project we're viewing just went inactive (or was removed) — e.g. a
   // Manage edit here or on another client — fall back to overview so we don't
   // strand the user on a tab-less workbench (go()'s guard isn't on this path)
@@ -797,7 +817,9 @@ export function renderNav() {
   }
   const host = document.getElementById('navProjects');
   if (!host) return;
-  host.innerHTML = projKeys().map(k => {
+  // the bar shows the PINNED set in slot order (Manage projects → ☆); the
+  // rest of the app keeps reading projKeys()
+  host.innerHTML = pinnedKeys().map((k, i) => {
     // open = real work in the project (not archived, not finished)
     const open = tasksOf(k).filter(t => !t.archived && t.status !== 'done');
     const running = open.some(t => t.status === 'running');
@@ -808,7 +830,7 @@ export function renderNav() {
     const dotStyle = dot === 'idle' ? ` style="background:${esc(state.projects[k]?.color || '#888')}"` : '';
     return `<div class="tab ${ui.view === k ? 'on' : ''}" data-v="${esc(k)}">
       <span class="dot ${dot}"${dotStyle}></span>${esc(state.projects[k]?.name || k)}${state.projects[k]?.status === 'trial' ? '<span class="trialTag">trial</span>' : ''}
-      ${waiting ? `<span class="badge">${waiting}</span>` : ''}</div>`;
+      ${waiting ? `<span class="badge">${waiting}</span>` : ''}<span class="k">⌘${i + 1}</span></div>`;
   }).join('');
   host.querySelectorAll('.tab').forEach(el => el.addEventListener('click', () => go(el.dataset.v)));
   // descendant selector: project tabs live inside #navProjects, cats inside .right
@@ -1012,11 +1034,23 @@ function wireGlobal() {
   window.addEventListener('blur', () => document.documentElement.classList.add('winblur'));
   window.addEventListener('focus', () => document.documentElement.classList.remove('winblur'));
 
+  // the bar's ⌘n hints (.tab .k) show while ⌘ is held — body.cmd — and on
+  // tab hover; a ⌘-Tab away drops the class on blur so it never sticks
+  document.addEventListener('keydown', e => { if (e.key === 'Meta') document.body.classList.add('cmd'); });
+  document.addEventListener('keyup', e => { if (e.key === 'Meta') document.body.classList.remove('cmd'); });
+  window.addEventListener('blur', () => document.body.classList.remove('cmd'));
+
   document.addEventListener('keydown', e => {
-    if ((e.metaKey || e.ctrlKey) && e.key >= '0' && e.key <= '5') {
+    // ⌘0 → overview · ⌘1–⌘7 → the top bar's slots (pinnedKeys() order).
+    // Never while typing: an input, textarea, contenteditable or the Monaco
+    // editor owns its own ⌘-digit keystrokes.
+    if ((e.metaKey || e.ctrlKey) && e.key.length === 1 && e.key >= '0' && e.key <= '7') {
+      const a = document.activeElement;
+      if (a instanceof HTMLElement
+        && (a.matches('input, textarea, select') || a.isContentEditable || a.closest('.monaco-editor'))) return;
       e.preventDefault();
       if (e.key === '0') { go('ov'); return; }
-      const k = projKeys()[+e.key - 1];
+      const k = pinnedKeys()[+e.key - 1];
       if (k) go(k);
     }
     if (e.key === 'Escape') {

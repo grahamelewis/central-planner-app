@@ -39,3 +39,41 @@ test('task panel handles empty memory, missing tasks, and rejects billed updates
   const fresh = (await sb.fetchJson('GET', '/api/state')).body.tasks.alpha.find(t => t.id === task.id);
   assert.deepEqual(fresh.session, task.session);
 });
+
+test('memory health reports shared reservations, eligibility and real checkpoint counts without dispatch', async () => {
+  const settings = (await sb.fetchJson('GET', '/api/memory/settings')).body;
+  assert.equal(settings.pause, null);
+  assert.equal(settings.jobsToday, 0);
+  assert.equal(settings.remainingJobs, settings.dailyJobLimit);
+  assert.ok(Number.isFinite(Date.parse(settings.resetAt)));
+  const view = (await sb.fetchJson('GET', `/api/tasks/alpha/${task.id}/memory`)).body;
+  assert.deepEqual(view.counts, { successful: 0, failed: 0, blocked: 0 });
+  assert.equal(view.eligibility.eligible, false);
+  assert.equal(typeof view.eligibility.reason, 'string');
+  assert.equal(view.coverage.coveredEvents, 0);
+  assert.equal(view.coverage.totalEvents, 0);
+  assert.equal(view.budget.jobsToday, settings.jobsToday);
+  assert.equal(view.budget.remainingJobs, settings.remainingJobs);
+});
+
+test('resume validates the selected connection and never queues work, changes settings, or refunds budget', async () => {
+  const settings = (await sb.fetchJson('GET', '/api/memory/settings')).body;
+  const route = `/api/tasks/alpha/${task.id}/memory`;
+  const before = (await sb.fetchJson('GET', route)).body;
+  for (const body of [{}, { connection: 'invented' }, { connection: 'claude-sdk' }]) {
+    const result = await sb.fetchJson('POST', '/api/memory/resume', body);
+    assert.ok([400, 409].includes(result.status), `invalid resume rejected: ${JSON.stringify(body)}`);
+  }
+  const resumed = await sb.fetchJson('POST', '/api/memory/resume', { connection: settings.connection });
+  assert.equal(resumed.status, 200, 'non-generating resume is safe even under CP_NO_BILLED');
+  const after = (await sb.fetchJson('GET', route)).body;
+  assert.deepEqual(after.jobs, before.jobs);
+  assert.deepEqual(after.revisions, before.revisions);
+  assert.deepEqual(after.totals, before.totals);
+  assert.equal(after.budget.jobsToday, before.budget.jobsToday);
+  assert.equal(after.budget.remainingJobs, before.budget.remainingJobs);
+  const nextSettings = (await sb.fetchJson('GET', '/api/memory/settings')).body;
+  assert.equal(nextSettings.enabled, settings.enabled);
+  assert.equal(nextSettings.dailyJobLimit, settings.dailyJobLimit);
+  assert.equal(nextSettings.pendingCount, 0);
+});

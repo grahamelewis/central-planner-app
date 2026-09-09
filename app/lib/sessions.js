@@ -20,7 +20,7 @@ import { pinKind, pinCard } from './pins.js';
 import { notify } from './notify.js';
 import { mcpFragmentFor, isKaimonTool, touch as kaimonTouch, setBusyProbe } from './kaimon.js';
 import { externalDirsFor, externalPinLines, isExternalPin, isPathGranted } from './extpins.js';
-import { sessionJobStart, sessionJobProgress, sessionJobEnd, endSessionJobsFor } from './jobs.js';
+import { sessionJobStart, sessionJobProgress, sessionJobOutput, sessionJobEnd, endSessionJobsFor, toolResultText, toolResultExitCode } from './jobs.js';
 import { classifyAuthError, noteTurnError as noteAuthError, noteTurnSuccess as noteAuthSuccess } from './auth.js';
 import { getCodexClient, refreshCodex } from './codexAppServer.js';
 import { createActivityTracker } from './sessionActivity.js';
@@ -1222,8 +1222,15 @@ async function runClaudeTurn(project, id, promptText) {
         for (const block of Array.isArray(blocks) ? blocks : []) {
           if (block && block.type === 'tool_result') {
             if (!msg.parent_tool_use_id) activity.end(block.tool_use_id);
-            // the command behind a job card (if any) is over
-            if (block.tool_use_id) sessionJobEnd(block.tool_use_id, { ...jobOwner, error: !!block.is_error });
+            // the command behind a job card (if any) is over — its result
+            // text is the only output the dashboard ever sees (run ledger):
+            // parsed for counters/lines first, then the exit code the SDK's
+            // `Exit code N` marker reports (0 for a non-error result)
+            if (block.tool_use_id) {
+              const resultText = toolResultText(block);
+              sessionJobOutput(block.tool_use_id, resultText, { ...jobOwner, isError: !!block.is_error });
+              sessionJobEnd(block.tool_use_id, { ...jobOwner, error: !!block.is_error, exitCode: toolResultExitCode(resultText, !!block.is_error) });
+            }
             // an edit tool succeeded — the file just changed on disk; open
             // editors reload live instead of waiting for the turn to end
             if (block.tool_use_id && editTargets.has(block.tool_use_id)) {
@@ -1651,7 +1658,13 @@ async function runCodexTurn(project, id, promptText) {
       if (item.type === 'agentMessage' && typeof item.text === 'string') {
         finalText = item.text;
       } else if (item.type === 'commandExecution') {
-        sessionJobEnd(item.id, { ...jobOwner, error: item.status === 'failed' || (item.exitCode != null && item.exitCode !== 0) });
+        // run ledger: Codex hands over the command's output and exit code
+        sessionJobOutput(item.id, typeof item.aggregatedOutput === 'string' ? item.aggregatedOutput : '', jobOwner);
+        sessionJobEnd(item.id, {
+          ...jobOwner,
+          error: item.status === 'failed' || (item.exitCode != null && item.exitCode !== 0),
+          exitCode: Number.isFinite(item.exitCode) ? item.exitCode : null,
+        });
         const summary = item.exitCode == null ? item.status : `exit ${item.exitCode}`;
         emit(`[${item.status === 'failed' ? '✗ error' : 'result'}] ${oneLine(summary, 160)}\n`);
       } else if (item.type === 'fileChange') {

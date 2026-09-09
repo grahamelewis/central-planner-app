@@ -281,9 +281,9 @@ test('the session feed keeps a one-line row per ended job (✓ / ✗ / ⊘) and 
   assert.equal(r.cards, 0, 'no card lingers: the task is not running, so even the detached job is a feed row');
   assert.ok(!r.indet);
   const by = (k) => r.rows.find((x) => x.cls === `jobFeedRow ${k}`);
-  assert.match(by('ok').txt, /^✓ julia fig3\.jl 4m32s · peak 1\.5G · cpu 3\.1× \d+:\d\d/);
-  assert.match(by('bad').txt, /^✗ python tests\/ exit 1 · 138 passed · 2 failed · 3 skipped · 41s · peak 191M \d+:\d\d/);
-  assert.match(by('stop').txt, /^⊘ shell sync stopped by you at 61% · peak 191M \d+:\d\d/);
+  assert.match(by('ok').txt, /^✓ julia fig3\.jl 4m32s · ▲1\.5G \d+:\d\d/);
+  assert.match(by('bad').txt, /^✗ pytest tests\/ 138 passed · 2 failed · 3 skipped \d+:\d\d/);
+  assert.match(by('stop').txt, /^⊘ shell sync stopped by you at 61% · ▲191M \d+:\d\d/);
   assert.match(by('live').txt, /^▶ julia · detached sim\.jl still running · 86% · 8m4\ds · ≈2m00s left ⊘ stop$/);
   assert.ok(by('live').stop, 'the detached row keeps ⊘ stop');
   await page.click('#consoleBox .csJobFeed .jobFeedRow.live .jfAct.stop');

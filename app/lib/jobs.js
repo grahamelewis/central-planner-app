@@ -24,7 +24,7 @@ import { broadcast } from './events.js';
 import { PROJECTS, ROOT } from './config.js';
 import { writeFileAtomic } from './paths.js';
 import { probe as probeProcs } from './jobProbe.js';
-import { createJobParser, stripAnsi } from './jobParsers.js';
+import { createJobParser, detectRuntime, stripAnsi, stataLogSummary } from './jobParsers.js';
 import { RUNTIMES, runLangs, sessionInterpreterRows, sessionArgv0Rows } from './runtimes.js';
 
 const log = (...args) => console.log('[jobs]', ...args);
@@ -72,13 +72,27 @@ let polling = false;
 const INTERPRETERS = {
   julia: { names: ['julia'], lang: 'julia', ext: /\.jl$/i },
   r: { names: ['rscript', 'r'], lang: 'r', ext: /\.(r|rmd)$/i },
-  python: { names: ['python', 'python3', 'python2', 'uv'], lang: 'python', ext: /\.py$/i },
+  // `pytest tests/test_x.py` runs under python; bare `pytest` / `python -m
+  // pytest tests/` (no .py token) are fileless launchers — see LAUNCHERS
+  python: { names: ['python', 'python3', 'python2', 'uv', 'pytest', 'py.test'], lang: 'python', ext: /\.py$/i },
   // notebooks: `jupyter nbconvert --execute x.ipynb`, `jupyter execute`,
   // papermill, quarto render — the kernel does the long compute
   notebook: { names: ['jupyter', 'jupyter-nbconvert', 'jupyter-execute', 'jupyter-run', 'nbconvert', 'papermill'], lang: 'notebook', ext: /\.ipynb$/i },
   quarto: { names: ['quarto'], lang: 'notebook', ext: /\.(qmd|ipynb|rmd)$/i },
   sql: { names: ['duckdb', 'psql', 'sqlite3', 'mysql'], lang: 'sql', ext: /\.sql$/i },
   ...sessionInterpreterRows(),
+  // run-ledger rows (v3.1): the console feed wants every run the agent
+  // launched, not only long interpreter jobs. These never get a live card
+  // unless the sweep pins a pid (INTERP_ARGV0 below); short runs are recorded
+  // from their tool result alone (finish(): `short`).
+  tex: { names: ['latexmk', 'pdflatex', 'xelatex', 'lualatex', 'tectonic'], lang: 'tex', ext: /\.tex$/i },
+  // `bash x.sh` only — `bash -c '…'` is the agent's plumbing, never a run
+  shell: { names: ['bash', 'sh', 'zsh'], lang: 'shell', ext: /\.sh$/i },
+  // `stata-mp -b do x.do`, `StataSE -e do x.do`: stdout is empty by design
+  stata: { names: ['stata', 'stata-mp', 'stata-se', 'stata-ic', 'statamp', 'statase', 'stataic', 'xstata', 'xstata-mp', 'xstata-se'], lang: 'stata', ext: /\.do$/i },
+  // `matlab -batch "run('x.m')"` has no file token — it is an inline eval
+  matlab: { names: ['matlab'], lang: 'matlab', ext: /\.m$/i },
+  java: { names: ['java', 'javac'], lang: 'java', ext: /\.java$/i },
 };
 const INTERPRETER_ROWS = Object.values(INTERPRETERS);
 
@@ -246,6 +260,23 @@ const CARGO_SUBS = new Set(['run', 'r', 'test', 't', 'bench', 'build', 'b', 'che
 const GO_SUBS = new Set(['run', 'test', 'build', 'vet', 'generate', 'install', 'tool']);
 const CARGO_PIN = { any: [{ argv0: /(^|\/)(cargo|rustc)$/, needle: /(^|[\s/])cargo\s/ }, { argv0: /(^|\/)target\/(debug|release)\//, needle: null }], child: null, tree: true };
 const compileSub = (sub) => ['build', 'b', 'check', 'c', 'clippy'].includes(sub);
+// a console-script pytest is `python3 …/bin/pytest …` in the process table
+const PYTEST_PIN = { any: [{ argv0: /(^|\/)(python[\d.]*|pytest|py\.test)$/i, needle: 'pytest' }], child: null, tree: true };
+const JAVA_BUILD_SUBS = new Set(['test', 'verify', 'package', 'install', 'compile', 'build', 'check', 'run', 'bootRun',
+  'integrationTest', 'assemble', 'clean', 'site', 'deploy', 'spring-boot:run', 'exec:java', 'jar', 'war']);
+
+function javaBuildLauncher(base) {
+  return {
+    parse(rest, c) {
+      const subs = nonFlags(rest).filter((t) => !/^-/.test(t));
+      const sub = subs.find((t) => JAVA_BUILD_SUBS.has(t)) || subs.find((t) => /^[\w:.-]+$/.test(t));
+      if (!sub || subs.some((t) => VERSIONISH.has(t))) return null;
+      return mkHit('java', label(nameAt(c, null), base, sub), {
+        any: [{ argv0: /(^|\/)(mvn|gradle|gradlew|java)$/, needle: null }], child: null, tree: true,
+      }, base);
+    },
+  };
+}
 
 function nodeScriptLauncher(base) {
   return {
@@ -311,6 +342,29 @@ const LAUNCHERS = {
       return mkHit('go', label(nameAt(c, 'go'), 'air'), { any: [{ argv0: /(^|\/)air$/, needle: null }], child: null, tree: true }, 'air');
     },
   },
+  // `pytest`, `pytest tests/ -k slow` (no .py token — `pytest x.py` is the
+  // python ext row); a console-script pytest runs as `python3 …/bin/pytest`
+  pytest: {
+    parse(rest, c) {
+      if (rest.some((t) => VERSIONISH.has(t))) return null;
+      const target = nonFlags(rest).find((t) => !/^-/.test(t)) || null;
+      return mkHit('python', label(nameAt(c, null), 'pytest', target), PYTEST_PIN, 'pytest');
+    },
+  },
+  // `python -m pytest tests/` — the only module run that is a workload
+  python: {
+    parse(rest, c) {
+      const mi = rest.indexOf('-m');
+      const mod = mi !== -1 ? rest[mi + 1] : null;
+      if ((mod !== 'pytest' && mod !== 'py.test') || rest.some((t) => VERSIONISH.has(t))) return null;
+      const target = nonFlags(rest.slice(mi + 2)).find((t) => !/^-/.test(t)) || null;
+      return mkHit('python', label(nameAt(c, null), 'pytest', target), PYTEST_PIN, 'python');
+    },
+  },
+  // `mvn test`, `./gradlew build`, `gradle test`
+  mvn: javaBuildLauncher('mvn'),
+  gradle: javaBuildLauncher('gradle'),
+  gradlew: javaBuildLauncher('gradlew'),
   npm: nodeScriptLauncher('npm'),
   npx: nodeScriptLauncher('npx'),
   pnpm: nodeScriptLauncher('pnpm'),
@@ -398,6 +452,8 @@ const LAUNCHERS = {
   },
 };
 LAUNCHERS.gmake = LAUNCHERS.make;
+LAUNCHERS.python3 = LAUNCHERS.python;
+LAUNCHERS['py.test'] = LAUNCHERS.pytest;
 
 // commands that only NAME a binary (`rm -rf target/debug/app`, `ls build/`,
 // `strip bin/tool`): never a run, whatever path follows
@@ -523,13 +579,21 @@ export function detectScriptRun(command, { root = null } = {}) {
         }
         spec = INTERPRETER_ROWS.find((i) => i.names.includes(base))
           || (/^python[\d.]*$/.test(base) ? INTERPRETERS.python : null);
+        // `bash -c '…'` is how the agent runs everything: the shell is
+        // transparent — the program INSIDE it (`julia -e …`, `Rscript x.R`)
+        // is what runs, so keep scanning for that; only `bash x.sh` is a run
+        if (spec && spec.lang === 'shell' && tokens.includes('-c')) { spec = null; continue; }
         if (spec) interpTok = tok;
         // `uv`'s own -e belongs to pip, never an eval
         if (spec && base === 'uv') noInline = true;
+        // a shell heredoc is not a workload either
+        if (spec && spec.lang === 'shell') noInline = true;
         continue;
       }
       if (skipNext) { skipNext = false; continue; }
       if (tok === '-m') noInline = true; // module run, not an inline program
+      // `matlab -batch "run('x.m')"` / `-r "…"`: the program is the argument
+      if (spec.lang === 'matlab' && (tok === '-batch' || tok === '-r')) inline = true;
       if (tok === '--output' || tok === '-o') { skipNext = true; continue; }
       if (INLINE_FLAGS.has(tok) || tok.startsWith('<<')) inline = true;
       if (tok.startsWith('-')) continue; // flags (incl. --output=x.ipynb)
@@ -736,10 +800,113 @@ function isStale(j, now) {
   return !!j._rootGone || now - j._sampledAt > 2 * POLL_MS;
 }
 
+// ---------------------------------------------------------------------------
+// Tool results (run ledger v3.1) — the SDK delivers a Bash call's stdout/
+// stderr only as the final tool_result text. That text is the ONLY view the
+// dashboard gets of a session job's output, so it is fed through the
+// per-runtime parser post-hoc and read for the exit code.
+// ---------------------------------------------------------------------------
+
+// The Claude Code Bash tool marks every non-zero exit `is_error` and puts
+// `Exit code N` on its own line: FIRST when the result is the ShellError
+// formatter's (`[Exit code N, stderr, stdout].join('\n')`), LAST when the
+// streaming tool appends it after stdout. Only those two positions are
+// trusted — a script that prints "Exit code 3" mid-output never counts.
+const EXIT_MARKER_RE = /^Exit code (\d+)\s*$/;
+
+/** The plain text of an SDK tool_result block (string content or text
+    blocks joined by newlines); '' when there is none. */
+export function toolResultText(block) {
+  try {
+    if (!block) return '';
+    const c = block.content;
+    if (typeof c === 'string') return c;
+    if (Array.isArray(c)) return c.map((b) => (b && b.type === 'text' && typeof b.text === 'string' ? b.text : '')).filter(Boolean).join('\n');
+    return '';
+  } catch { return ''; }
+}
+
+// { lines: the program's own lines (marker removed), exitCode: N | null }
+function splitToolResult(text, readMarker = true) {
+  const raw = String(text ?? '').split(/\r?\n/);
+  if (raw.length && raw[raw.length - 1] === '') raw.pop(); // trailing newline
+  let exitCode = null;
+  if (!readMarker) return { lines: raw, exitCode }; // a non-error result: every line is the program's own
+  const first = raw.findIndex((l) => l.trim());
+  let last = raw.length - 1;
+  while (last > first && !raw[last].trim()) last--;
+  let m;
+  if (first !== -1 && (m = raw[first].match(EXIT_MARKER_RE))) { exitCode = Number(m[1]); raw.splice(first, 1); }
+  else if (last > first && (m = raw[last].match(EXIT_MARKER_RE))) { exitCode = Number(m[1]); raw.splice(last, 1); }
+  return { lines: raw, exitCode };
+}
+
+/** The exit code a Claude tool_result reports for its Bash call: the SDK's
+    `Exit code N` marker when present; 0 for a result the SDK did NOT flag as
+    an error (non-zero exits are always flagged, and get the marker); null for
+    an error without the marker (timeout, interrupt, permission denied — the
+    command's own exit is unknown and is never invented). */
+export function toolResultExitCode(text, isError = false) {
+  // the SDK appends the marker ONLY to an error result (2.1.26x: `if (re.isError
+  // && code !== 0) append("Exit code "+code)`), so a non-error result's last
+  // line is the program's own text, never a marker — its verdict is 0
+  if (!isError) return 0;
+  const { exitCode } = splitToolResult(text);
+  return exitCode != null ? exitCode : null;
+}
+
+// The SDK's non-output tool results (2.1.263 strings, traced read-only):
+//   a launch/timeout ack — the command keeps running in the background:
+//     `Command running in background with ID: …`
+//     `Command did not complete within its Ns timeout and was moved to the background (ID: …)`
+//     `Command was moved to the background (ID: …) …` · `Command was manually backgrounded by user with ID: …`
+//   a denial — the command NEVER ran:
+//     `The user doesn't want to proceed with this tool use. The tool use was rejected …`
+//   a persisted result — over bashOutputMaxChars (30 KB) the text is a 2 KB
+//   preview inside `<persisted-output>`: `Output too large (N). Full output saved to: <path>` …
+const BG_ACK_RE = /^\s*Command (?:running in background with ID: |did not complete within its .*? timeout and was moved to the background \(ID: |was moved to the background \(ID: |was manually backgrounded by user with ID: )/;
+const DENIED_RE = /^\s*The user doesn't want to proceed with this tool use\./;
+const PERSISTED_RE = /^\s*<persisted-output>|^Output too large \(.+?\)\. Full output saved to: /m;
+/** what kind of non-output result a tool_result text is, or null for real output */
+export function toolResultKind(text) {
+  const s = String(text ?? '');
+  if (BG_ACK_RE.test(s)) return 'background';
+  if (DENIED_RE.test(s)) return 'denied';
+  if (PERSISTED_RE.test(s)) return 'persisted';
+  return null;
+}
+
+// detectRuntime is a regex pass over the command — cache it per command
+// (▶ multi-step runs change the command at each step)
+function runtimeOf(j) {
+  const cmd = j.command || '';
+  if (j._rtCmd !== cmd) { j._rtCmd = cmd; j._rt = detectRuntime(cmd) || null; }
+  return j._rt;
+}
+
+// verified = the dashboard READ a result: an exit code/signal or parser
+// counters. Stata batch is the exception — `stata -b` exits 0 whatever the
+// do-file did, so only its parser (the log tail) can vouch for it.
+function isVerified(j, runtime) {
+  if (j.state === 'running') return false;
+  // a 2 KB preview of a persisted result, or a backgrounded (timed-out)
+  // command: nothing the dashboard saw can vouch for the run
+  if (j._truncated || j._backgrounded) return false;
+  // `unverified` is the parser's own "this stdout cannot vouch" marker (stata
+  // batch echoing a banner) — a reason NOT to trust the exit, never a counter
+  if (j.counters && j.counters.unverified) return false;
+  const keys = j.counters ? Object.keys(j.counters).filter((k) => k !== 'crate' && k !== 'unverified') : [];
+  const hasCounters = keys.length > 0;
+  if (runtime === 'stata' || j.lang === 'stata') return hasCounters;
+  const ex = j.exit || {};
+  return hasCounters || ex.code != null || ex.signal != null;
+}
+
 function publicJob(j) {
   const now = nowFn();
   const running = j.state === 'running';
   const quietMs = j.source === 'run' && running && j.lastOutputAt ? now - j.lastOutputAt : null;
+  const runtime = runtimeOf(j);
   return {
     key: j.key,
     jobRunId: j.jobRunId || null,
@@ -753,11 +920,16 @@ function publicJob(j) {
     displayTitle: j.displayTitle || null,
     titleKind: j.titleKind || null,
     lang: j.lang,
+    // run ledger (v3.1): detectRuntime() of the command; null when undetected
+    runtime,
     command: j.command || null,
     state: j.state,
     bg: !!j.bg,
     detached: !!j.detached,
     inline: !!j.inline,
+    // ended without ever being a live card (under MIN_AGE, or no pid found):
+    // recorded from its tool result alone — see finish()
+    short: !!j.short,
     stopping: !!j._stopReq,
     startedAt: new Date(j.t0).toISOString(),
     endedAt: j.endedAt != null ? new Date(j.endedAt).toISOString() : null,
@@ -799,7 +971,9 @@ function publicJob(j) {
         owned: true,
         buffered: !!j._buffered,
       }
-      : { owned: false },
+      // session jobs: the dashboard never owns the stream; once the tool
+      // result landed, its line count is all the output there is
+      : j._fromToolResult ? { lines: j._toolLines || 0, owned: false, fromToolResult: true, ...(j._truncated ? { truncated: true } : {}) } : { owned: false },
     history: j._history || null,
     exit: running ? null : {
       code: j.exit?.code ?? j.exitCode ?? null,
@@ -808,6 +982,9 @@ function publicJob(j) {
     },
     phase: j.phase ? { name: j.phase.name, n: j.phase.n ?? null, m: j.phase.m ?? null, mSoft: !!j.phase.mSoft } : null,
     counters: j.counters ? { ...j.counters } : {},
+    // false until a result was actually read (exit code/signal or counters);
+    // always false while running; stata only through its parser
+    verified: isVerified(j, runtime),
   };
 }
 
@@ -825,8 +1002,8 @@ function finish(j, state, extra = {}) {
   j.ms = nowFn() - j.t0;
   j.endedAt = nowFn();
   Object.assign(j, extra);
-  // exit: the runner passes {code, signal, byUser}; session jobs have no
-  // code to report (the tool_result's text is not parsed — never invented)
+  // exit: the runner passes {code, signal, byUser}; a session job's code
+  // comes from its tool result (sessionJobEnd) or stays null — never invented
   if (!j.exit) j.exit = { code: j.exitCode ?? null, signal: null, byUser: !!j._stopReq };
   else if (j.exit.byUser == null) j.exit.byUser = !!j._stopReq;
   if (j.exit.code != null && j.exitCode == null) j.exitCode = j.exit.code;
@@ -834,10 +1011,22 @@ function finish(j, state, extra = {}) {
   if (j.visible) {
     emitJob(j);
     recordHistory(j); // the sidebar's activity feed remembers finished runs
+  } else if (j.source === 'session' && j._fromToolResult) {
+    // ran, but never earned a live card (ended under MIN_AGE, or the sweep
+    // never found its pid) and still produced a tool result: a lightweight
+    // ended record so the run ledger is complete. Broadcast ONCE as terminal
+    // (`short:true`), recorded, and dropped from the registry at once — it
+    // never showed a live card and never enters the snapshot's `jobs`.
+    j.short = true;
+    try { broadcast('job:status', { project: j.project, job: publicJob(j) }); } catch (err) {
+      logErr('broadcast failed:', err.message);
+    }
+    recordHistory(j);
+    jobs.delete(j.key);
   } else {
     jobs.delete(j.key); // never shown — nothing to clean up on screen
   }
-  log(`${j.key} ${state} after ${(j.ms / 1000).toFixed(1)}s`);
+  log(`${j.key} ${state} after ${(j.ms / 1000).toFixed(1)}s${j.short ? ' (short)' : ''}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -845,7 +1034,10 @@ function finish(j, state, extra = {}) {
 // Persisted so a server restart doesn't blank the feed's ▶ rows.
 // ---------------------------------------------------------------------------
 
-const HIST_CAP = 50;
+// per project; the run ledger rebuilds a turn's rows from this file after a
+// reload, and a single sweep turn can hold 60+ short runs — 50 would truncate
+// it (the sidebar feed reads its own last-30, short runs excluded)
+const HIST_CAP = 400;
 const HIST_FILE = path.join(ROOT, 'jobhist.json');
 let history = null; // {project: [record, ...]} oldest → newest
 
@@ -1006,6 +1198,12 @@ const INTERP_ARGV0 = {
   shell: /(^|\/)(bash|sh|zsh)$/,
   // rust / go / node / c / cpp — from the registry's `argv0`
   ...sessionArgv0Rows(),
+  // run-ledger rows: latexmk is a perl script (argv0 `perl` or `latexmk`),
+  // the engines it drives carry the .tex basename
+  tex: /(^|\/)(latexmk|pdflatex|xelatex|lualatex|tectonic|perl)$/,
+  stata: /(^|\/)(stata(-mp|-se|-ic)?|StataMP|StataSE|StataIC|xstata(-mp|-se)?)$/i,
+  matlab: /(^|\/)(matlab|MATLAB)(_\w+)?$/,
+  java: /(^|\/)(java|javac)$/,
 };
 
 // ▶ runs with `pin:'child'` (go run, npm scripts, pty-wrapped binaries): the
@@ -1497,20 +1695,85 @@ function findSessionJob(toolUseId, owner = {}) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-/** HOOK — a session job's output line(s), should the dashboard ever see them
-    (today the SDK owns that stream and nothing calls this). Feeds the
-    per-runtime parser (phase/counters/progress) only; `output.owned` stays
-    false because the dashboard does not own the stream. */
-export function sessionJobOutput(toolUseId, chunk, owner = {}) {
+/** A session job's output — the Bash tool_result text (Claude) or the
+    item's `aggregatedOutput` (Codex), handed over by lib/sessions.js BEFORE
+    sessionJobEnd. The SDK owns the stream, so this arrives once, at the end:
+    the lines go through the per-runtime parser (phase/counters/lastError/
+    progress), are counted for `output.lines`, and an `Exit code N` marker is
+    remembered for sessionJobEnd. `output.owned` stays false. A background/
+    detached launch's tool_result is only its launch ack, never its output. */
+export function sessionJobOutput(toolUseId, chunk, { isError = false, ...owner } = {}) {
   try {
-    if (!toolUseId) return;
+    if (!toolUseId || typeof chunk !== 'string') return;
     const j = findSessionJob(toolUseId, owner);
-    if (j?.state === 'running') {
-      const now = nowFn();
-      for (const line of String(chunk).split(/[\r\n]/)) if (line) feedLine(j, line, now);
+    if (!j || j.state !== 'running' || j.bg || j.detached) return;
+    const kind = toolResultKind(chunk);
+    if (kind === 'denied') {
+      // the tool_use streamed before the permission decision: nothing ran —
+      // no row, no jobhist record
+      jobs.delete(j.key);
+      log(`${j.key} dropped: tool use denied`);
       return;
     }
+    if (kind === 'background') {
+      // a timeout (or a manual/message-driven move) backgrounded the command:
+      // the process is still running and this text is only its ack. The job
+      // becomes a background one — nothing is read, exit stays null, and the
+      // process table / the turn's end finishes it (○ unverified, never ✓ exit 0)
+      j.bg = true;
+      j._backgrounded = true;
+      log(`${j.key} backgrounded by the tool (timeout/move ack)`);
+      return;
+    }
+    if (!j._parser) j._parser = createJobParser(j.lang, j.command);
+    const now = nowFn();
+    // the marker is only ever appended to an ERROR result (see toolResultExitCode)
+    const { lines, exitCode } = splitToolResult(chunk, !!isError);
+    j._fromToolResult = true;
+    if (kind === 'persisted') {
+      // a 2 KB preview of a >30 KB result: no tail, no marker, no summary —
+      // nothing here can vouch for the run (output.truncated, verified:false)
+      j._truncated = true;
+      return;
+    }
+    j._toolLines = (j._toolLines || 0) + lines.length;
+    if (exitCode != null && j._toolExit == null) j._toolExit = exitCode;
+    for (const line of lines) if (line) feedLine(j, line, now);
   } catch { /* display only */ }
+}
+
+/** Stata batch (`stata -b do x.do`) writes its result only to `<x>.log`, beside
+    the do-file (Stata's cwd is the do-file's folder when launched that way) or
+    in the working directory. Read whichever exists and merge the log tail's
+    summary (errors · rc · lastError) into the job's counters — the only thing
+    that can verify a Stata run. */
+function readStataLog(j) {
+  try {
+    if (j.lang !== 'stata' || !j.file) return false;
+    const root = PROJECTS[j.project]?.root;
+    if (!root) return false;
+    const doFile = path.resolve(root, j.file);
+    const base = path.basename(doFile).replace(/\.do$/i, '');
+    const cands = [path.join(path.dirname(doFile), `${base}.log`), path.join(root, `${base}.log`)];
+    const logPath = cands.find((p) => { try { return fs.statSync(p).isFile(); } catch { return false; } });
+    if (!logPath) return false;
+    const st = fs.statSync(logPath);
+    // the tail is what matters; cap the read for huge logs
+    const CAP = 512 * 1024;
+    let text;
+    if (st.size > CAP) {
+      const fd = fs.openSync(logPath, 'r');
+      try { const buf = Buffer.alloc(CAP); fs.readSync(fd, buf, 0, CAP, st.size - CAP); text = buf.toString('utf8'); } finally { fs.closeSync(fd); }
+    } else text = fs.readFileSync(logPath, 'utf8');
+    const s = stataLogSummary(text);
+    const c = j.counters || (j.counters = {});
+    delete c.unverified;
+    c.errors = s.counters.errors;
+    if (s.counters.rc != null) c.rc = s.counters.rc;
+    if (s.counters.lastError) c.lastError = { ...s.counters.lastError, file: c.lastError?.file ?? j.file };
+    j._stataLog = path.relative(root, logPath);
+    return true;
+  } catch { return false; }
 }
 
 /** tool_progress heartbeat — elapsed_time_seconds is authoritative for how
@@ -1531,13 +1794,23 @@ export function sessionJobProgress(toolUseId, elapsedSeconds, owner = {}) {
     backgrounded/detached launch it's just the launch ack — the process runs
     on, and the card ends when the process does (an error ack means it never
     started). */
-export function sessionJobEnd(toolUseId, { error = false, ...owner } = {}) {
+export function sessionJobEnd(toolUseId, { error = false, exitCode = null, ...owner } = {}) {
   try {
     if (!toolUseId) return;
     const j = findSessionJob(toolUseId, owner);
     if (j) {
       if ((j.bg || j.detached) && !error && !j._stopReq) return;
-      finish(j, j._stopReq ? 'stopped' : error ? 'error' : 'done');
+      // the exit code the tool result reported (Claude: toolResultExitCode;
+      // Codex: item.exitCode), else the marker sessionJobOutput saw; a
+      // launch ack's code is never the program's
+      const code = j.bg || j.detached ? null
+        : Number.isFinite(exitCode) ? exitCode : (j._toolExit ?? null);
+      const extra = code != null ? { exit: { code, signal: null, byUser: !!j._stopReq }, exitCode: code } : {};
+      if (code != null) j._fromToolResult = true;
+      // stata: exit 0 says nothing — the log tail is the verdict (B3/B9)
+      const logRead = readStataLog(j);
+      const logErrors = logRead && (j.counters?.errors || 0) > 0;
+      finish(j, j._stopReq ? 'stopped' : (error || logErrors || (code != null && code !== 0)) ? 'error' : 'done', extra);
       return;
     }
   } catch { /* display only */ }
@@ -1552,7 +1825,10 @@ export function endSessionJobsFor(project, taskId, state = 'stopped', owner = {}
       if (j.source === 'session' && j.project === project && j.taskId === taskId && j.state === 'running'
         && matchesSessionOwner(j, owner)) {
         if (j.detached) continue;
-        finish(j, j._stopReq ? 'stopped' : state);
+        // a command the tool backgrounded (timeout ack) is reaped by the SDK at
+        // the final response: nothing was ever read from it, so it ends as an
+        // ○ unverified run (no exit, no verdict) — never ⊘ "stopped", never ✓
+        finish(j, j._stopReq ? 'stopped' : j._backgrounded ? 'done' : state);
       }
     }
   } catch { /* display only */ }
@@ -1726,7 +2002,7 @@ export function getJobs() {
 //   an injected sweep is the ONLY sweep (setPolling(true) restores it).
 export const _test = {
   jobs, tick, findSessionPid, findChildPid, findRespawn, descendantsOf, psSnapshot, feedOutput, parsePs, publicJob, sampleTree,
-  nearestMarker, INTERPRETERS, INTERP_ARGV0, RUN_LANGS,
+  nearestMarker, INTERPRETERS, INTERP_ARGV0, RUN_LANGS, MIN_AGE_MS, splitToolResult,
   setClock(fn) { nowFn = typeof fn === 'function' ? fn : Date.now; },
   setPolling(on) {
     pollingParked = !on;

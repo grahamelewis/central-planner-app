@@ -25,7 +25,10 @@ test('real feed HTML renders legacy inline history safely without inventing a co
   assert.equal(result.name, 'inline Julia');
   assert.match(result.tip, /Recorded inline label\/command excerpt:/);
   assert.match(result.tip, /\/Users\/gra$/);
-  assert.match(result.summary, /15s.*489M.*1\.0×/);
+  // the run ledger's row (docs/runfeed-mockups): elapsed · ▲peak — the card's
+  // "cpu 1.0×" stays on the card, not the row; an old record with no exit and
+  // no counters is ○ (unverified), so no aux either
+  assert.match(result.summary, /^15s · ▲489M$/);
 });
 
 test('slash labels and launcher targets survive real rendering while file paths shorten', opts, async () => {

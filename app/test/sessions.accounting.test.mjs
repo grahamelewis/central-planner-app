@@ -183,7 +183,7 @@ async function runCodexHarness({ lostReply = false, failRecorder = false, observ
     if (method === 'turn/start') {
       if (observeJobs) {
         for (const method of ['item/started', 'item/completed']) client.emit('notification', { method, params: {
-          threadId: 'thread', turnId: 'provider-turn', item: { id: 'shell-item', type: 'commandExecution', command: 'julia program.jl', status: 'completed', exitCode: 0 },
+          threadId: 'thread', turnId: 'provider-turn', item: { id: 'shell-item', type: 'commandExecution', command: 'julia program.jl', status: 'completed', exitCode: 0, aggregatedOutput: 'iter 1/1\n' },
         } });
       }
       if (lostReply) client.emit('notification', { method: 'turn/started', params: {
@@ -213,6 +213,7 @@ async function runCodexHarness({ lostReply = false, failRecorder = false, observ
     interruptedDuringPrep: new Set(), createTracker: () => ({ finish: no }), activeTurns: new Map(),
     codexTurnError: () => null, endSessionJobsFor: (...args) => jobCalls.push(['cleanup', ...args]), pendingPermissions: new Map(),
     sessionJobStart: (...args) => jobCalls.push(['start', ...args]), sessionJobEnd: (...args) => jobCalls.push(['end', ...args]),
+    sessionJobOutput: (...args) => jobCalls.push(['output', ...args]),
     oneLine: text => String(text),
     parseHandoff: () => null, parseQuestion: () => null, failedTurns: new Set(), refreshCodex: async () => {},
     notify: no, log: no, logErr: lostReply || failRecorder ? no : (...args) => { throw new Error(args.join(' ')); },
@@ -242,12 +243,21 @@ test('lost turn/start response cannot discard usage after a trusted turn/started
 test('real Codex command lifecycle carries immutable application-turn and task-generation ownership', async () => {
   const { jobCalls } = await runCodexHarness({ observeJobs: true });
   const start = jobCalls.find(call => call[0] === 'start');
+  const output = jobCalls.find(call => call[0] === 'output');
   const end = jobCalls.find(call => call[0] === 'end');
   const cleanup = jobCalls.find(call => call[0] === 'cleanup');
   assert.equal(start[5].appTurnId, 'application-turn');
   assert.equal(start[5].taskCreated, 'task-created');
+  // run ledger: the item's aggregatedOutput reaches the job BEFORE its end, under the same owner,
+  // and the end carries the item's exit code
+  assert.ok(jobCalls.indexOf(output) < jobCalls.indexOf(end), 'output is handed over before the end');
+  assert.equal(output[1], 'shell-item');
+  assert.equal(output[2], 'iter 1/1\n');
+  assert.equal(output[3].appTurnId, 'application-turn');
   assert.equal(end[2].appTurnId, 'application-turn');
   assert.equal(end[2].taskId, 't');
+  assert.equal(end[2].exitCode, 0);
+  assert.equal(end[2].error, false);
   assert.equal(cleanup[4].appTurnId, 'application-turn');
   assert.equal(cleanup[4].taskCreated, 'task-created');
 });

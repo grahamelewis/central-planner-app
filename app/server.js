@@ -7,7 +7,7 @@ import { spawn } from 'child_process';
 import express from 'express';
 
 import { PORT, APP_DIR, PROJECTS, ARTIFACT_GLOBS, USER_NAME, NOTIFY_TURN_END } from './lib/config.js';
-import { createProject, updateProject, projectStatus } from './lib/projectStore.js';
+import { createProject, updateProject, setPinOrder, pinnedKeys, projectStatus } from './lib/projectStore.js';
 import { initWss, broadcast, onClientConnect } from './lib/events.js';
 import { allTasks, listTasks, createTask, updateTask, deleteTask, getTask, getCategories, getAbstract } from './lib/taskStore.js';
 import { isPathGranted } from './lib/extpins.js';
@@ -150,10 +150,14 @@ function safeCall(label, fn, fallback) {
 }
 
 function snapshot() {
+  // the top bar, in slot order (≤ 7) — the ONLY thing the nav and ⌘1..7 read
+  const pinned = safeCall('pinned', () => pinnedKeys(), []);
   const projects = {};
   for (const [key, p] of Object.entries(PROJECTS)) {
     projects[key] = {
       name: p.name, root: p.root, color: p.color, texWatch: p.texWatch, status: projectStatus(p),
+      // the project's slot on the top bar (1..7, derived or explicit) or null
+      pinOrder: pinned.indexOf(key) >= 0 ? pinned.indexOf(key) + 1 : null,
       // which toolchains the project's markers imply, and which are absent here
       toolchains: safeCall(`toolchains:${key}`, () => projectToolchains(p.root), { runtimes: [], markers: {}, missing: [] }),
     };
@@ -166,6 +170,7 @@ function snapshot() {
     user: { name: USER_NAME },
     notifications: { turnEnd: NOTIFY_TURN_END },
     projects,
+    pinned,
     categories: safeCall('categories', () => getCategories(), {}),
     abstracts,
     tasks: safeCall('tasks', () => Object.fromEntries(Object.entries(allTasks()).map(([project, tasks]) =>
@@ -197,10 +202,14 @@ function snapshot() {
 // ---- REST routes -----------------------------------------------------------
 
 app.get('/api/memory/settings', route((req, res) => {
-  res.json({ ...memorySettings.publicSettings(), reservedTodayUsd: taskMemory.spentToday(), jobsToday: taskMemory.jobsToday() });
+  res.json({ ...memorySettings.publicSettings(), reservedTodayUsd: taskMemory.spentToday(), ...taskMemory.status() });
 }));
 app.patch('/api/memory/settings', route((req, res) => {
-  res.json(memorySettings.update(req.body));
+  res.json({ ...memorySettings.update(req.body), reservedTodayUsd: taskMemory.spentToday(), ...taskMemory.status() });
+}));
+// Explicitly clear a worker pause, never dispatch work or reset reservations.
+app.post('/api/memory/resume', route((req, res) => {
+  res.json(taskMemory.resume(req.body?.connection));
 }));
 app.get('/api/tasks/:project/:id/memory', route((req, res) => {
   assertProjectKey(req.params.project);
@@ -264,6 +273,14 @@ app.post('/api/projects', route((req, res) => {
 
 app.patch('/api/projects/:key', route((req, res) => {
   const result = updateProject(req.params.key, req.body || {});
+  broadcast('state', snapshot());
+  res.json(result);
+}));
+
+// Atomic reorder of the top bar (Manage ▲ ▼): {keys} become slots 1..n, the
+// rest are unpinned, ONE write + ONE broadcast. Responds {pinned}.
+app.put('/api/projects/pins', route((req, res) => {
+  const result = setPinOrder((req.body || {}).keys);
   broadcast('state', snapshot());
   res.json(result);
 }));
@@ -845,7 +862,10 @@ app.get('/api/feed/:project', route((req, res) => {
       dels: files.reduce((n, f) => n + f.dels, 0),
     });
   }
-  for (const r of getJobHistory(project).slice(-30)) {
+  // short session runs (sub-MIN_AGE, recorded for the console's run ledger)
+  // would flood the sidebar's Recent activity with 0.4 s rows — the ledger
+  // shows them in their turn; the sidebar keeps the runs that were cards
+  for (const r of getJobHistory(project).filter((h) => !h.short).slice(-30)) {
     items.push({ kind: 'run', ...r });
   }
   for (const t of listTasks(project)) {

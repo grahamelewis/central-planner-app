@@ -56,6 +56,9 @@ name — you can add projects here, but it's easier to do it visually after laun
     live-recompile in the show panel, or `null`.
   - `status` — `active` (default, no tag) · `trial` (tagged in the nav) ·
     `inactive` (hidden from the nav and overview).
+  - `pinOrder` — optional; the project's slot on the top bar (1–7, ⌘1–⌘7).
+    Leave it out and the bar shows your first seven non-inactive projects
+    until you pin one from Manage Projects.
 - `agents` — default service, model, and Codex reasoning effort for new tasks;
   the same defaults are editable under Settings → AI services.
 - `notifications`, `port`, `weeklyHourTarget`, `artifactGlobs`, `usageLimits`,

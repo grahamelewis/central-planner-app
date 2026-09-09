@@ -40,8 +40,10 @@ Each agent writes ONLY its own files. Import other modules per the signatures be
 export const PORT = 4242;
 export const ROOT;          // absolute path to centralPlanner/
 export const APP_DIR;       // centralPlanner/app
-export const PROJECTS = {   // key → { name, root, color, texWatch, status }  (loaded from config.json)
-  myproject: { name:'My Project', root:'/absolute/path/to/project', color:'#7ef5c2', texWatch:null, status:'active' },
+export const PROJECTS = {   // key → { name, root, color, texWatch, status, pinOrder? }  (loaded from config.json)
+  myproject: { name:'My Project', root:'/absolute/path/to/project', color:'#7ef5c2', texWatch:null, status:'active', pinOrder:1 },
+  // pinOrder: top-bar slot 1..7 · null = explicitly unpinned · absent = never pinned
+  // (while no project carries it, the bar is the first 7 non-inactive keys in this order)
   // … one entry per project …
 };
 export const ARTIFACT_GLOBS;   // { ignoreDirs: [...DEFAULT_IGNORE_DIRS], ignoreDirIfSibling: { vendor: ['go.mod'] }, maxDepth: 6 }
@@ -485,7 +487,8 @@ GET    /api/transcript/:project/:id    → {transcript: [...]}
 ### GET /api/state snapshot shape (frontend depends on this exactly)
 ```json
 {
-  "projects": { "<key>": {"name","root","color","texWatch"} },
+  "projects": { "<key>": {"name","root","color","texWatch","status","pinOrder","toolchains"} },
+  "pinned": [ "<key>", ... ],   // the top bar in slot order, ≤ 7, no inactive keys; pinOrder = index+1 or null
   "categories": { ... },
   "abstracts": { "<key>": "md string" },
   "tasks": { "<key>": [Task, ...] },
@@ -566,7 +569,9 @@ app.js) but replace ALL mock data with live data:
 - Categories view: render from categories data (read-only v1, ✎ disabled).
 - Heartbeat: every 30s while document.hasFocus(), POST /api/heartbeat {project: currentView==
   overview ? null→skip : projectKey, seconds:30}. Only when a project view is open.
-- Keyboard: ⌘0 overview, ⌘1..5 projects (order of PROJECTS keys).
+- Keyboard: ⌘0 overview, ⌘1..7 the pinned projects in slot order (`state.pinned[n-1]`);
+  ignored while an input/textarea/select/contenteditable/Monaco editor has focus. Pinned
+  tabs carry a `.k` "⌘n" hint, shown while ⌘ is held (`body.cmd`) or on hover.
 - No build step: app.js plain ES module loaded with <script type="module">.
 
 ## Coding standards (all agents)
@@ -930,7 +935,8 @@ GET    /api/profile                                  the About-You card ({} befo
 POST   /api/profile/generate                         BILLED (one haiku call) — 403 under CP_NO_BILLED,
                                                      502 when the upstream call fails
 POST   /api/projects                                 add a project (201; Manage Projects tab)
-PATCH  /api/projects/:key                            edit a project (name/root/status/…)
+PATCH  /api/projects/:key                            edit a project (name/color/status/pinOrder)
+PUT    /api/projects/pins {keys}                     atomic top-bar reorder: keys → slots 1..n, rest unpinned
 POST   /api/pickfolder                               native macOS folder dialog (local only)
 GET    /api/activity                                 ledger.dailyActivity() (overview heatmap)
 GET    /api/commits                                  recent commits of the dashboard's own repo
@@ -943,10 +949,23 @@ The profile card (Settings → About You) renders `GET /api/profile` (`profile.j
 repo root, gitignored — it holds the user's name/bio) and rebuilds it with the ↻ button via
 `POST /api/profile/generate` (lib/profile.js) — a real BILLED call, guarded like
 /launch//message/retry by `CP_NO_BILLED`. Manage Projects (nav tab) drives
-`POST /api/projects` / `PATCH /api/projects/:key` (lib/projectStore.js — key/name/root
-validation lives there; `status: inactive` hides a project from nav and overview) with the
-folder picker on `POST /api/pickfolder`. Both broadcast a fresh `state` snapshot, and the
-snapshot carries the profile under its `user` key.
+`POST /api/projects` / `PATCH /api/projects/:key` / `PUT /api/projects/pins` (lib/projectStore.js
+— key/name/root validation lives there; `status: inactive` hides a project from nav and
+overview and clears its pin) with the folder picker on `POST /api/pickfolder`. All three
+broadcast a fresh `state` snapshot, and the snapshot carries the profile under its `user` key.
+**Pins** decide only the top bar: ≤ 7 slots (⌘1..7) stored per project as `pinOrder`
+(1..7 · `null` = explicitly unpinned · absent = never touched). Until the user first
+pins or unpins, `pinned` is DERIVED — the first 7 non-inactive keys in config order,
+nothing written; the first explicit `PATCH {pinOrder}` materialises that set so the
+bar does not jump. PATCH `pinOrder: n` inserts at slot n (later slots shift), `null`
+unpins (slots close up); 400 for a value outside 1..7/null, an inactive project, or
+when 7 OTHER projects already hold a slot (checked against the whole registry, so two
+quick PATCHes cannot exceed seven). PUT `{keys}` rewrites slots 1..n atomically and
+unpins the rest (400 for > 7, unknown, duplicate or inactive keys). POST gives a new
+project the next free slot when one exists; POST and PATCH responses carry the effective
+`pinOrder`, PUT responds `{pinned}`. A non-object entry in the `projects` block (the shipped
+`"//"` comment string) is never a project: not visible, not pinnable, skipped by every pin
+write. Statuses (active/trial/inactive) are untouched by pinning.
 
 ### WS events added
 `run:status` `run:stream` (`{chunk, off, fd?}` — off = cumulative bytes for reconnect dedup,
@@ -1263,13 +1282,16 @@ it has been quiet ≥ 20 s); else `idle`. null on terminal cards ·
 **`output`** — ▶ runs: `{lines, rate, last, owned:true, buffered}` (\n-terminated
 lines; lines/s over the last 10 s; last non-empty line ANSI-stripped, a
 \r-redrawn bar collapsed to its final frame, ≤ 160 chars; `buffered` = python
-without PYTHONUNBUFFERED); session jobs: `{owned:false}` — the SDK owns that
-stream · **`history`** `{typicalMs, n}` (median of `jobhist.json` DONE runs of
+without PYTHONUNBUFFERED); session jobs: `{owned:false}` while running — the
+SDK owns that stream — then `{lines, owned:false, fromToolResult:true}` once
+the tool result landed (v3.1, its line count) · **`history`** `{typicalMs, n}`
+(median of `jobhist.json` DONE runs of
 the same file in the project; null for inline evals or n = 0) · **`exit`**
 `{code, signal, byUser}` (null while running; the runner carries Node's
 mutually exclusive (code, signal) pair and byUser = our own SIGTERM; session
-jobs report `{code:null, signal:null, byUser}` — an error tool_result never
-invents a code; SIGKILL / 137 is NEVER labelled out-of-memory by the server) ·
+jobs carry the code their tool result reported (v3.1, see **Run ledger**) or
+`{code:null, signal:null, byUser}` — a code is never invented; SIGKILL / 137 is
+NEVER labelled out-of-memory by the server) ·
 **`phase`** `{name, n, m, mSoft}` and **`counters`** `{…}` from
 `lib/jobParsers.js` (`createJobParser(lang, command)` keyed by
 `detectRuntime`: julia · python/tqdm · pytest · cargo · go · node/tsc/vite ·
@@ -1277,8 +1299,8 @@ latexmk/pdflatex · R · curl/wget/rsync incl. openrsync's `to-check=`/`xfer#` �
 make/cmake/ninja · stata batch (deliberately nothing — stdout is empty) ·
 papermill/nbconvert · the sql shim · shell; only the keys a parser produced,
 `{}` when none; the generic `parseProgressLine` remains the fallback for
-`progress`). Fed from the ▶ stream only; `sessionJobOutput(toolUseId, chunk)`
-is the hook for session lines, unwired today. Runner env (from the registry's
+`progress`). Fed from the ▶ stream live, and from a session job's final tool
+result post-hoc through `sessionJobOutput(toolUseId, text)` (v3.1). Runner env (from the registry's
 `env`): `.py`/`.sql` runs get `PYTHONUNBUFFERED=1`; `.sh` and `.rs` runs get
 `CARGO_TERM_PROGRESS_WHEN=always` + `CARGO_TERM_PROGRESS_WIDTH=80` (cargo's
 only n/m; rust adds `CARGO_TERM_COLOR=never`). Multi-step ▶ runs call
@@ -1294,6 +1316,62 @@ scoped to the launcher's subtree — never the whole table). `jobhist.json` reco
 `cpuTimeMs`, `memPeakBytes`, `output.lines`, `exit`, `ms` for the end summary.
 Test seams: `_test.tick({snap, now, probe})`, `_test.parsePs`, `_test.setClock`,
 `_test.setPolling`.
+
+**Run ledger (v3.1)** — the console's per-turn run rows need what a session
+job's tool result knows. Additions to the job shape (`job:status`, the
+snapshot's `jobs[]`, `jobhist.json` records): **`runtime`** —
+`detectRuntime(command)` (pytest · cargo · node · latex · shell · stata …),
+null when undetected · **`exit.code` / `counters` / `output.lines` for session
+jobs** — lib/sessions.js hands the Bash tool_result text (Claude) or the
+commandExecution item's `aggregatedOutput` (Codex) to
+`sessionJobOutput(toolUseId, text)` BEFORE `sessionJobEnd(toolUseId, {error,
+exitCode})`; the text goes through the job's parser line by line (counters,
+`lastError`, phase), is counted into `output.lines`, and `exit.code` is the
+tool result's. The Claude exit code (`toolResultExitCode(text, isError)`): for
+a job's runtime the SDK's Bash tool flags a non-zero exit `is_error` (not for
+every command — `git diff`/`git grep`/`[` exit 1 are not errors) and appends
+`Exit code N` on its own line ONLY to an error result — FIRST (the ShellError
+formatter: `[Exit code N, stderr, stdout]`) or LAST (the streaming tool
+appends it after stdout); that marker is read only in those two positions and
+only when `is_error` is set (a program's own last line `Exit code 3` in a
+non-error result is never a marker), a non-error result means 0, and an error
+result without the marker (interrupt) keeps `code:null`. A timeout is NOT an
+error result any more: the SDK moves the command to the background and answers
+with an ack (`Command did not complete within its Ns timeout and was moved to
+the background (ID: …)`) — `toolResultKind()` recognises that ack (and the
+plain `Command running in background with ID:` one), the job becomes `bg`,
+nothing is read, and it ends ○ unverified when its process or turn ends, never
+✓ exit 0. A denied tool call (`The user doesn't want to proceed with this tool
+use.`) never ran: the job is dropped (no row, no jobhist). A result over the
+SDK's 30 KB cap arrives as a 2 KB `<persisted-output>` preview: the job is
+marked `output.truncated`, `verified:false`, and renders ○ `output truncated`.
+Codex passes `item.exitCode`. A background/detached launch's tool_result is
+its launch ack, never its output — nothing is read from it ·
+**`verified`** — true only when a result was READ: an exit code/signal or
+parser counters (`crate` alone does not count; the stata parser's `unverified`
+marker is the opposite of a counter and forces false). Always false while
+running, for a truncated preview, and for a backgrounded (timed-out) command.
+Stata batch (`stata -b`) exits 0 whatever the do-file did, so it is verified
+only through its log: when the job ends, `<name>.log` beside the do-file (or
+in the project root) is read through `stataLogSummary` and its `errors` ·
+`rc` · `lastError` merged into `counters` (`r(NNN)` on the row); without the
+log the row is ○ `unverified · log not read` · **`short`** —
+a session job that ended before it was ever a live card (under MIN_AGE, or
+its pid was never found) but produced a tool result is finished as a
+lightweight record: broadcast ONCE as terminal with `short:true`, written to
+`jobhist.json`, and dropped from the registry at once — it never enters the
+snapshot's `jobs`, never shows a live card. **Which commands are session
+jobs** grew for the ledger: `pytest [path]`, `python -m pytest …` (fileless
+launchers, `lang:'python'`), `latexmk|pdflatex|xelatex|lualatex x.tex`
+(`tex`), `bash|sh|zsh x.sh` (`shell`; `bash -c '…'` never), `stata* -b do
+x.do` (`stata`), `matlab -batch "…"` (`matlab`, inline), `java|javac X.java`,
+`mvn|gradle|gradlew <goal>` (`java`); `curl`/`wget`/`rsync` are NOT session
+jobs (they sit on `detectScriptRun`'s ignore list — the xfer vocabulary only
+renders for ▶ `.sh` runs). Pre-v3.1 `jobhist.json` records lack
+`runtime`/`verified`/`short` (v3 records already carried `exit`/`counters`);
+readers decide a missing `verified` from `exit`/`counters` (only an explicit
+`false` forces ○) and treat a missing `runtime` as null — records are never
+rewritten.
 
 **Manage Categories** (v2.5): the profile menu gains ❏ Manage Categories — a
 two-pane master–detail editor (view key `catman`, reserved in projectStore)

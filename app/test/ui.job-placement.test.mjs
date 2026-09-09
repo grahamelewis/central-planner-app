@@ -261,3 +261,165 @@ test('stream growth and completed-card reconciliation respect a reader scrolled 
   assert.ok(Math.abs(after.top - before.top) < 5, `scroll position retained (${before.top} → ${after.top})`);
   assert.deepEqual(errors, [], 'no uncaught browser errors');
 });
+
+// ── run ledger placement: the block sits between the prose and the divider ──
+const turnDone = (turn) => stream(turn, '\n— turn done · 2.0s · 1k in / 1k out —\n');
+// where turn A's .cs-jobs block sits relative to its neighbours in .csegWrap
+const blockOrder = (turnId = A) => page.locator(BOX).evaluate((box, turnId) => {
+  const block = box.querySelector(`.cs-jobs[data-turn-id="${turnId}"]`);
+  if (!block) return { block: false };
+  window.__placementBlocks = window.__placementBlocks || {};
+  const same = window.__placementBlocks[turnId] === block;
+  window.__placementBlocks[turnId] = block;
+  const prev = block.previousElementSibling, next = block.nextElementSibling;
+  return {
+    block: true, same, inWrap: block.parentElement.classList.contains('csegWrap'),
+    prev: prev && { cls: prev.className, text: prev.textContent.trim() },
+    next: next && { cls: next.className, text: next.textContent.trim() },
+    dividers: box.querySelectorAll('.cs-turn').length,
+    tail: box.querySelectorAll(':scope > .csJobs [data-jobkey], :scope > .csJobFeed [data-jobkey]').length,
+    keys: [...block.querySelectorAll('[data-jobkey]')].map(el => el.dataset.jobkey),
+    kids: [...block.parentElement.children].map(el => el.className.replace(/^cseg /, '') + ':' + el.textContent.trim().slice(0, 24)),
+  };
+}, turnId);
+
+test("a turn's jobs block precedes its turn-done divider and follows the answer prose", opts, async () => {
+  await user(A, 'Run both scripts');
+  await answer(A, 'Both scripts ran; see the ledger.');
+  await turnDone(A);
+  await page.waitForSelector(`${BOX} .cs-turn`);
+  const one = job('ledger-one', { state: 'done', ms: 15000, exitCode: 0 });
+  const two = job('ledger-two', { state: 'error', ms: 12000, exitCode: 1, createdAt: '2026-09-09T11:00:30.000Z',
+    startedAt: '2026-09-09T11:00:31.000Z' });
+  await emit(one);
+  await emit(two);
+  await page.waitForSelector(`${BOX} .cs-jobs ${selector(two)}`);
+  const held = await blockOrder();
+  assert.equal(held.inWrap, true, 'the block is a segment of the stream, not a tail strip');
+  assert.match(held.prev.cls, /\bcs-ans\b/, `the block follows the answer prose (got ${held.prev.cls})`);
+  assert.match(held.prev.text, /see the ledger/);
+  assert.match(held.next.cls, /\bcs-turn\b/, `the block precedes the divider (got ${held.next.cls})`);
+  assert.match(held.next.text, /^turn done/);
+  assert.equal(held.dividers, 1);
+  assert.deepEqual(held.keys, [one.key, two.key], 'rows in createdAt order');
+  assert.equal(held.tail, 0);
+  // the held cards fade into rows (~6.5 s): same block node, same position
+  await page.waitForSelector(`${BOX} .cs-jobs ${selector(two)}.jobFeedRow`, { timeout: 10000 });
+  const rows = await blockOrder();
+  assert.equal(rows.same, true, 'the card → row hand-off reuses the .cs-jobs node');
+  assert.match(rows.prev.cls, /\bcs-ans\b/);
+  assert.match(rows.next.cls, /\bcs-turn\b/);
+  assert.deepEqual(rows.keys, [one.key, two.key]);
+  assert.equal(rows.tail, 0);
+  assert.deepEqual(errors, [], 'no uncaught browser errors');
+});
+
+test('a turn with no runs has no block', opts, async () => {
+  await user(A, 'Just talk');
+  await answer(A, 'No scripts were run.');
+  await turnDone(A);
+  await page.waitForSelector(`${BOX} .cs-turn`);
+  const order = await page.locator(BOX).evaluate(box => ({
+    blocks: box.querySelectorAll('.cs-jobs').length,
+    kids: [...box.querySelector('.csegWrap').children].map(el => el.className.replace(/^cseg /, '')),
+  }));
+  assert.equal(order.blocks, 0);
+  assert.deepEqual(order.kids.slice(-2), ['cs-ans', 'cs-turn'], 'prose then divider, nothing between');
+});
+
+test('a short run (short:true, never a live card) lands in its turn as a row at once — no held card, above the divider', opts, async () => {
+  await user(A, 'Run the quick script');
+  await answer(A, 'It ran in under a second.');
+  await turnDone(A);
+  await page.waitForSelector(`${BOX} .cs-turn`);
+  // the wire lib/jobs.js finish() broadcasts for a run under MIN_AGE: terminal, short, from its tool result
+  const j = job('short-run', { state: 'error', short: true, ms: 400, exitCode: 3, exit: { code: 3, signal: null, byUser: false },
+    runtime: 'shell', lang: 'shell', command: 'bash run.sh', file: 'run.sh', verified: true, counters: {},
+    output: { lines: 2, owned: false, fromToolResult: true }, endedAt: '2026-09-09T11:00:01.400Z', pid: null, elapsedMs: 400 });
+  await emit(j);
+  await page.waitForSelector(`${BOX} .cs-jobs ${selector(j)}.jobFeedRow`, { timeout: 2000 });
+  const at = await blockOrder();
+  assert.equal(await page.locator(`${BOX} ${selector(j)}.jobCard`).count(), 0, 'no held card, not even briefly');
+  assert.equal(at.tail, 0);
+  assert.deepEqual(at.keys, [j.key]);
+  assert.match(at.prev.cls, /\bcs-ans\b/);
+  assert.match(at.next.cls, /\bcs-turn\b/, `above the divider (${at.kids.join(' | ')})`);
+  const row = await page.locator(`${BOX} .cs-jobs ${selector(j)}`).evaluate(el => ({ ico: el.querySelector('.jfIco').textContent, ess: el.querySelector('.jfEss').textContent }));
+  assert.deepEqual(row, { ico: '✗', ess: 'exit 3 · 0.4s' });
+  await sleep(7000); // past the card-hold window: still one row, still no card
+  assert.equal(await page.locator(`${BOX} ${selector(j)}`).count(), 1);
+  assert.equal(await page.locator(`${BOX} ${selector(j)}.jobFeedRow`).count(), 1);
+});
+
+test("the detached live row stays in the tail until it ends, then joins its turn's block", opts, async () => {
+  await user(A, 'Launch the long simulation');
+  await answer(A, 'Started it detached.');
+  await turnDone(A);
+  await page.waitForSelector(`${BOX} .cs-turn`); // let the reveal pump draw the divider first
+  const j = job('detached-ledger', { detached: true });
+  await emit(j);
+  await status('waiting');
+  await page.waitForSelector(`${BOX} > .csJobFeed ${selector(j)}.live`);
+  const live = await blockOrder();
+  assert.equal(live.block, false, 'a still-running detached job is not ledger material yet');
+  assert.equal(await page.locator(`${BOX} .csegWrap ${selector(j)}`).count(), 0);
+  await emit({ ...j, state: 'done', ms: 15000, exitCode: 0 });
+  await page.waitForSelector(`${BOX} .cs-jobs[data-turn-id="${A}"] ${selector(j)}`);
+  const ended = await blockOrder();
+  assert.equal(ended.tail, 0, 'the ended row left the tail');
+  assert.deepEqual(ended.keys, [j.key]);
+  assert.match(ended.prev.cls, /\bcs-ans\b/, `the block follows the prose (${ended.kids.join(' | ')})`);
+  assert.match(ended.next.cls, /\bcs-turn\b/, `the block sits above the divider of the launching turn (${ended.kids.join(' | ')})`);
+  assert.equal(await page.locator(`${BOX} ${selector(j)}`).count(), 1, 'one record: no tail/block duplicate');
+});
+
+test('expandInPlace: zero drift for a reader below the block, above it, and at the clamped end', opts, async () => {
+  await user(A, 'Marker prompt');
+  await answer(A, 'An already rendered paragraph.\n\n'.repeat(80) + 'End of drift fixture.');
+  await turnDone(A);
+  await page.waitForFunction(box => document.querySelector(box).textContent.includes('End of drift fixture.'), BOX);
+  await page.waitForSelector(`${BOX} .cs-turn`);
+  await page.waitForFunction(box => document.querySelector(box).scrollHeight > 2500, BOX);
+  await sleep(250); // drain the reveal pump's last scroll event
+  const drift = await page.locator(BOX).evaluate(async (box) => {
+    const { expandInPlace } = await import('/console.js');
+    box._follow = false;
+    const top = (el) => el.getBoundingClientRect().top - box.getBoundingClientRect().top;
+    const prompt = box.querySelector('.cs-you');
+    const divider = box.querySelector('.cs-turn');
+    const grow = (el, h) => () => { const d = document.createElement('div'); d.className = '__grow'; d.style.height = h + 'px'; el.appendChild(d); return d; };
+    const out = {};
+    // 1. reader below the block: the prompt is scrolled off the top; a
+    // paragraph in view must not move when the prompt grows by 300px
+    box.scrollTop = 600;
+    const para = [...box.querySelectorAll('.cs-ans p')].find(p => top(p) >= 0);
+    const b1 = { marker: top(para), scrollTop: box.scrollTop, above: top(prompt) < 0, prog: box._prog || 0 };
+    const grown = expandInPlace(box, prompt, grow(prompt, 300));
+    out.below = { ...b1, markerAfter: top(para), scrollTopAfter: box.scrollTop, progAfter: box._prog || 0, returned: grown.className };
+    // 2. reader above the block: the divider is below the viewport; the
+    // visible prompt must not move and scrollTop must stay put
+    box.scrollTop = 0;
+    const b2 = { marker: top(prompt), scrollTop: box.scrollTop, belowView: top(divider) > box.clientHeight };
+    expandInPlace(box, divider, grow(divider, 300));
+    out.above = { ...b2, markerAfter: top(prompt), scrollTopAfter: box.scrollTop };
+    // 3. reader at the very end, block above shrinks: the browser clamps
+    // scrollTop during the mutation; the divider in view must not move
+    box.scrollTop = box.scrollHeight;
+    const b3 = { marker: top(divider), scrollTop: box.scrollTop, atEnd: box.scrollHeight - box.scrollTop - box.clientHeight < 1 };
+    expandInPlace(box, prompt, () => grown.remove());
+    out.shrink = { ...b3, markerAfter: top(divider), scrollTopAfter: box.scrollTop };
+    return out;
+  });
+  assert.equal(drift.below.above, true, 'fixture: the prompt starts above the viewport');
+  assert.ok(Math.abs(drift.below.markerAfter - drift.below.marker) < 1, `reader below: paragraph stays put (${drift.below.marker} → ${drift.below.markerAfter})`);
+  assert.equal(drift.below.scrollTopAfter, drift.below.scrollTop + 300, 'reader below: scrollTop absorbed the growth');
+  assert.equal(drift.below.progAfter, drift.below.prog + 1, 'the compensating write is flagged programmatic');
+  assert.equal(drift.below.returned, '__grow', 'mutate()\'s result is passed through');
+  assert.equal(drift.above.belowView, true, 'fixture: the divider starts below the viewport');
+  assert.ok(Math.abs(drift.above.markerAfter - drift.above.marker) < 1, `reader above: prompt stays put (${drift.above.marker} → ${drift.above.markerAfter})`);
+  assert.equal(drift.above.scrollTopAfter, 0, 'reader above: expansion grows downward, scrollTop untouched');
+  assert.equal(drift.shrink.atEnd, true, 'fixture: the reader is at the end of the console');
+  assert.ok(Math.abs(drift.shrink.markerAfter - drift.shrink.marker) < 1, `clamped end: divider stays put (${drift.shrink.marker} → ${drift.shrink.markerAfter})`);
+  assert.equal(drift.shrink.scrollTopAfter, drift.shrink.scrollTop - 300, 'the clamp is not double-applied');
+  assert.deepEqual(errors, [], 'no uncaught browser errors');
+});

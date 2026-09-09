@@ -122,7 +122,7 @@ async function startVendorProxy(upstreamPort) {
  * `vendor: { base, set, clear, hits }` — point the page at vendor.base).
  * Returns { base, root, projRoots, fetchJson, rawRequest, poll, logs, stop }.
  */
-export async function startSandbox({ seed, trial = [], kaimonBin, updateRepo, claudeBin, monacoProxy = false } = {}) {
+export async function startSandbox({ seed, trial = [], extraProjects = {}, kaimonBin, updateRepo, claudeBin, monacoProxy = false } = {}) {
   // realpath: os.tmpdir() is a symlink on macOS (/var → /private/var), and a
   // symlinked project root makes containedPath's lexical check reject real
   // paths handed back from its own realpath step (production roots are real)
@@ -140,7 +140,10 @@ export async function startSandbox({ seed, trial = [], kaimonBin, updateRepo, cl
   fs.writeFileSync(path.join(root, 'abstracts', 'alpha.md'), '# Alpha abstract\n');
   if (seed) await seed({ root, projRoots });
 
-  const projects = {};
+  // extraProjects: raw entries placed FIRST in the projects block (e.g. the
+  // `"//": "comment"` string config.example.json ships) — key order matters
+  // to the derived pin rule
+  const projects = { ...extraProjects };
   for (const [key, proot] of Object.entries(projRoots)) {
     projects[key] = { name: key, root: proot, color: '#aabbcc', texWatch: null, trial: trial.includes(key) };
   }

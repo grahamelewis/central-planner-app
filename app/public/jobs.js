@@ -10,7 +10,9 @@ import {
 import { jobsLive, jobEntered, jobTimers, perOf } from './store.js';
 import { api } from './net.js';
 import { pumps, pumpConsole } from './console.js';
+import * as consoleMod from './console.js';
 import { renderWB } from './workbench.js';
+import { rowModel, groupModel, tallyParts } from './runledger.js';
 
 /* ── live job cards ──
    Every slot carries a measurement or an honest absence: a HEALTH WORD owns
@@ -765,75 +767,227 @@ export function syncJobCards(container, jobs) {
   }
 }
 
-/* ── feed rows: what stays in the session feed after the card fades ── */
+/* ── feed rows: the run ledger — what stays in the session feed after the
+   card fades. One fixed-height row per run (docs/runfeed-mockups/: the
+   vocabulary per runtime, the tally header, collapse and fold), rendered from
+   runledger.js's pure models; a detached job still running keeps a live row. ── */
+
+// the ledger's open state, keyed by turn id so a broadcast re-render never
+// resets it (a container without a turn gets its own scope id)
+const ledgerOpen = new Set();  // scope → the group is expanded ("show all")
+const foldOpen = new Set();    // `${scope}|${foldKey}` → the fold shows its runs
+let ledgerScopeSeq = 0;
+
+/** @param {Element} container */
+function ledgerScope(container) {
+  const host = /** @type {any} */ (container);
+  const seg = /** @type {HTMLElement | null} */ (container.closest('.cs-jobs'));
+  const turn = (seg && seg.dataset.turnId) || /** @type {HTMLElement} */ (container).dataset.turnId;
+  if (turn) return `turn:${turn}`;
+  if (!host._lgScope) host._lgScope = `el:${++ledgerScopeSeq}`;
+  return host._lgScope;
+}
+
+/** the essentials → html (`<b>` for the values, red/yellow where flagged) */
+function essHtml(m) {
+  return m.essentials.map((x) => `${x.label ? `<span class="jfLbl">${esc(x.label)}</span> ` : ''}<span class="${x.bad ? 'jpBad' : x.warn ? 'jpWarn' : 'jfV'}">${esc(x.value)}</span>`).join(' · ');
+}
 
 /**
- * One feed row's inner HTML: `✓ julia · fit_model.jl · 4m32s · peak 1.4G · cpu 3.1×`,
- * `✗ pytest · tests/ · exit 1 · 2 failed · 41s`, `⊘ rsync · stopped by you at 61%`,
- * or, for a detached job still running, the live `▶ … · 86% · 8m40s · ≈2m left`.
+ * A terminal row's inner html from its model. A fold head adds the ×n badge
+ * and the glyph ladder (oldest → newest) before the last run's facts.
+ * @param {JobInfo} job
+ * @param {import('./runledger.js').RowModel} m
+ * @param {{ fold?: { n: number, open: boolean, ladder: { state: string, glyph: string }[] } | null }} [o]
+ */
+function ledgerRowHtml(job, m, { fold = null } = {}) {
+  const acts = job.source === 'run' ? '<span class="jfAct out" title="open the ▶ output tab">output</span>' : '';
+  const badge = fold ? `<span class="jfN" title="${fold.n} runs of this file in sequence — click to ${fold.open ? 'fold' : 'open'}">×${fold.n} ${fold.open ? '▴' : '▾'}</span>` : '';
+  const seq = fold ? `<span class="jfSeq" title="oldest → newest">${fold.ladder.map((l) => `<span class="${l.state}">${l.glyph}</span>`).join(' ')}</span>` : '';
+  const aux = m.aux ? `<span class="jfAux"> · ${esc(m.aux)}</span>` : '';
+  const el = m.errorLine;
+  const err = el ? `<span class="jfErr" title="${esc([el.loc, el.msg].filter(Boolean).join(' · '))}">${el.loc ? `<b>${esc(el.loc)}</b> · ` : ''}${esc(el.msg)}</span>` : '';
+  const title = [m.essText, m.aux].filter(Boolean).join(' · ');
+  return `<span class="jfIco">${m.glyph}</span><span class="jfRt">${esc(m.runtimeLabel)}</span><span class="jfCmd" title="${esc(m.tooltip)}">${esc(m.file)}</span>${badge}`
+    + `<span class="jfSum" title="${esc(title)}">${seq}<span class="jfEss">${essHtml(m)}</span>${aux}</span>`
+    + `${m.timeText ? `<span class="jfTime">${esc(m.timeText)}</span>` : ''}${acts}${err}`;
+}
+
+/** the group header: `14 runs · 11 ✓ · 2 ✗ · 1 ⊘ · 4m12s` + show all ▾ / collapse ▴ */
+function ledgerHeadHtml(g, open) {
+  const cls = { n: 'lgN', span: 'lgSpan' };
+  const parts = tallyParts(g.tally).map((p) => `<span class="${cls[p.k] || p.k}">${esc(p.text)}</span>`).join(' · ');
+  const act = g.many ? `<button class="lgAct" type="button" title="${open ? 'fold the passing runs back into a count' : 'every run, in order'}">${open ? 'collapse ▴' : 'show all ▾'}</button>` : '';
+  return parts + act;
+}
+
+/**
+ * One feed row's inner HTML — a terminal run per the ledger vocabulary
+ * (`✓ julia · fit_model.jl · 4m32s · ▲1.4G`, `✗ pytest · tests/ · 138 passed · 2 failed`,
+ * `⊘ rsync · stopped by you at 61%`), or, for a detached job still running,
+ * the live `▶ … · 86% · 8m40s · ≈2m left`.
  * @param {JobInfo} job
  * @returns {{ cls: string, html: string }}
  */
 export function jobFeedRow(job) {
   const st = job.state;
   const live = st === 'running';
-  const cls = live ? 'live' : st === 'done' ? 'ok' : st === 'error' ? 'bad' : 'stop';
-  const ico = live ? '▶' : st === 'done' ? '✓' : st === 'error' ? '✗' : '⊘';
+  if (!live) {
+    const m = rowModel(job, jobTitle(job));
+    return { cls: m.state, html: ledgerRowHtml(job, m) };
+  }
   const rt = (JOB_LANG_TXT[job.lang] || job.lang || '') + (job.detached ? ' · detached' : job.bg ? ' · background' : '');
   const { name, tooltip } = jobTitle(job);
-  let sum;
-  if (live) {
-    const band = bandOf(job);
-    const frac = fracOf(job);
-    const eta = band.stalled ? null : etaOf(job);
-    sum = ['still running', frac != null ? `<b>${Math.round(frac * 100)}%</b>` : '', `<span class="jfEl">${fmtJobDur(job.elapsedMs)}</span>`,
-      eta ? `<span class="est" title="estimate — ${esc(eta.src)}">≈${fmtDurShort(eta.s * 1000)} left</span>` : band.stalled ? `<span class="jpStall">stalled ${fmtDurShort(num(job.health.sinceMs) || 0)}</span>` : '']
-      .filter(Boolean).join(' · ');
-  } else {
-    sum = endSummaryHtml(job).html.replace(/^[✓✗⊘]\s*/, '');
-  }
-  const endedAt = job._endedAt || (num(job.ms) != null && job.startedAt ? new Date(Date.parse(String(job.startedAt)) + job.ms).toISOString() : null);
-  const time = live ? '' : clock(endedAt);
+  const band = bandOf(job);
+  const frac = fracOf(job);
+  const eta = band.stalled ? null : etaOf(job);
+  const sum = ['still running', frac != null ? `<b>${Math.round(frac * 100)}%</b>` : '', `<span class="jfEl">${fmtJobDur(job.elapsedMs)}</span>`,
+    eta ? `<span class="est" title="estimate — ${esc(eta.src)}">≈${fmtDurShort(eta.s * 1000)} left</span>` : band.stalled ? `<span class="jpStall">stalled ${fmtDurShort(num(job.health.sinceMs) || 0)}</span>` : '']
+    .filter(Boolean).join(' · ');
   const acts = [];
   if (job.source === 'run') acts.push('<span class="jfAct out" title="open the ▶ output tab">output</span>');
-  if (live) acts.push('<button class="jfAct stop" title="terminate this process tree">⊘ stop</button>');
-  const html = `<span class="jfIco">${ico}</span><span class="jfRt">${esc(rt)}</span><span class="jfCmd" title="${esc(tooltip)}">${esc(name)}</span>`
-    + `<span class="jfSum" title="${esc(sum.replace(/<[^>]+>/g, ''))}">${sum}</span>${time ? `<span class="jfTime">${esc(time)}</span>` : ''}${acts.join('')}`;
-  return { cls, html };
+  acts.push('<button class="jfAct stop" title="terminate this process tree">⊘ stop</button>');
+  const html = `<span class="jfIco">▶</span><span class="jfRt">${esc(rt)}</span><span class="jfCmd" title="${esc(tooltip)}">${esc(name)}</span>`
+    + `<span class="jfSum" title="${esc(sum.replace(/<[^>]+>/g, ''))}">${sum}</span>${acts.join('')}`;
+  return { cls: 'live', html };
+}
+
+/* the aux cell (`· 0 errors`, `· 212 lines`) is shown only when the row has
+   room for it whole — measured after render, hidden as a unit, never clipped */
+function fitAux(row) {
+  const aux = /** @type {HTMLElement | null} */ (row.querySelector(':scope > .jfSum > .jfAux'));
+  if (!aux) return;
+  aux.hidden = false;
+  const cs = getComputedStyle(row);
+  const gap = parseFloat(cs.columnGap) || 0;
+  const kids = [...row.children].filter((c) => !c.classList.contains('jfErr'));
+  let need = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
+    + (parseFloat(cs.borderLeftWidth) || 0) + (parseFloat(cs.borderRightWidth) || 0) + gap * Math.max(0, kids.length - 1);
+  // natural widths: the file and the sum may already be squeezed, so read their content width, not their box
+  for (const c of kids) need += c.classList.contains('jfCmd') ? Math.max(c.scrollWidth, 70) : c.classList.contains('jfSum') ? c.scrollWidth : c.getBoundingClientRect().width;
+  if (need > row.getBoundingClientRect().width + 0.5) aux.hidden = true;
+}
+function fitAuxAll(container) {
+  for (const row of container.querySelectorAll(':scope > .jobFeedRow')) fitAux(row);
+}
+
+/** the nearest scrolling ancestor (the console box) */
+function scrollerOf(el) {
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if (o === 'auto' || o === 'scroll') return p;
+  }
+  return null;
+}
+
+/* Expand/collapse in place: console.js owns the scroll compensation
+   (`expandInPlace(box, el, mutate)`: reader below → shifted by the delta,
+   reader above → untouched, reader inside on a shrink → the block's top
+   pinned). Outside a scroller (the ▶ slot) the mutation simply runs. */
+function expandInPlace(box, el, mutate) {
+  if (!box) { mutate(); return; }
+  consoleMod.expandInPlace(box, el, mutate);
+}
+
+/** build the ledger's ordered items (header, rows, folds, count lines, live rows) */
+function ledgerItems(container, jobs) {
+  const scope = ledgerScope(container);
+  const live = jobs.filter((j) => j.state === 'running');
+  const done = jobs.filter((j) => j.state !== 'running');
+  const open = ledgerOpen.has(scope);
+  const folds = new Set([...foldOpen].filter((k) => k.startsWith(`${scope}|`)).map((k) => k.slice(scope.length + 1)));
+  const g = done.length ? groupModel(done, { open, folds, title: jobTitle }) : null;
+  /** @type {{ key: string, cls: string, html: string, job?: JobInfo | null, fold?: string | null, title?: string }[]} */
+  const items = [];
+  if (g && g.header) items.push({ key: 'head', cls: 'lgHead', html: ledgerHeadHtml(g, open) });
+  if (g) {
+    for (const r of g.rows) {
+      if (r.type === 'more') {
+        items.push({ key: r.key, cls: 'lgMore', html: esc(r.text), title: `${r.n} passing run${r.n === 1 ? '' : 's'} — click to show all` });
+      } else if (r.type === 'row') {
+        items.push({ key: r.key, cls: `jobFeedRow ${r.model.state}`, html: ledgerRowHtml(r.job, r.model), job: r.job });
+      } else {
+        // an open fold's head carries no job key: its runs are the records
+        items.push({ key: r.key, cls: `jobFeedRow ${r.model.state} fold${r.open ? ' open' : ''}`, html: ledgerRowHtml(r.job, r.model, { fold: r }), job: r.open ? null : r.job, fold: r.foldKey });
+        if (r.open) for (const c of r.runs) items.push({ key: c.key, cls: `jobFeedRow ${c.model.state} child`, html: ledgerRowHtml(c.job, c.model), job: c.job });
+      }
+    }
+  }
+  for (const j of live) {
+    const { cls, html } = jobFeedRow(j);
+    items.push({ key: `r:${j.key}`, cls: `jobFeedRow ${cls}`, html, job: j });
+  }
+  return { items, scope };
+}
+
+/** keyed reconcile: a row whose content is unchanged keeps its node (and its place) */
+function renderLedger(container, jobs) {
+  const { items } = ledgerItems(container, jobs);
+  const old = new Map();
+  for (const c of [...container.children]) {
+    const k = /** @type {HTMLElement} */ (c).dataset.key;
+    if (k && !old.has(k)) old.set(k, c); else c.remove();
+  }
+  const want = new Set(items.map((i) => i.key));
+  for (const [k, c] of old) if (!want.has(k)) c.remove();
+  let cursor = container.firstElementChild;
+  for (const it of items) {
+    let el = /** @type {any} */ (old.get(it.key));
+    if (!el) { el = document.createElement('div'); el.dataset.key = it.key; }
+    if (el.className !== it.cls) el.className = it.cls;
+    if (el._h !== it.html) { el._h = it.html; el.innerHTML = it.html; }
+    if (it.title) el.title = it.title;
+    if (it.job) { el._job = it.job; el._jobKey = it.job.key; el.dataset.jobkey = it.job.key; }
+    else { el._job = null; el._jobKey = null; delete el.dataset.jobkey; }
+    if (it.fold) el.dataset.fold = it.fold; else delete el.dataset.fold;
+    if (el !== cursor) container.insertBefore(el, cursor);
+    else cursor = cursor.nextElementSibling;
+  }
+  fitAuxAll(container);
 }
 
 /**
- * Reconcile a container of feed rows against a job list (keyed; a row's
- * innerHTML is rebuilt only when its content changes).
+ * Reconcile a container of feed rows against a job list: the turn's ledger
+ * (header, folds, collapse) for the terminal runs, a live row per running
+ * detached job. Keyed; a row's innerHTML is rebuilt only when its content changes.
  * @param {Element} container
  * @param {JobInfo[]} jobs
  * @returns {void}
  */
 export function syncJobFeed(container, jobs) {
   const host = /** @type {any} */ (container);
+  host._jfJobs = jobs;
   if (!host._jfWired) {
     host._jfWired = true;
     container.addEventListener('click', (e) => {
       const t = /** @type {Element} */ (e.target);
-      const row = t.closest('.jobFeedRow');
+      const scope = ledgerScope(container);
+      const rerender = () => renderLedger(container, host._jfJobs || []);
+      if (t.closest('.lgAct') || t.closest('.lgMore')) {
+        expandInPlace(scrollerOf(container), container, () => {
+          if (ledgerOpen.has(scope)) ledgerOpen.delete(scope); else ledgerOpen.add(scope);
+          rerender();
+        });
+        return;
+      }
+      const row = /** @type {any} */ (t.closest('.jobFeedRow'));
       if (!row) return;
-      const job = row._job;
-      if (!job) return;
-      if (t.closest('.jfAct.stop')) stopJob(job, /** @type {HTMLButtonElement} */ (t.closest('.jfAct.stop')));
-      else if (t.closest('.jfAct.out')) { perOf(job.project).sessTab = 'run'; renderWB(job.project); }
+      if (t.closest('.jfAct.stop')) { if (row._job) stopJob(row._job, /** @type {HTMLButtonElement} */ (t.closest('.jfAct.stop'))); return; }
+      if (t.closest('.jfAct.out')) { if (row._job) { perOf(row._job.project).sessTab = 'run'; renderWB(row._job.project); } return; }
+      if (row.classList.contains('fold')) {
+        const k = `${scope}|${row.dataset.fold}`;
+        expandInPlace(scrollerOf(container), container, () => {
+          if (foldOpen.has(k)) foldOpen.delete(k); else foldOpen.add(k);
+          rerender();
+        });
+      }
     });
+    if (typeof ResizeObserver !== 'undefined') {
+      host._jfRo = new ResizeObserver(() => fitAuxAll(container));
+      host._jfRo.observe(container);
+    }
   }
-  const want = new Set(jobs.map(j => j.key));
-  [...container.children].forEach(el => { if (!want.has(el._jobKey)) el.remove(); });
-  for (const job of jobs) {
-    let el = /** @type {any} */ ([...container.children].find(c => c._jobKey === job.key));
-    if (!el) { el = document.createElement('div'); el._jobKey = job.key; el.dataset.jobkey = job.key; container.appendChild(el); }
-    el._job = job;
-    const { cls, html } = jobFeedRow(job);
-    const cn = `jobFeedRow ${cls}`;
-    if (el.className !== cn) el.className = cn;
-    if (el._h !== html) { el._h = html; el.innerHTML = html; }
-  }
+  renderLedger(container, jobs);
 }
 
 /* the ▶ output tab's card rides in a slot above the stream */

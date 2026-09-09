@@ -27,6 +27,10 @@ interface ProjectInfo {
   texWatch?: string | null;
   /** 'active' | 'trial' | 'inactive' — inactive hides from nav/overview. */
   status?: string;
+  /** The project's slot on the top bar, 1..7 (derived from key order until the
+   *  user first pins/unpins, explicit after), or null when not on the bar.
+   *  Always equals `pinned.indexOf(key) + 1`; the bar itself reads `pinned`. */
+  pinOrder?: number | null;
   /** lib/toolchains.js projectToolchains(root): the runtimes the project's
    *  marker files imply (Cargo.toml → rust, …), the marker per runtime, and
    *  the needed runtimes whose required toolchain is absent on this server. */
@@ -465,6 +469,25 @@ interface JobInfo {
   taskId?: string | null;
   file?: string | null;
   lang?: string | null;
+  /**
+   * Run ledger (v3.1): lib/jobParsers.js detectRuntime() of the command
+   * (pytest · cargo · node · latex · shell · stata …); null when undetected.
+   */
+  runtime?: string | null;
+  /**
+   * Run ledger: false until the dashboard READ a result — an exit code/signal
+   * or parser counters. Always false while running; stata batch only through
+   * its parser (its exit is 0 whatever the do-file did). A row without it
+   * renders as ○ unverified.
+   */
+  verified?: boolean;
+  /**
+   * Run ledger: a session job that ended before it was ever a live card
+   * (under MIN_AGE, or its pid was never found) but produced a tool result —
+   * broadcast once as terminal and recorded in jobhist; never in the
+   * snapshot's `jobs`.
+   */
+  short?: boolean;
   state?: 'running' | 'done' | 'error' | 'stopped' | string;
   stopping?: boolean;
   startedAt?: number | string;
@@ -498,7 +521,14 @@ interface JobInfo {
   procs?: number | null;
   threads?: number | null;
   health?: { state: 'starting' | 'computing' | 'stalled' | 'io' | 'idle' | string; sinceMs: number } | null;
-  output?: { lines?: number; rate?: number; last?: string | null; owned: boolean; buffered?: boolean } | null;
+  /**
+   * ▶ runs: `{lines, rate, last, owned:true, buffered}`. Session jobs:
+   * `{owned:false}` while running; once the tool result landed,
+   * `{lines, owned:false, fromToolResult:true}` — the result's line count.
+   */
+  output?: { lines?: number; rate?: number; last?: string | null; owned: boolean; buffered?: boolean; fromToolResult?: boolean;
+    /** the tool result was the SDK's 2 KB preview of a >30 KB persisted output: nothing read could vouch for the run (○ · output truncated). */
+    truncated?: boolean } | null;
   history?: { typicalMs: number; n: number } | null;
   exit?: { code: number | null; signal: string | null; byUser: boolean } | null;
   phase?: { name: string; n: number | null; m: number | null; mSoft: boolean } | null;
@@ -670,6 +700,9 @@ interface DecisionsState {
  *  runBufs by applyState; `user`/`auth`/`decisions` are assigned post-boot). */
 interface StateSnapshot {
   projects: { [key: string]: ProjectInfo };
+  /** The top bar: project keys in slot order, ≤ 7, never inactive — the ONLY
+   *  list the nav tabs and ⌘1..⌘7 read (lib/projectStore.js pinnedKeys()). */
+  pinned: string[];
   categories: { [key: string]: CategoryInfo };
   abstracts: { [key: string]: string };
   tasks: { [key: string]: Task[] };

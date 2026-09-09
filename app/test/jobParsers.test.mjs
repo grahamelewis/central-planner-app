@@ -3,7 +3,7 @@
 // or taken from the tool's own docs where noted there). Pure text; nothing spawns.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createJobParser, detectRuntime, stripAnsi } from '../lib/jobParsers.js';
+import { createJobParser, detectRuntime, stripAnsi, stataLogSummary } from '../lib/jobParsers.js';
 
 // feed lines and return the parser's merged view: last phase, counters, last progress
 function run(lang, command, lines) {
@@ -131,7 +131,7 @@ test('julia: Precompiling phase with per-package count, ProgressMeter bar, ERROR
   assert.deepEqual(s.phases[3], { name: 'running', n: null, m: null, mSoft: false });
   assert.equal(s.progress.frac, 0.53);
   assert.equal(s.progress.etaS, 9 * 60 + 2);
-  assert.deepEqual(s.counters, { warnings: 1, errors: 1 });
+  assert.deepEqual(s.counters, { warnings: 1, errors: 1, lastError: { file: null, line: null, col: null, msg: 'LoadError: in script' } });
   // n/m form (Julia ≥ 1.10 "Precompiling project... (n/m)"-style progress)
   const t = run('julia', 'julia x.jl', ['Precompiling project...', '  Progress [=======>            ]  12/38']);
   assert.deepEqual(t.phase, { name: 'precompiling', n: 12, m: 38, mSoft: false });
@@ -156,7 +156,7 @@ test('python: tqdm n/m + ETA, unit-scaled bars keep only the %, tracebacks/warni
   assert.deepEqual(s.results[0].phase, { name: 'train', n: 18, m: 30, mSoft: false });
   assert.deepEqual(s.results[1].progress, { frac: 1, etaS: 0 }, 'unit-scaled 2.00k is not parsed into ints');
   assert.deepEqual(s.results[3].progress, { frac: 0.41, iter: 4120, total: 10000, etaS: 46 });
-  assert.deepEqual(s.counters, { warnings: 2, errors: 1 });
+  assert.deepEqual(s.counters, { warnings: 2, errors: 1, lastError: { file: 'x.py', line: 1, col: null, msg: 'ValueError: boom' } });
 });
 
 test('pytest: collected → tests n/m, glyph lines count outcomes + %, summary sets absolutes', () => {
@@ -177,7 +177,7 @@ test('pytest: collected → tests n/m, glyph lines count outcomes + %, summary s
   assert.deepEqual(s.results[2].progress, { frac: 0.6, iter: 5, total: 5 });
   assert.deepEqual(s.results[3].counters, { passed: 3 });
   assert.equal(s.results[4].progress.frac, 1);
-  assert.deepEqual(s.counters, { passed: 2, failed: 2, skipped: 1, warnings: 3 });
+  assert.deepEqual(s.counters, { passed: 2, failed: 2, skipped: 1, warnings: 3, lastError: { file: 'tests/test_a.py', line: null, col: null, msg: 'assert 1 == 2' } });
   assert.equal(s.phase.name, 'report');
   // deselected items shrink the denominator; -q summary without = rails
   const t = run('python', 'pytest -q', ['collected 42 items / 3 deselected / 39 selected', '2 passed, 3 deselected in 0.00s']);
@@ -328,7 +328,7 @@ test('R: loading → running, txtProgressBar %, progress pkg n/m, warnings (imme
   assert.deepEqual(s.phases.map((p) => p.name), ['loading', 'running', 'halted']);
   assert.equal(s.results[4].progress.frac, 0.45);
   assert.deepEqual(s.results[5].progress, { frac: 0.1, iter: 1, total: 10, etaS: 0 });
-  assert.deepEqual(s.counters, { warnings: 3, errors: 1 });
+  assert.deepEqual(s.counters, { warnings: 3, errors: 1, lastError: { file: null, line: null, col: null, msg: 'Error in f() : boom' } });
   const t = run('r', 'Rscript -e "rmarkdown::render(\'x.Rmd\')"', ['processing file: report.Rmd', '  |.....          |  42%', 'Output created: report.html']);
   assert.equal(t.phases[0].name, 'rendering');
   assert.equal(t.progress.frac, 0.42);
@@ -418,12 +418,14 @@ test('make / cmake / ninja: cmake %, ninja n/m, make *** Error, compiler diagnos
   assert.equal(m.counters.errors, 4);
 });
 
-test('stata batch: nothing ever (stdout is empty by design — the log file is the only source)', () => {
+test('stata batch stdout: never a counter or a phase — only the `unverified` marker, once (the log file is the only source)', () => {
   const s = run('stata', 'stata-mp -b do run.do', ['. regress y x1 x2, robust', 'r(111);', 'iteration 12 of 200', 'end of do-file']);
   assert.equal(s.p.runtime, 'stata');
-  assert.ok(s.results.every((r) => r === null));
+  assert.deepEqual(s.results[0], { counters: { unverified: 1 } }, 'the first line raises the marker');
+  assert.ok(s.results.slice(1).every((r) => r === null), 'nothing else on stdout is read — not even an r(111); echo');
   assert.equal(s.phase, null);
-  assert.deepEqual(s.counters, {});
+  assert.deepEqual(s.counters, { unverified: 1 });
+  assert.deepEqual(createJobParser('stata', 'stata -b do x.do').counters, {}, 'no output fed → no marker: the rows agent treats stata + no counters as unverified');
 });
 
 test('papermill / nbconvert: Executing n/m (bar and plain forms), nbconvert phases, cell errors', () => {
@@ -440,6 +442,16 @@ test('papermill / nbconvert: Executing n/m (bar and plain forms), nbconvert phas
   assert.deepEqual(s.results[2].progress, { frac: 0.5, iter: 2, total: 4 });
   assert.deepEqual(s.results[3].progress, { frac: 0.3, iter: 12, total: 40 });
   assert.equal(s.counters.errors, 1);
+  // the CLI's traceback ends in the papermill exception line: ONE error, not two
+  const tb = run('notebook', 'papermill in.ipynb out.ipynb', [
+    'Executing:  58%|█████▊    | 18/31 [00:05<00:03,  3.50cell/s]',
+    'Traceback (most recent call last):',
+    '  File "/opt/anaconda3/bin/papermill", line 8, in <module>',
+    'papermill.exceptions.PapermillExecutionError: ',
+    'Exception encountered at "In [19]":',
+    "KeyError: 'group_id'",
+  ]);
+  assert.equal(tb.counters.errors, 1);
   const n = run('notebook', 'jupyter nbconvert --to notebook --execute nb.ipynb', [
     '[NbConvertApp] Converting notebook nb.ipynb to notebook',
     '[NbConvertApp] Executing cell:',
@@ -1210,4 +1222,572 @@ test('idempotence: re-feeding a summary or a \\r-redrawn frame never moves a cou
   // counters are additive across a multi-step ▶ run's harnesses and packages
   const g = run('go', 'go test ./...', ['ok  \ta\t0.1s', 'ok  \tb\t0.1s', 'ok  \tc\t0.1s']);
   assert.equal(g.counters.ok, 3);
+});
+
+// ---------------------------------------------------------------------------
+// Run-ledger parsers (docs/runfeed-mockups/RUNLEDGER-IMPL.md). Real lines were
+// captured on this machine: julia 1.12.6 (a @testset script, Pkg.test on a
+// generated package, an uncaught error), pytest 9.0.2 / Python 3.12.7 (assert
+// blocks, the short summary, a traceback, a SyntaxError), Rscript 4.5.2 (a
+// plain error), JDK 11 javac / `java File.java`. testthat (not installed) follows
+// its ProgressReporter source verbatim; Maven surefire, Gradle, MATLAB -batch and
+// the Stata log follow each tool's documented output — all marked "(documented)".
+// The long temp-dir prefix of the captures is shortened to /tmp/demo.
+// ---------------------------------------------------------------------------
+
+test('detectRuntime: session-hook arrivals (bare pytest, latexmk, bash x.sh, curl…) and the java / matlab / stata forms', () => {
+  const cases = [
+    ['pytest', 'pytest'],
+    ['python -m pytest', 'pytest'],
+    ['python3 -m pytest tests/test_x.py -p no:cacheprovider', 'pytest'],
+    ['latexmk', 'latex'],
+    ['latexmk -pdf -interaction=nonstopmode paper.tex', 'latex'],
+    ['pdflatex', 'latex'],
+    ['bash x.sh', 'shell'],
+    ['sh x.sh', 'shell'],
+    ['bash -c "python3 tb.py"', 'python'],
+    ['curl -sSL https://x/y.tgz -o y.tgz', 'curl'],
+    ['wget -q https://x/y.tgz', 'wget'],
+    ['rsync -az data/ host:/data/', 'rsync'],
+    ['java Crash.java', 'java'],
+    ['javac Bad.java', 'java'],
+    ['javac -Xlint:all Warn.java && java Warn', 'java'],
+    ['mvn test', 'java'],
+    ['mvn -q -B clean verify', 'java'],
+    ['./mvnw test', 'java'],
+    ['gradle build', 'java'],
+    ['./gradlew test --console=plain', 'java'],
+    ['matlab -batch "run(\'script.m\')"', 'matlab'],
+    ['matlab -nodisplay -batch runtests', 'matlab'],
+    ['/Applications/MATLAB_R2024b.app/bin/matlab -batch "runtests"', 'matlab'],
+    ['stata -b do run.do', 'stata'],
+    ['stata-mp -b do run.do', 'stata'],
+    ['StataSE -e do run.do', 'stata'],
+    ['/Applications/Stata/StataSE.app/Contents/MacOS/stata-se -e do run.do', 'stata'],
+    ['cd analysis && stata-se -b do build.do', 'stata'],
+  ];
+  for (const [cmd, want] of cases) assert.equal(detectRuntime(cmd), want, cmd);
+  assert.equal(createJobParser('java', '').runtime, 'java');
+  assert.equal(createJobParser('matlab', '').runtime, 'matlab');
+});
+
+const JULIA_TESTSET_SCRIPT = [ // julia --color=no tests.jl (real; stderr first, then the table)
+  'ERROR: LoadError: Some tests did not pass: 2 passed, 1 failed, 1 errored, 1 broken.',
+  'in expression starting at /tmp/demo/tests.jl:2',
+  'Arith: Test Failed at /tmp/demo/tests.jl:4',
+  '  Expression: 2 * 2 == 5',
+  '   Evaluated: 4 == 5',
+  '',
+  'Stacktrace:',
+  ' [1] top-level scope',
+  '   @ /tmp/demo/tests.jl:3',
+  ' [2] macro expansion',
+  '   @ ~/.julia/juliaup/julia-1.12.6+0.aarch64.apple.darwin14/share/julia/stdlib/v1.12/Test/src/Test.jl:1777 [inlined]',
+  ' [3] macro expansion',
+  '   @ /tmp/demo/tests.jl:4 [inlined]',
+  ' [4] macro expansion',
+  '   @ ~/.julia/juliaup/julia-1.12.6+0.aarch64.apple.darwin14/share/julia/stdlib/v1.12/Test/src/Test.jl:680 [inlined]',
+  'inner: Error During Test at /tmp/demo/tests.jl:8',
+  '  Test threw exception',
+  '  Expression: error("kaboom") == 1',
+  '  kaboom',
+  '  Stacktrace:',
+  '   [1] error(s::String)',
+  '     @ Base ./error.jl:44',
+  '   [2] top-level scope',
+  '     @ /tmp/demo/tests.jl:3',
+  'Test Summary: | Pass  Fail  Error  Broken  Total  Time',
+  'Arith         |    2     1      1       1      5  1.4s',
+  '  inner       |    1            1       1      3  0.4s',
+  'RNG of the outermost testset: Random.Xoshiro(0x8409f6f1cc005d10, 0xe57a59a533e9b526, 0xc21e3c563846acf3, 0x6ad69882770aa69c, 0xeaee5d21c2696b85)',
+];
+
+test('julia @testset script (real): Test Summary table → passed/failed/errored/broken/total from the top-level row; Test Failed / Error During Test → lastError; "Some tests did not pass" is a total, not an error', () => {
+  const s = run('julia', 'julia --color=no tests.jl', JULIA_TESTSET_SCRIPT);
+  assert.deepEqual(s.results[0].counters, { passed: 2, failed: 1, errored: 1, broken: 1, total: 5 }, 'the LoadError summary sets absolutes without counting an error');
+  assert.equal(s.results[0].counters.errors, undefined);
+  assert.deepEqual(s.results[2].counters, { failed: 2, lastError: { file: '/tmp/demo/tests.jl', line: 4, col: null, msg: 'Arith: Test Failed' } }, 'stderr arrives first: the per-failure tick rides on the absolute until the table corrects it');
+  assert.deepEqual(s.results[3].counters, { lastError: { file: '/tmp/demo/tests.jl', line: 4, col: null, msg: 'Arith: 2 * 2 == 5' } }, 'the Expression line is the message');
+  assert.equal(s.results[8], null, "a Test Failed's stack frame does not move the location away from the failing line");
+  assert.deepEqual(s.results[15].counters, { errored: 2, lastError: { file: '/tmp/demo/tests.jl', line: 8, col: null, msg: 'inner: Error During Test' } });
+  assert.deepEqual(s.results[17].counters, { lastError: { file: '/tmp/demo/tests.jl', line: 8, col: null, msg: 'inner: error("kaboom") == 1' } });
+  assert.deepEqual(s.results[25].counters, { failed: 1, errored: 1 }, 'the top-level table row sets the absolutes (failed and errored back to 1)');
+  assert.equal(s.results[26], null, 'the indented nested-testset row is already inside its parent');
+  assert.equal(s.results[27], null, 'the RNG line ends the table');
+  assert.deepEqual(s.counters, { passed: 2, failed: 1, errored: 1, broken: 1, total: 5, lastError: { file: '/tmp/demo/tests.jl', line: 8, col: null, msg: 'inner: error("kaboom") == 1' } });
+  assert.equal(s.phase.name, 'report');
+  // a passing script prints only Pass / Total / Time (real: ok.jl)
+  const ok = run('julia', 'julia --color=no ok.jl', ['Test Summary: | Pass  Total  Time', 'All good      |    2      2  0.0s']);
+  assert.deepEqual(ok.counters, { passed: 2, total: 2 });
+  assert.equal(ok.phase.name, 'report');
+});
+
+test('julia Pkg.test (real): Testing X → tests, glued "Hello World!Test Summary:" header still measured, tables add up, "tests passed" → report; a failing package counts one error but keeps the test location', () => {
+  const ok = run('julia', "julia --color=no --project=. -e 'using Pkg; Pkg.test()'", [
+    '     Testing Foo',
+    '      Status `/private/var/folders/zl/4krjc0n15jd0p_v9_fj8c5s80000gn/T/jl_fpeSqy/Project.toml`',
+    '  [66501685] Foo v0.1.0 `/tmp/demo/Foo`',
+    '  [8dfed614] Test v1.11.0',
+    'Precompiling for configuration --code-coverage=none --color=no --check-bounds=yes --warn-overwrite=yes --depwarn=yes --inline=yes --startup-file=no --track-allocation=none',
+    '    339.5 ms  ✓ Foo',
+    '  1 dependency successfully precompiled in 0 seconds. 8 already precompiled.',
+    '     Testing Running tests...',
+    'Hello World!Test Summary: | Pass  Total  Time',
+    'Foo           |    2      2  0.0s',
+    'Test Summary: | Pass  Total  Time',
+    'Second        |    1      1  0.0s',
+    '     Testing Foo tests passed ',
+  ]);
+  assert.deepEqual(ok.phases.map((p) => p.name), ['tests', 'running', 'tests', 'report'], 'Testing → the precompile of the package itself → Running tests → the table');
+  assert.deepEqual(ok.results[9].counters, { passed: 2, total: 2 }, 'the header glued to program output still locates the columns');
+  assert.deepEqual(ok.counters, { passed: 3, total: 3 }, 'two top-level @testsets → two tables → summed');
+  assert.equal(ok.phase.name, 'report');
+  const bad = run('julia', "julia --color=no --project=. -e 'using Pkg; Pkg.test()'", [
+    '     Testing Bar',
+    '     Testing Running tests...',
+    'Bar: Test Failed at /tmp/demo/Bar/test/runtests.jl:4',
+    '  Expression: 1 == 2',
+    '   Evaluated: 1 == 2',
+    'Stacktrace:',
+    ' [1] top-level scope',
+    '   @ /tmp/demo/Bar/test/runtests.jl:3',
+    ' [2] macro expansion',
+    ' [3] macro expansion',
+    '   @ /tmp/demo/Bar/test/runtests.jl:4 [inlined]',
+    ' [4] macro expansion',
+    'Test Summary: | Pass  Fail  Total  Time',
+    'Bar           |    1     1      2  1.3s',
+    'RNG of the outermost testset: Random.Xoshiro(0x2a6126cc58e85aa3, 0xd4f1c43def98f55c, 0xa459639618135077, 0x91e3379b6ef6e07e, 0xdc2beab4a8d3f07c)',
+    'ERROR: LoadError: Some tests did not pass: 1 passed, 1 failed, 0 errored, 0 broken.',
+    'in expression starting at /tmp/demo/Bar/test/runtests.jl:2',
+    'ERROR: Package Bar errored during testing',
+    'Stacktrace:',
+    '  [1] pkgerror(msg::String)',
+    '  [9] top-level scope',
+    '    @ none:1',
+    ' [10] eval(m::Module, e::Any)',
+    '    @ Core ./boot.jl:489',
+  ]);
+  assert.deepEqual(bad.results[15].counters, { errored: 0, broken: 0 }, 'the LoadError total agrees with the table; only the two absent columns are new keys');
+  assert.deepEqual(bad.results[17].counters, { errors: 1 }, '"Package Bar errored during testing" is one error and leaves the test location alone');
+  assert.equal(bad.results[21], null, 'the "@ none:1" frame of the Pkg wrap-up is not a location');
+  assert.deepEqual(bad.counters, { failed: 1, lastError: { file: '/tmp/demo/Bar/test/runtests.jl', line: 4, col: null, msg: 'Bar: 1 == 2' }, passed: 1, total: 2, errored: 0, broken: 0, errors: 1 });
+  assert.equal(bad.phase.name, 'report');
+});
+
+test('julia uncaught ERROR + Stacktrace (real): the first Main frame is the location, Base frames and "in expression starting at" do not override it', () => {
+  const s = run('julia', 'julia --color=no boom.jl', [
+    'ERROR: LoadError: bad value: 3',
+    'Stacktrace:',
+    ' [1] error(s::String)',
+    '   @ Base ./error.jl:44',
+    ' [2] g(x::Int64)',
+    '   @ Main /tmp/demo/boom.jl:4',
+    ' [3] f(x::Int64)',
+    '   @ Main /tmp/demo/boom.jl:2',
+    ' [4] top-level scope',
+    '   @ /tmp/demo/boom.jl:5',
+    ' [5] include(mod::Module, _path::String)',
+    '   @ Base ./Base.jl:306',
+    'in expression starting at /tmp/demo/boom.jl:5',
+  ]);
+  assert.deepEqual(s.results[0].counters, { errors: 1, lastError: { file: null, line: null, col: null, msg: 'LoadError: bad value: 3' } });
+  assert.equal(s.results[3], null, 'a Base frame is not the location');
+  assert.deepEqual(s.results[5].counters, { lastError: { file: '/tmp/demo/boom.jl', line: 4, col: null, msg: 'LoadError: bad value: 3' } });
+  assert.ok(s.results.slice(6).every((r) => r === null || r.counters === undefined), 'later frames and the "in expression" trailer move no counter');
+  assert.deepEqual(s.counters, { errors: 1, lastError: { file: '/tmp/demo/boom.jl', line: 4, col: null, msg: 'LoadError: bad value: 3' } });
+  // an error raised straight at top level has no Main frame — the top-level scope frame carries the file
+  const t = run('julia', 'julia x.jl', ['ERROR: LoadError: DomainError with -1.0:', 'Stacktrace:', ' [1] top-level scope', '   @ /tmp/demo/x.jl:7']);
+  assert.deepEqual(t.counters.lastError, { file: '/tmp/demo/x.jl', line: 7, col: null, msg: 'LoadError: DomainError with -1.0:' });
+});
+
+const PYTEST_FAIL_TRANSCRIPT = [ // python3 -m pytest tests/test_x.py -p no:cacheprovider (real, pytest 9.0.2)
+  '============================= test session starts ==============================',
+  'platform darwin -- Python 3.12.7, pytest-9.0.2, pluggy-1.6.0',
+  'rootdir: /tmp/demo',
+  'plugins: jaxtyping-0.3.7, asyncio-1.3.0, anyio-4.2.0',
+  'collected 3 items',
+  '',
+  'tests/test_x.py .FF                                                      [100%]',
+  '',
+  '=================================== FAILURES ===================================',
+  '___________________________________ test_bad ___________________________________',
+  '',
+  '    def test_bad():',
+  '        result = add(1, 2)',
+  '>       assert result == 4, "sum mismatch"',
+  'E       AssertionError: sum mismatch',
+  'E       assert 3 == 4',
+  '',
+  'tests/test_x.py:9: AssertionError',
+  '_________________________________ test_raises __________________________________',
+  '',
+  '    def test_raises():',
+  '>       raise ValueError("boom in test")',
+  'E       ValueError: boom in test',
+  '',
+  'tests/test_x.py:12: ValueError',
+  '=========================== short test summary info ============================',
+  'FAILED tests/test_x.py::test_bad - AssertionError: sum mismatch',
+  'FAILED tests/test_x.py::test_raises - ValueError: boom in test',
+  '========================= 2 failed, 1 passed in 0.02s ==========================',
+];
+
+test('pytest lastError (real): the first "E   …" line of a failure block is the message, "file.py:9: AssertionError" its location, the FAILED short summary re-selects that block', () => {
+  const s = run('python', 'python3 -m pytest tests/test_x.py -p no:cacheprovider', PYTEST_FAIL_TRANSCRIPT);
+  assert.equal(s.p.runtime, 'pytest');
+  assert.deepEqual(s.results[14].counters, { lastError: { file: null, line: null, col: null, msg: 'AssertionError: sum mismatch' } });
+  assert.equal(s.results[15], null, 'the second E line (the assert rewrite) does not replace the message');
+  assert.deepEqual(s.results[17].counters, { lastError: { file: 'tests/test_x.py', line: 9, col: null, msg: 'AssertionError: sum mismatch' } });
+  assert.deepEqual(s.results[24].counters, { lastError: { file: 'tests/test_x.py', line: 12, col: null, msg: 'ValueError: boom in test' } });
+  assert.deepEqual(s.results[26].counters, { lastError: { file: 'tests/test_x.py', line: 9, col: null, msg: 'AssertionError: sum mismatch' } }, 'FAILED test_bad brings back test_bad\'s own line');
+  assert.deepEqual(s.results[27].counters, { lastError: { file: 'tests/test_x.py', line: 12, col: null, msg: 'ValueError: boom in test' } }, 'FAILED test_raises re-selects its block: the last failure listed is the row\'s error line');
+  assert.deepEqual(s.counters, { passed: 1, failed: 2, lastError: { file: 'tests/test_x.py', line: 12, col: null, msg: 'ValueError: boom in test' } });
+  assert.equal(s.phase.name, 'report');
+  // -q: no "=" rails on the totals line; the short summary alone still names file + message
+  const q = run('python', 'pytest -q', [
+    'FAILED tests/test_x.py::test_bad - AssertionError: sum mismatch',
+    'FAILED tests/test_x.py::test_raises - ValueError: boom in test',
+    '2 failed, 1 passed in 0.02s',
+  ]);
+  assert.deepEqual(q.counters, { lastError: { file: 'tests/test_x.py', line: null, col: null, msg: 'ValueError: boom in test' }, failed: 2, passed: 1 });
+  // a block with only the assert-rewrite E line (no assertion message) — real form of `assert 1 == 2`
+  const a = run('python', 'pytest', ['_______ test_bad _______', '>       assert 1 == 2', 'E       assert 1 == 2', '', 'tests/test_a.py:4: AssertionError']);
+  assert.deepEqual(a.counters.lastError, { file: 'tests/test_a.py', line: 4, col: null, msg: 'assert 1 == 2' });
+  // a collection error (documented): "ERROR tests/test_y.py - ImportError: …"
+  const e = run('python', 'pytest', ['ERROR tests/test_y.py - ImportError: cannot import name \'nope\' from \'mod\'', '!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!']);
+  assert.deepEqual(e.counters.lastError, { file: 'tests/test_y.py', line: null, col: null, msg: "ImportError: cannot import name 'nope' from 'mod'" });
+  assert.equal(e.phase.name, 'interrupted');
+});
+
+test('python tracebacks (real): the last File frame + the exception line → lastError; SyntaxError without a Traceback header counts once; chained exceptions keep the last', () => {
+  const s = run('python', 'python3 tb.py', [
+    'Traceback (most recent call last):',
+    '  File "/tmp/demo/tb.py", line 7, in <module>',
+    '    f(0)',
+    '  File "/tmp/demo/tb.py", line 2, in f',
+    '    return g(x)',
+    '           ^^^^',
+    '  File "/tmp/demo/tb.py", line 5, in g',
+    '    return 1 / x',
+    '           ~~^~~',
+    'ZeroDivisionError: division by zero',
+  ]);
+  assert.deepEqual(s.results[0].counters, { errors: 1 });
+  assert.ok(s.results.slice(1, 9).every((r) => r === null), 'frames and source echoes emit nothing until the exception line');
+  assert.deepEqual(s.counters, { errors: 1, lastError: { file: '/tmp/demo/tb.py', line: 5, col: null, msg: 'ZeroDivisionError: division by zero' } });
+  const syn = run('python', 'python3 syn.py', [
+    '  File "/tmp/demo/syn.py", line 1',
+    '    def f(:',
+    '          ^',
+    'SyntaxError: invalid syntax',
+  ]);
+  assert.deepEqual(syn.counters, { errors: 1, lastError: { file: '/tmp/demo/syn.py', line: 1, col: null, msg: 'SyntaxError: invalid syntax' } });
+  // chained (documented): one error, the last exception and its frame win
+  const c = run('python', 'python3 c.py', [
+    'Traceback (most recent call last):',
+    '  File "/x/c.py", line 3, in <module>',
+    '    int("a")',
+    "ValueError: invalid literal for int() with base 10: 'a'",
+    '',
+    'During handling of the above exception, another exception occurred:',
+    '',
+    'Traceback (most recent call last):',
+    '  File "/x/c.py", line 5, in <module>',
+    '    raise RuntimeError("wrapped") from e',
+    'RuntimeError: wrapped',
+  ]);
+  assert.equal(c.counters.errors, 2, 'each Traceback header is one error (as before)');
+  assert.deepEqual(c.counters.lastError, { file: '/x/c.py', line: 5, col: null, msg: 'RuntimeError: wrapped' });
+  // a bare exception name (KeyboardInterrupt) closes the traceback too; the 137/SIGKILL guard still holds
+  const k = run('python', 'python3 k.py', ['Traceback (most recent call last):', '  File "/x/k.py", line 9, in <module>', '    time.sleep(1)', 'KeyboardInterrupt']);
+  assert.deepEqual(k.counters.lastError, { file: '/x/k.py', line: 9, col: null, msg: 'KeyboardInterrupt' });
+  assert.equal(run('python', 'python3 x.py', ['Killed: 9']).counters.lastError, undefined);
+});
+
+test('R (real, Rscript 4.5.2): "Error in f(y) : negative input" → errors + lastError, Calls: ignored, Execution halted → halted', () => {
+  const s = run('r', 'Rscript err.R', [
+    'Warning message:',
+    'first warn ',
+    'Error in f(y) : negative input',
+    'Calls: g -> f',
+    'Execution halted',
+  ]);
+  assert.deepEqual(s.results[2].counters, { errors: 1, lastError: { file: null, line: null, col: null, msg: 'Error in f(y) : negative input' } });
+  assert.equal(s.results[3], null);
+  assert.deepEqual(s.counters, { warnings: 1, errors: 1, lastError: { file: null, line: null, col: null, msg: 'Error in f(y) : negative input' } });
+  assert.equal(s.phase.name, 'halted');
+  assert.deepEqual(run('r', 'Rscript x.R', ['Error: object \'df\' not found']).counters.lastError.msg, "Error: object 'df' not found");
+});
+
+test('testthat (documented, reporter-progress.R): header columns locate the F/W/S/OK cells, spinner frames are not final, Failure header → lastError, [ FAIL | WARN | SKIP | PASS ] sets absolutes', () => {
+  const s = run('r', "Rscript -e 'testthat::test_dir(\"tests/testthat\")'", [
+    '✔ | F W  S  OK | Context',
+    '⠏ |         0 | arith',
+    '✔ |         12 | arith [0.1s]',
+    '⠋ |         0 | bad',
+    '✖ | 1        3 | bad',
+    '⚠ |   1  1   2 | warny',
+    '',
+    '── Failure (test-bad.R:3:3): addition works ────────────────────────────────────',
+    '1 + 1 (`actual`) not equal to `expected` (3).',
+    '',
+    '    `actual`: 2',
+    '  `expected`: 3',
+    '',
+    '══ Results ═════════════════════════════════════════════════════════════════════',
+    '[ FAIL 1 | WARN 1 | SKIP 1 | PASS 17 ]',
+  ]);
+  assert.deepEqual(s.phases.map((p) => p.name), ['tests', 'report']);
+  assert.equal(s.results[1], null, 'a spinner row is a redraw in flight');
+  assert.deepEqual(s.results[2].counters, { passed: 12 });
+  assert.deepEqual(s.results[4].counters, { failed: 1, passed: 15 });
+  assert.deepEqual(s.results[5].counters, { warnings: 1, skipped: 1, passed: 17 }, 'the S column is %2d wide and sits under its header');
+  assert.deepEqual(s.results[7].counters, { lastError: { file: 'test-bad.R', line: 3, col: 3, msg: 'Failure: addition works' } });
+  assert.deepEqual(s.results[8].counters, { lastError: { file: 'test-bad.R', line: 3, col: 3, msg: 'addition works: 1 + 1 (`actual`) not equal to `expected` (3).' } });
+  assert.equal(s.results[14].counters, undefined, 'the closing totals agree with the rows (only the phase moves)');
+  assert.deepEqual(s.counters, { passed: 17, failed: 1, warnings: 1, skipped: 1, lastError: { file: 'test-bad.R', line: 3, col: 3, msg: 'addition works: 1 + 1 (`actual`) not equal to `expected` (3).' } });
+  // ASCII fallbacks (non-UTF-8 locale), an Error issue without the rule, totals only
+  const a = run('r', 'Rscript -e "testthat::test_local()"', [
+    'v | F W  S  OK | Context',
+    'x | 1        3 | bad',
+    'Error (test-bad.R:5:3): errors out',
+    "Error in `stop(\"boom\")`: boom",
+    '[ FAIL 2 | WARN 0 | SKIP 0 | PASS 3 ]',
+  ]);
+  assert.deepEqual(a.counters, { failed: 2, passed: 3, lastError: { file: 'test-bad.R', line: 5, col: 3, msg: 'errors out: Error in `stop("boom")`: boom' }, warnings: 0, skipped: 0 });
+  assert.equal(a.counters.errors, undefined, 'a testthat Error is a FAIL in its own totals, not an R error');
+  assert.equal(run('r', 'Rscript t.R', ['[ FAIL 0 | WARN 4 | SKIP 2 | PASS 212 ]']).counters.warnings, 4);
+});
+
+test('stataLogSummary (documented log): r(NNN); → errors with the preceding line as the message, rc, end of do-file, the repeated code after it is not a second error, ". " echoes counted only', () => {
+  const s = stataLogSummary([
+    '. do "run.do"',
+    '',
+    '. sysuse auto',
+    '(1978 automobile data)',
+    '',
+    '. regress price mpg weightt',
+    'variable weightt not found',
+    'r(111);',
+    '',
+    'end of do-file',
+    'r(111);',
+    '',
+  ].join('\n'));
+  assert.deepEqual(s.counters, { errors: 1, rc: 111, lastError: { file: null, line: null, col: null, msg: 'variable weightt not found' } });
+  assert.deepEqual({ rc: s.rc, codes: s.codes, errors: s.errors, endOfDoFile: s.endOfDoFile, commands: s.commands, verified: s.verified },
+    { rc: 111, codes: [111], errors: [{ rc: 111, msg: 'variable weightt not found' }], endOfDoFile: true, commands: 3, verified: true });
+  const ok = stataLogSummary('. do "run.do"\r\n\r\n. display 1\r\n1\r\n\r\n. \r\nend of do-file\r\n');
+  assert.deepEqual(ok, { counters: { errors: 0 }, rc: null, codes: [], errors: [], endOfDoFile: true, commands: 3, verified: true });
+  // `capture`d then a hard stop: two codes, the last one is rc; a bare r() with no message line
+  const two = stataLogSummary(['. use nofile.dta', 'file nofile.dta not found', 'r(601);', '', '. exit 198', 'r(198);', ''].join('\n'));
+  assert.deepEqual(two.counters, { errors: 2, rc: 198, lastError: { file: null, line: null, col: null, msg: 'r(198)' } });
+  assert.deepEqual(two.codes, [601, 198]);
+  assert.equal(two.endOfDoFile, false);
+  assert.deepEqual(stataLogSummary(''), { counters: { errors: 0 }, rc: null, codes: [], errors: [], endOfDoFile: false, commands: 0, verified: true });
+});
+
+test('javac / `java File.java` (real, JDK 11): file:line: error → errors + lastError, -Xlint warnings count, "N errors" reconciles, "error: compilation failed" is the wrap-up', () => {
+  const e = run('java', 'javac Bad.java', [
+    'Bad.java:3: error: incompatible types: String cannot be converted to int',
+    '        int x = "s";',
+    '                ^',
+    'Bad.java:4: error: cannot find symbol',
+    '        System.out.println(undefinedVar);',
+    '                           ^',
+    '  symbol:   variable undefinedVar',
+    '  location: class Bad',
+    '2 errors',
+  ]);
+  assert.equal(e.p.runtime, 'java');
+  assert.deepEqual(e.results[0].counters, { errors: 1, lastError: { file: 'Bad.java', line: 3, col: null, msg: 'incompatible types: String cannot be converted to int' } });
+  assert.deepEqual(e.counters, { errors: 2, lastError: { file: 'Bad.java', line: 4, col: null, msg: 'cannot find symbol' } });
+  assert.equal(e.results[8], null, 'the total agrees');
+  assert.equal(e.phase.name, 'compiling');
+  const w = run('java', 'javac -Xlint:all Warn.java', [
+    'Warn.java:4: warning: [rawtypes] found raw type: List',
+    '        List raw = new ArrayList();',
+    '        ^',
+    '  missing type arguments for generic class List<E>',
+    'Warn.java:4: warning: [rawtypes] found raw type: ArrayList',
+    'Warn.java:5: warning: [unchecked] unchecked call to add(E) as a member of the raw type List',
+    '3 warnings',
+  ]);
+  assert.deepEqual(w.counters, { warnings: 3 }, 'warnings never touch lastError');
+  const src = run('java', 'java Bad.java', [
+    'Bad.java:3: error: incompatible types: String cannot be converted to int',
+    'Bad.java:4: error: cannot find symbol',
+    '2 errors',
+    'error: compilation failed',
+  ]);
+  assert.equal(src.counters.errors, 2);
+  assert.equal(src.results[3], null);
+  // a lost diagnostic line: the total still lands
+  assert.deepEqual(run('java', 'javac X.java', ['2 errors']).counters, { errors: 2 });
+});
+
+test('java runtime exception (real): Exception in thread "main" → errors + message, the first source frame is the location; Caused by keeps the first', () => {
+  const s = run('java', 'java Crash.java', [
+    'start',
+    'Exception in thread "main" java.lang.ArrayIndexOutOfBoundsException: Index 5 out of bounds for length 2',
+    '\tat Crash.f(Crash.java:2)',
+    '\tat Crash.main(Crash.java:5)',
+  ]);
+  assert.deepEqual(s.results[1].counters, { errors: 1, lastError: { file: null, line: null, col: null, msg: 'java.lang.ArrayIndexOutOfBoundsException: Index 5 out of bounds for length 2' } });
+  assert.deepEqual(s.results[2].counters, { lastError: { file: 'Crash.java', line: 2, col: null, msg: 'java.lang.ArrayIndexOutOfBoundsException: Index 5 out of bounds for length 2' } });
+  assert.equal(s.results[3], null);
+  assert.deepEqual(s.counters, { errors: 1, lastError: { file: 'Crash.java', line: 2, col: null, msg: 'java.lang.ArrayIndexOutOfBoundsException: Index 5 out of bounds for length 2' } });
+  const c = run('java', 'java -jar app.jar', [
+    'Exception in thread "main" java.lang.RuntimeException: wrapped',
+    '\tat com.x.Main.run(Main.java:40)',
+    'Caused by: java.io.IOException: disk',
+    '\tat com.x.Io.read(Io.java:12)',
+    '\t... 3 more',
+  ]);
+  assert.deepEqual(c.counters, { errors: 1, lastError: { file: 'Main.java', line: 40, col: null, msg: 'java.lang.RuntimeException: wrapped' } });
+});
+
+test('maven surefire (documented): per-class "Tests run:" lines accumulate, the Results total is absolute, [ERROR] file:[l,c] diagnostics, failure recap → lastError, BUILD SUCCESS / FAILURE', () => {
+  const s = run('java', 'mvn test', [
+    '[INFO] --- maven-compiler-plugin:3.11.0:compile (default-compile) @ demo ---',
+    '[INFO] --- maven-surefire-plugin:3.1.2:test (default-test) @ demo ---',
+    '[INFO] Running com.example.FooTest',
+    '[ERROR] Tests run: 3, Failures: 1, Errors: 0, Skipped: 0, Time elapsed: 0.05 s <<< FAILURE! - in com.example.FooTest',
+    '[INFO] Running com.example.BarTest',
+    '[INFO] Tests run: 9, Failures: 0, Errors: 1, Skipped: 2, Time elapsed: 0.02 s - in com.example.BarTest',
+    '[INFO] ',
+    '[INFO] Results:',
+    '[INFO] ',
+    '[ERROR] Failures:',
+    '[ERROR]   FooTest.testBad:12 expected:<4> but was:<3>',
+    '[ERROR] Errors:',
+    '[ERROR]   BarTest.testIo:30 » IO disk',
+    '[INFO] ',
+    '[ERROR] Tests run: 12, Failures: 1, Errors: 1, Skipped: 2',
+    '[INFO] ',
+    '[INFO] BUILD FAILURE',
+    '[ERROR] Failed to execute goal org.apache.maven.plugins:maven-surefire-plugin:3.1.2:test (default-test) on project demo: There are test failures. -> [Help 1]',
+  ]);
+  assert.deepEqual(s.phases.map((p) => p.name), ['compiling', 'tests', 'report', 'failed']);
+  assert.deepEqual(s.results[3].counters, { total: 3, failed: 1, errored: 0, skipped: 0, passed: 2 });
+  assert.deepEqual(s.results[5].counters, { total: 12, errored: 1, skipped: 2, passed: 8 });
+  assert.deepEqual(s.results[10].counters, { lastError: { file: 'FooTest.java', line: 12, col: null, msg: 'testBad: expected:<4> but was:<3>' } });
+  assert.equal(s.results[14].counters, undefined, 'the Results total agrees with the per-class sums (only the phase moves)');
+  assert.equal(s.results[17], null, 'the goal-failure wrap-up adds nothing once a failure is named');
+  assert.deepEqual(s.counters, { total: 12, failed: 1, errored: 1, skipped: 2, passed: 8, lastError: { file: 'BarTest.java', line: 30, col: null, msg: 'testIo: » IO disk' } });
+  const c = run('java', './mvnw -q compile', [
+    '[INFO] --- maven-compiler-plugin:3.11.0:compile (default-compile) @ demo ---',
+    '[ERROR] COMPILATION ERROR : ',
+    '[ERROR] /x/src/main/java/com/example/App.java:[7,17] cannot find symbol',
+    '[ERROR]   symbol:   variable nope',
+    '[ERROR] 1 error',
+    '[INFO] BUILD FAILURE',
+  ]);
+  assert.deepEqual(c.counters, { errors: 1, lastError: { file: '/x/src/main/java/com/example/App.java', line: 7, col: 17, msg: 'cannot find symbol' } });
+  assert.equal(c.phase.name, 'failed');
+  const ok = run('java', 'mvn test', ['[INFO] Tests run: 184, Failures: 0, Errors: 0, Skipped: 0', '[INFO] BUILD SUCCESS']);
+  assert.deepEqual(ok.counters, { total: 184, failed: 0, errored: 0, skipped: 0, passed: 184 });
+  assert.equal(ok.phase.name, 'built');
+});
+
+test('gradle (documented): > Task phases, "Class > test FAILED" + its reason line → lastError, "N tests completed, M failed" absolutes, BUILD SUCCESSFUL / FAILED in', () => {
+  const s = run('java', './gradlew test', [
+    '> Task :compileJava',
+    '> Task :compileTestJava',
+    '> Task :test',
+    '',
+    'FooTest > testBad FAILED',
+    '    java.lang.AssertionError: expected:<4> but was:<3> at FooTest.java:12',
+    '',
+    'FooTest > testSlow FAILED',
+    '    org.junit.runners.model.TestTimedOutException at FooTest.java:30',
+    '',
+    '12 tests completed, 2 failed, 1 skipped',
+    '',
+    'FAILURE: Build failed with an exception.',
+    '',
+    '* What went wrong:',
+    "Execution failed for task ':test'.",
+    '',
+    'BUILD FAILED in 9s',
+  ]);
+  assert.deepEqual(s.phases.map((p) => p.name), ['compiling', 'tests', 'report', 'failed']);
+  assert.deepEqual(s.results[4].counters, { failed: 1, lastError: { file: null, line: null, col: null, msg: 'FooTest.testBad' } });
+  assert.deepEqual(s.results[5].counters, { lastError: { file: 'FooTest.java', line: 12, col: null, msg: 'FooTest.testBad: expected:<4> but was:<3>' } });
+  assert.deepEqual(s.results[8].counters, { lastError: { file: 'FooTest.java', line: 30, col: null, msg: 'FooTest.testSlow' } }, 'a reason without a message keeps the test name');
+  assert.deepEqual(s.results[10].counters, { total: 12, skipped: 1, passed: 9 }, 'the total agrees with the two counted failures');
+  assert.deepEqual(s.counters, { failed: 2, lastError: { file: 'FooTest.java', line: 30, col: null, msg: 'FooTest.testSlow' }, total: 12, skipped: 1, passed: 9 });
+  const ok = run('java', 'gradle build', ['> Task :compileJava', '> Task :jar', '> Task :test', '', 'BUILD SUCCESSFUL in 12s', '5 actionable tasks: 5 executed']);
+  assert.deepEqual(ok.phases.map((p) => p.name), ['compiling', 'building', 'tests', 'built']);
+  assert.deepEqual(ok.counters, {});
+  // javac diagnostics surface unchanged under gradle
+  const c = run('java', './gradlew build', ['> Task :compileJava FAILED', '/x/src/main/java/App.java:7: error: cannot find symbol', '        nope();', '        ^', '1 error', 'BUILD FAILED in 2s']);
+  assert.deepEqual(c.counters, { errors: 1, lastError: { file: '/x/src/main/java/App.java', line: 7, col: null, msg: 'cannot find symbol' } });
+});
+
+test('matlab -batch (documented): Error using f (line N) + message, Error in frames of the same error not re-counted, a standalone Error in takes the preceding message, syntax "Error: File:", runtests Totals', () => {
+  const s = run('matlab', 'matlab -batch "run(\'script.m\')"', [
+    'Error using myfunc (line 12)',
+    'Not enough input arguments.',
+    '',
+    'Error in helper (line 8)',
+    '    z = myfunc(y);',
+    '',
+    'Error in script (line 3)',
+    '    y = helper(x)',
+  ]);
+  assert.equal(s.p.runtime, 'matlab');
+  assert.deepEqual(s.results[0].counters, { errors: 1, lastError: { file: 'myfunc', line: 12, col: null, msg: null } });
+  assert.deepEqual(s.results[1].counters, { lastError: { file: 'myfunc', line: 12, col: null, msg: 'Not enough input arguments.' } });
+  assert.ok(s.results.slice(2).every((r) => r === null), 'the caller frames belong to the same error');
+  assert.deepEqual(s.counters, { errors: 1, lastError: { file: 'myfunc', line: 12, col: null, msg: 'Not enough input arguments.' } });
+  const u = run('matlab', 'matlab -batch script', ["Unrecognized function or variable 'undefined_fn'.", '', 'Error in script (line 3)', 'undefined_fn(1)']);
+  assert.deepEqual(u.counters, { errors: 1, lastError: { file: 'script', line: 3, col: null, msg: "Unrecognized function or variable 'undefined_fn'." } });
+  const syn = run('matlab', 'matlab -batch broken', ['Error: File: /x/broken.m Line: 3 Column: 5', 'Invalid expression. Check for missing multiplication operator, missing or unbalanced delimiters, or other syntax error.']);
+  assert.deepEqual(syn.counters, { errors: 1, lastError: { file: '/x/broken.m', line: 3, col: 5, msg: 'Invalid expression. Check for missing multiplication operator, missing or unbalanced delimiters, or other syntax error.' } });
+  const t = run('matlab', 'matlab -batch "runtests"', [
+    'Running myTests',
+    '..',
+    '================================================================================',
+    'Verification failed in myTests/testB.',
+    '    ---------------------',
+    '    Framework Diagnostic:',
+    '    ---------------------',
+    '    verifyEqual failed.',
+    '================================================================================',
+    '.',
+    'Error occurred in myTests/testC and it did not run to completion.',
+    'Done myTests',
+    '__________',
+    '',
+    'Failure Summary:',
+    '',
+    '     Name              Failed  Incomplete  Reason(s)',
+    '     =================================================',
+    '     myTests/testB       X                 Failed by verification.',
+    '     myTests/testC       X       X         Errored.',
+    '',
+    'Totals:',
+    '   2 Passed, 2 Failed, 1 Incomplete.',
+    '   0.12 seconds testing time.',
+    'Warning: something odd',
+  ]);
+  assert.deepEqual(t.phases.map((p) => p.name), ['tests', 'report']);
+  assert.deepEqual(t.results[3].counters, { failed: 1, lastError: { file: null, line: null, col: null, msg: 'myTests/testB: verification failed' } });
+  assert.deepEqual(t.results[10].counters, { errored: 1, lastError: { file: null, line: null, col: null, msg: 'myTests/testC: did not run to completion' } });
+  assert.deepEqual(t.results[22].counters, { passed: 2, failed: 2, total: 5 }, 'the Totals line is absolute (errored 1 agrees)');
+  assert.deepEqual(t.counters, { failed: 2, lastError: { file: null, line: null, col: null, msg: 'myTests/testC: did not run to completion' }, errored: 1, passed: 2, total: 5, warnings: 1 });
+});
+
+test('run-ledger keys stay inside the vocabulary: only errored · broken · total · rc · unverified are new', () => {
+  const known = new Set(['errors', 'warnings', 'notes', 'passed', 'failed', 'skipped', 'todo', 'ok', 'suites', 'suitesFailed', 'crate', 'coverage', 'modules', 'timeS', 'exitStatus', 'lastError',
+    'page', 'pass', 'passesSoft', 'overfull', 'bytes', 'total', 'rateBps', 'files', 'cells', 'statements', 'errored', 'broken', 'rc', 'unverified']);
+  const runs = [
+    run('julia', 'julia tests.jl', JULIA_TESTSET_SCRIPT), run('python', 'pytest', PYTEST_FAIL_TRANSCRIPT),
+    run('java', 'mvn test', ['[INFO] Tests run: 12, Failures: 1, Errors: 1, Skipped: 2']), run('matlab', 'matlab -batch t', ['   2 Passed, 1 Failed, 0 Incomplete.']),
+    run('stata', 'stata -b do x.do', ['x']), run('r', 'Rscript t.R', ['[ FAIL 0 | WARN 4 | SKIP 2 | PASS 212 ]']),
+  ];
+  for (const s of runs) for (const k of Object.keys(s.counters)) assert.ok(known.has(k), `unexpected counter key ${k}`);
+  for (const k of Object.keys(stataLogSummary('r(1);').counters)) assert.ok(known.has(k), `unexpected stata key ${k}`);
 });

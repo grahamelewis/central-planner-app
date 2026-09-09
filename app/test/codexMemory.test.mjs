@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { requestCodexMemory } from '../lib/codexMemory.js';
+import { requestCodexMemory, preflightCodexMemory } from '../lib/codexMemory.js';
 
 const body = { model: 'account-model', reasoning: { effort: 'low' }, instructions: 'Synthesize.', input: 'Private transcript.',
   max_output_tokens: 1000, text: { format: { schema: { type: 'object' } } } };
 const available = { model: body.model, supportedReasoningEfforts: [{ reasoningEffort: 'low' }] };
-function fake({ account = { type: 'chatgpt' }, models = [available], events, hang = false } = {}) {
+function fake({ account = { type: 'chatgpt' }, models = [available], events, hang = false, raw, stderr = '', exitCode = 0 } = {}) {
   const seen = { requests: [], spawns: [], prompt: '', kills: [] };
   const client = { request: async (method, args) => {
     seen.requests.push([method, args]);
@@ -23,11 +23,13 @@ function fake({ account = { type: 'chatgpt' }, models = [available], events, han
     child.kill = signal => { seen.kills.push(signal); queueMicrotask(() => child.emit('close', 1)); };
     child.stdin.on('data', chunk => { seen.prompt += chunk.toString(); });
     child.stdin.on('finish', () => { if (!hang) queueMicrotask(() => {
-      for (const event of events || [
+      child.stderr.write(stderr);
+      if (raw !== undefined) child.stdout.write(raw);
+      else for (const event of events || [
         { type: 'item.completed', item: { type: 'agent_message', text: '{"findings":["café ✓"]}' } },
         { type: 'turn.completed', usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 50 } },
       ]) child.stdout.write(JSON.stringify(event) + '\n');
-      child.emit('close', 0);
+      child.emit('close', exitCode);
     }); });
     return child;
   };
@@ -175,4 +177,113 @@ test('asynchronous missing-executable error records no dispatched-usage checkpoi
     return child;
   } }), err => err.dispatched === false);
   assert.equal(checkpoints.length, 0);
+});
+
+const success = [
+  { type: 'item.completed', item: { type: 'agent_message', text: '{"findings":[]}' } },
+  { type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 10 } },
+];
+
+test('non-generating readiness is independently callable and returns a sanitized installed CLI version', async () => {
+  const f = fake();
+  const result = await preflightCodexMemory(body, { ...f, getVersion: async () => 'codex-cli 0.153.2\n' });
+  assert.equal(result.ready, true); assert.equal(result.diagnostics.version, '0.153.2');
+  assert.equal(f.seen.spawns.length, 0);
+  assert.deepEqual(f.seen.requests.map(r => r[0]), ['account/read', 'model/list']);
+  const unsafe = await preflightCodexMemory(body, { ...f, getVersion: async () => '0.153.2-secret-token' });
+  assert.equal(unsafe.diagnostics.version, null);
+});
+
+test('readiness failures have safe structured dispatch and pause policy, never arbitrary RPC messages', async () => {
+  for (const [fixture, code] of [[{ account: null }, 'memory-auth-required'], [{ models: [] }, 'memory-model-unavailable']]) {
+    const f = fake(fixture);
+    await assert.rejects(preflightCodexMemory(body, f), err => {
+      assert.equal(err.code, code); assert.equal(err.dispatched, false);
+      assert.equal(err.deterministic, true); assert.equal(err.pauseWorthy, true);
+      assert.equal(err.diagnostics.stage, 'preflight'); return true;
+    });
+  }
+  const f = fake(); f.client.request = async () => { throw new Error('private-secret token=123'); };
+  await assert.rejects(preflightCodexMemory(body, f), err => {
+    assert.equal(err.code, 'memory-readiness-failed'); assert.equal(err.deterministic, false);
+    assert.equal(err.dispatched, false); assert.doesNotMatch(JSON.stringify(err) + err.message, /private-secret|token=123/); return true;
+  });
+});
+
+test('diagnostic warning/error items and top-level warnings can precede successful checkpoint completion', async () => {
+  for (const diagnostic of [
+    { type: 'item.started', item: { type: 'warning', message: 'secret-warning' } },
+    { type: 'item.updated', item: { type: 'error', message: 'secret-error' } },
+    { type: 'item.completed', item: { type: 'error', message: 'secret-error' } },
+    { type: 'warning', message: 'secret-warning' },
+  ]) {
+    const f = fake({ events: [diagnostic, ...success], stderr: 'stderr-secret-token' });
+    const response = await requestCodexMemory(body, f);
+    assert.equal(response.status, 'completed'); assert.deepEqual(f.seen.kills, []);
+    assert.equal(response.diagnostics.warningCount, 1);
+    assert.equal(response.diagnostics.eventType, diagnostic.type);
+    assert.equal(response.diagnostics.itemType, diagnostic.item?.type);
+    assert.doesNotMatch(JSON.stringify(response.diagnostics), /secret/);
+  }
+});
+
+test('diagnostics alone, missing terminal success, nonzero exit, and whitespace final text cannot succeed', async () => {
+  for (const fixture of [
+    { events: [{ type: 'item.completed', item: { type: 'error' } }] },
+    { events: [success[0]] }, { events: [success[1]] },
+    { events: success, exitCode: 1 },
+    { events: [{ type: 'item.completed', item: { type: 'agent_message', text: '  ' } }, success[1]] },
+  ]) await assert.rejects(requestCodexMemory(body, fake(fixture)), err => err.code === 'memory-incomplete');
+});
+
+test('actual known tool categories always reject and pause, even with a valid success tail', async () => {
+  for (const type of ['command_execution', 'file_change', 'mcp_tool_call', 'web_search', 'collab_tool_call', 'computer_use', 'tool_call']) {
+    const f = fake({ events: [{ type: 'item.started', item: { type, command: 'secret command' } }, ...success] });
+    await assert.rejects(requestCodexMemory(body, f), err => {
+      assert.equal(err.code, 'memory-tool-forbidden'); assert.equal(err.pauseWorthy, true);
+      assert.equal(err.dispatched, true); assert.equal(err.diagnostics.itemType, type);
+      assert.equal(err.accountingResponse.usage.input_tokens, 100);
+      assert.doesNotMatch(JSON.stringify(err), /secret command/); return true;
+    });
+    assert.equal(f.seen.kills.length, 1);
+  }
+});
+
+test('future and non-worker item types fail closed without mislabeling them as tool execution', async () => {
+  for (const event of [
+    { type: 'private-secret'.repeat(10000) },
+    { type: 'item.completed', item: { type: 'private-secret'.repeat(10000) } },
+    { type: 'item.completed', item: { type: 'todo_list' } },
+    { type: 'item.completed', item: { type: 'user_message' } },
+  ]) await assert.rejects(requestCodexMemory(body, fake({ events: [event, ...success] })), err => {
+    assert.equal(err.code, 'memory-protocol-unsupported'); assert.equal(err.pauseWorthy, true);
+    assert.doesNotMatch(err.message, /tool operation/); assert.doesNotMatch(JSON.stringify(err), /private-secret/);
+    assert.ok(JSON.stringify(err.diagnostics).length < 500); return true;
+  });
+});
+
+test('malformed JSON/envelopes/items/text fail safely and deterministically', async () => {
+  for (const raw of ['{bad json', 'null', '[]', '"hello"', '42', '{}',
+    '{"type":"item.completed"}', '{"type":"item.completed","item":{}}',
+    '{"type":"item.completed","item":{"type":"agent_message","text":{}}}']) {
+    await assert.rejects(requestCodexMemory(body, fake({ raw })), err => {
+      assert.equal(err.code, 'memory-protocol-malformed'); assert.equal(err.pauseWorthy, true); return true;
+    });
+  }
+});
+
+test('top-level fatal events remain fatal despite diagnostic items and a successful tail', async () => {
+  for (const type of ['error', 'turn.failed']) await assert.rejects(requestCodexMemory(body,
+    fake({ events: [{ type, message: 'secret', error: { message: 'secret' } }, ...success] })), err => {
+    assert.equal(err.code, 'memory-provider-failure'); assert.equal(err.deterministic, false);
+    assert.equal(err.diagnostics.eventType, type); assert.doesNotMatch(JSON.stringify(err) + err.message, /secret/); return true;
+  });
+});
+
+test('valid JSONL final line without newline is accepted with usage and bounded warnings', async () => {
+  const warning = { type: 'warning', message: 'secret' };
+  const raw = [...Array(10001).fill(warning), ...success].map(e => JSON.stringify(e)).join('\n');
+  const result = await requestCodexMemory(body, fake({ raw }));
+  assert.equal(result.status, 'completed'); assert.equal(result.diagnostics.warningCount, 10000);
+  assert.equal(result.diagnostics.exitCode, 0); assert.equal(result.usage.input_tokens, 100);
 });

@@ -22,6 +22,8 @@ function fixture(t, options = {}) {
     codexStatus: () => ({ connected: true, account: { type: 'chatgpt' }, models: ['gpt-5.6-luna', 'gpt-5.6-terra'].map(id => ({ id, supportedReasoningEfforts: [{ id: 'low' }, { id: 'medium' }] })) }) });
   settings.update({ connection: 'codex-subscription', model: 'gpt-5.6-luna', enabled: true, dailyBudgetUsd: 1, ...options.settings });
   const deps = { root, settings, getTask: () => state.task, getTranscript: () => state.events, isActive: () => state.active,
+    ...(options.debounceMs !== undefined ? { debounceMs: options.debounceMs } : {}),
+    ...(options.preflight ? { preflight: (...args) => options.preflight(...args, state) } : {}),
     request: async (body, _connection, observers) => { state.calls.push(body); return options.request ? options.request(body, state, observers) : response(checkpoint()); },
     logUsage: (...args) => state.logs.push(args), now: () => new Date('2026-09-04T12:00:00Z') };
   const service = createMemoryService(deps);
@@ -53,6 +55,171 @@ test('settings are opt-in, isolated, validated, and secret-free', t => {
   fs.writeFileSync(path.join(root, 'config.json'), '{malformed');
   assert.throws(() => s.update({ enabled: false }), /Cannot read/);
   assert.equal(fs.readFileSync(path.join(root, 'config.json'), 'utf8'), '{malformed');
+});
+
+const incompatible = () => Object.assign(new Error('secret raw failure'), { status: 502,
+  code: 'memory-protocol-unsupported', deterministic: true, pauseWorthy: true,
+  diagnostics: { code: 'memory-protocol-unsupported', eventType: 'item.completed', itemType: 'unknown',
+    stage: 'protocol', stderr: 'secret stderr', input: 'private transcript', arbitrary: 'secret' } });
+
+test('deterministic failure pauses durably; twenty later prompts reserve nothing and coalesce pending work', async t => {
+  const { root, service, state, deps } = fixture(t, { request: () => { throw incompatible(); } });
+  await service.run('alpha', 'one');
+  for (let i = 0; i < 20; i++) { service.enqueue('alpha', 'one'); await service.drain(); }
+  const view = service.view('alpha', 'one');
+  assert.equal(state.calls.length, 1); assert.equal(service.jobsToday(), 1);
+  assert.equal(view.counts.failed, 1); assert.equal(view.counts.blocked, 0);
+  assert.equal(view.budget.pendingCount, 1); assert.equal(view.eligibility.reason, 'paused');
+  assert.equal(view.pause.code, 'memory-protocol-unsupported');
+  assert.doesNotMatch(fs.readFileSync(path.join(root, 'memory/control.json'), 'utf8'), /secret|private|stderr/);
+  assert.doesNotMatch(JSON.stringify(view), /secret raw failure|private transcript|secret stderr/);
+  service.close(); const restarted = createMemoryService(deps); t.after(() => restarted.close());
+  assert.equal(restarted.status().pause.code, 'memory-protocol-unsupported');
+  assert.equal(restarted.status().pendingCount, 0, 'restart does not auto-enqueue a historical backlog');
+  await assert.rejects(restarted.run('alpha', 'one'), /paused/);
+  assert.equal(state.calls.length, 1);
+});
+
+test('readiness incompatibility reserves no slot and pauses before worker dispatch', async t => {
+  const { root, state, service } = fixture(t, { preflight: () => { throw incompatible(); } });
+  await service.run('alpha', 'one');
+  assert.equal(state.calls.length, 0); assert.equal(service.jobsToday(), 0);
+  assert.equal(fs.existsSync(path.join(root, 'memory/budget.json')), false);
+  assert.equal(service.view('alpha', 'one').jobs[0].notDispatched, true);
+  assert.equal(service.view('alpha', 'one').jobs[0].reservationHeld, false);
+  assert.equal(service.status().pause.code, 'memory-protocol-unsupported');
+});
+
+test('resume clears only the selected connection pause without dispatch or historical refund', async t => {
+  const { root, service, state } = fixture(t, { settings: { dailyJobLimit: 1 }, request: () => { throw incompatible(); } });
+  await service.run('alpha', 'one'); service.enqueue('alpha', 'one'); await service.drain();
+  const before = fs.readFileSync(path.join(root, 'memory/budget.json'), 'utf8');
+  assert.throws(() => service.resume('claude-sdk'), /currently configured/);
+  assert.throws(() => service.resume(), /currently configured/);
+  assert.equal(service.resume('codex-subscription').pause, null);
+  assert.equal(service.status().remainingJobs, 0); assert.equal(service.jobsToday(), 1);
+  assert.equal(service.view('alpha', 'one').jobs[0].reservationHeld, true);
+  assert.equal(fs.readFileSync(path.join(root, 'memory/budget.json'), 'utf8'), before);
+  assert.equal(state.calls.length, 1);
+  await service.drain(); assert.equal(state.calls.length, 1);
+  assert.equal(service.view('alpha', 'one').counts.blocked, 0);
+  assert.equal(service.status().pendingCount, 1);
+});
+
+test('busy pending work is retained without duplicate blocked records and rearms on a new trigger', async t => {
+  const { service, state } = fixture(t); state.active = true;
+  for (let i = 0; i < 5; i++) { service.enqueue('alpha', 'one'); await service.drain(); }
+  assert.equal(service.status().pendingCount, 1); assert.equal(service.jobsToday(), 0);
+  assert.equal(service.view('alpha', 'one').counts.blocked, 0);
+  state.active = false;
+  assert.equal(service.enqueue('alpha', 'one'), false, 'existing pending task is coalesced, not lost');
+  await service.drain();
+  assert.equal(state.calls.length, 1); assert.equal(service.status().pendingCount, 0);
+});
+
+test('readiness races recheck activity, task generation, settings and source before reserving', async t => {
+  for (const mutation of ['active', 'generation', 'source', 'settings']) {
+    const f = fixture(t, { preflight: () => {
+      if (mutation === 'active') f.state.active = true;
+      if (mutation === 'generation') f.state.task = { ...f.state.task, created: 'new' };
+      if (mutation === 'source') f.state.events.push({ role: 'user', text: 'new' });
+      if (mutation === 'settings') f.settings.update({ model: 'gpt-5.6-terra' });
+    } });
+    f.service.enqueue('alpha', 'one'); await f.service.drain();
+    assert.equal(f.state.calls.length, 0, mutation); assert.equal(f.service.jobsToday(), 0, mutation);
+  }
+});
+
+test('transient failure is not an autonomous retry or a durable pause', async t => {
+  const { service, state } = fixture(t, { request: () => { throw Object.assign(new Error('secret'), {
+    code: 'memory-timeout', deterministic: false, pauseWorthy: false }); } });
+  service.enqueue('alpha', 'one'); await service.drain(); await service.drain();
+  assert.equal(service.status().pause, null); assert.equal(state.calls.length, 1);
+  service.enqueue('alpha', 'one'); await service.drain();
+  assert.equal(state.calls.length, 2); assert.equal(service.jobsToday(), 2);
+});
+
+test('invalid pause metadata fails closed without modifying the record or making calls', async t => {
+  const { root, service, state } = fixture(t);
+  fs.mkdirSync(path.join(root, 'memory'), { recursive: true });
+  const file = path.join(root, 'memory/control.json'); fs.writeFileSync(file, '{invalid');
+  assert.throws(() => service.status(), /unreadable/);
+  await assert.rejects(service.run('alpha', 'one'), /unreadable/);
+  assert.throws(() => service.resume('codex-subscription'), /unreadable/);
+  assert.equal(state.calls.length, 0); assert.equal(fs.readFileSync(file, 'utf8'), '{invalid');
+});
+
+test('coverage reports a partial bounded checkpoint rather than claiming all history is summarized', async t => {
+  const { service, state } = fixture(t); state.events[0].text = 'x'.repeat(50000);
+  await service.run('alpha', 'one');
+  const view = service.view('alpha', 'one');
+  assert.equal(view.counts.successful, 1); assert.equal(view.coverage.totalEvents, 1);
+  assert.equal(view.coverage.coveredEvents, 0); assert.ok(view.coverage.partialEvent > 0);
+  assert.equal(view.coverage.complete, false); assert.equal(view.pending, true);
+});
+
+test('successful warning diagnostics are retained without arbitrary metadata or secret-like type values', async t => {
+  const { service } = fixture(t, { request: () => ({ ...response(checkpoint()), diagnostics: {
+    stage: 'completed', eventType: 'secret-token', itemType: 'secret-token', version: 'secret-token',
+    warningCount: 2, warningEventType: 'item.completed', warningItemType: 'error',
+    code: 'secret-token', stderr: 'secret-token', message: 'secret-token',
+  } }) });
+  await service.run('alpha', 'one');
+  assert.deepEqual(service.view('alpha', 'one').jobs[0].diagnostics, {
+    eventType: 'unknown', itemType: 'unknown', stage: 'completed', warningCount: 2,
+    warningEventType: 'item.completed', warningItemType: 'error',
+  });
+  assert.doesNotMatch(JSON.stringify(service.view('alpha', 'one')), /secret-token/);
+});
+
+test('pause storage failure still blocks repeat dispatch in this process and reports lack of durability', async t => {
+  const { service, state, root } = fixture(t, { request: () => { throw incompatible(); } });
+  const rename = fs.renameSync;
+  fs.renameSync = (from, to) => {
+    if (to === path.join(root, 'memory/control.json')) throw Object.assign(new Error('fixture storage full'), { code: 'ENOSPC' });
+    return rename(from, to);
+  };
+  try { await service.run('alpha', 'one'); }
+  finally { fs.renameSync = rename; }
+  assert.match(service.status().pause.persistenceWarning, /could not be saved/);
+  service.enqueue('alpha', 'one'); await service.drain();
+  assert.equal(state.calls.length, 1); assert.equal(service.jobsToday(), 1);
+  assert.equal(service.resume('codex-subscription').pause, null);
+});
+
+test('concurrent same-task readiness checks cannot create duplicate reservations', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { service, state } = fixture(t, { preflight: () => gate });
+  const first = service.run('alpha', 'one');
+  await service.run('alpha', 'one'); release(); await first;
+  assert.equal(state.calls.length, 1); assert.equal(service.jobsToday(), 1);
+});
+
+test('resume does not awaken pending timers armed before or during a pause', async t => {
+  const { service, state } = fixture(t, { debounceMs: 10, request: () => { throw incompatible(); } });
+  service.enqueue('alpha', 'one');
+  await service.run('alpha', 'one'); // fails while the original idle timer is armed
+  service.enqueue('alpha', 'one'); // paused triggers stay pending, without a new timer
+  service.resume('codex-subscription');
+  await new Promise(resolve => setTimeout(resolve, 35));
+  assert.equal(state.calls.length, 1, 'explicit resume alone cannot cause another model attempt');
+  assert.equal(service.status().pendingCount, 1);
+});
+
+test('Claude dollar admission is rechecked after concurrent readiness and reflected in eligibility', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { service, state } = fixture(t, { claude: true, preflight: () => gate, settings: {
+    connection: 'claude-sdk', model: 'claude-haiku-4-5', reasoningEffort: 'none', dailyBudgetUsd: 0.03,
+  } });
+  const first = service.run('alpha', 'one'), second = service.run('alpha', 'two');
+  release();
+  const results = await Promise.allSettled([first, second]);
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(results.filter(r => r.status === 'rejected' && /budget/.test(r.reason.message)).length, 1);
+  assert.equal(state.calls.length, 1); assert.ok(service.spentToday() <= 0.03);
+  assert.equal(service.view('alpha', 'two').eligibility.reason, 'budget');
 });
 
 test('legacy API settings migrate disabled; API-key sign-in cannot enable subscription memory', t => {

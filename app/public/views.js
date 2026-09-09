@@ -9,7 +9,7 @@ import {
 } from './util.js';
 import {
   state, ui, themePref, setTheme,
-  projKeys, allProjKeys, tasksOf, taskProvider, agentName,
+  projKeys, allProjKeys, pinnedKeys, PIN_CAP, tasksOf, taskProvider, agentName,
   providerState, providerModels, perOf, taskTabRecall,
   DEFAULT_MODEL, effortsFor, coerceEffort,
 } from './store.js';
@@ -991,14 +991,24 @@ function chainSizes(ts) {
   return { sizeOf: (id) => size.get(find(id)) || 1, rootOf: (id) => find(id) };
 }
 
+/** The toast when the bar is full — also what a rejected pin PATCH reads as.
+ *  A function, not a const: store.js ↔ views.js is an ESM cycle, so PIN_CAP
+ *  must never be read at module-eval time (see the import note above). */
+const pinFullMsg = () => `${PIN_CAP} of ${PIN_CAP} pinned — unpin a project to make room`;
+
 /**
- * The Manage Projects view.
+ * The Manage Projects view. Each row: [☆ pin | ★ n][▲ ▼] Name …status pills…
+ * open › — the star decides ONLY the top bar (slot order = ⌘1–⌘7); statuses
+ * are untouched by pinning, and the server clears a pin when a row goes
+ * inactive. Design: docs/projects-mockups/pin-only/manage.html.
  * @returns {void}
  */
 export function renderManage() {
   const host = document.getElementById('manageFrame');
   if (!host) return;
   const catOrder = Object.keys(state.categories || {});
+  const pinned = pinnedKeys();
+  const full = pinned.length >= PIN_CAP;
   const sections = allProjKeys().map(k => {  // Manage shows inactive projects too
     const proj = state.projects[k] || {};
     const ts = tasksOf(k); // full history — archived included, marked ▣
@@ -1044,31 +1054,46 @@ export function renderManage() {
       }).join('') : '';
       return `<div class="mpCat ${open ? 'open' : ''}" data-mpc="${esc(ck)}">
           <span class="caret">${open ? '▾' : '▸'}</span> ${esc(c)}
-          <span class="mpCount">${list.length} task${list.length === 1 ? '' : 's'} · ${done} done</span>
         </div>
         ${open ? `<div class="mpList">${rows}</div>` : ''}`;
     }).join('');
-    const doneAll = ts.filter(t => t.status === 'done').length;
     const status = ['active', 'trial', 'inactive'].includes(proj.status) ? proj.status : 'active';
     const pills = ['active', 'trial', 'inactive'].map(s =>
       `<span class="mpStPill ${status === s ? 'on' : ''}" data-pkst="${esc(k)}::${s}">${s}</span>`).join('');
-    return `<div class="mpProj ${status === 'inactive' ? 'mpInactive' : ''}">
+    // the pin control: slot = position on the bar (0 = not pinned). ☆ is
+    // disabled, with the reason as a tooltip, on inactive rows and at the cap.
+    const slot = pinned.indexOf(k) + 1;
+    const tip = status === 'inactive'
+      ? 'inactive projects are hidden from the nav — set it active to pin it'
+      : (!slot && full) ? pinFullMsg() : null;
+    const pinBtn = slot
+      ? `<button type="button" class="mpPin on" data-unpin="${esc(k)}" title="remove from the top bar">★ <span class="slot">${slot}</span></button>
+        <span class="mpOrder"><button type="button" data-up="${esc(k)}" ${slot === 1 ? 'disabled' : ''} title="move up">▲</button><button type="button" data-down="${esc(k)}" ${slot === pinned.length ? 'disabled' : ''} title="move down">▼</button></span>`
+      : `<button type="button" class="mpPin" data-pin="${esc(k)}" ${tip ? `data-tip="${esc(tip)}" disabled` : 'title="pin to the top bar"'}>☆ pin</button>
+        <span class="mpOrder ghost" aria-hidden="true"><button type="button" disabled>▲</button><button type="button" disabled>▼</button></span>`;
+    return `<div class="mpProj ${status === 'inactive' ? 'mpInactive' : ''}" data-mp="${esc(k)}">
       <div class="mpHead">
-        <input type="color" class="mpColor" data-pk="${esc(k)}" value="${esc(proj.color || '#888888')}" title="project color">
+        ${pinBtn}
         <input class="mpName" data-pk="${esc(k)}" value="${esc(proj.name || k)}" spellcheck="false" title="display name — Enter or click away to save">
-        <span class="mpKey" title="permanent id — tasks, ledger and snapshots are stored under it, so it can't be changed">${esc(k)}</span>
         <span class="mpStatus">${pills}</span>
         ${status !== 'inactive' ? `<span class="mpOpen" data-mpgo="${esc(k)}" title="open the workbench">open ›</span>` : ''}
-        <span class="mpCount">${ts.length} task${ts.length === 1 ? '' : 's'} · ${doneAll} done</span>
+        <label class="mpHue" title="change the project's colour — it drives its dot on the bar and in the overview"><span>colour</span><input type="color" data-pk="${esc(k)}" value="${esc(proj.color || '#888888')}"></label>
       </div>
       ${catRows || '<div class="sideNote" style="padding:4px 12px;">no tasks yet</div>'}
     </div>`;
   }).join('');
+  // keyboard focus survives the re-render that follows every ☆/★/▲▼ (the
+  // broadcast rebuilds this frame): remember which row's control had it and
+  // put it back — falling back to the row's ★ when that control went away or
+  // became disabled (▲ at slot 1, ▼ at the last slot)
+  const focused = document.activeElement;
+  const focusKey = focused?.closest?.('#manageFrame [data-mp]')?.dataset.mp;
+  const focusAttr = ['data-up', 'data-down', 'data-pin', 'data-unpin'].find(a => focused?.hasAttribute?.(a));
   host.innerHTML = `
     <div class="catHead">
-      <h1>🗂 Manage projects</h1>
-      <span class="sub">rename, recolor, or set a designation — active (default) · trial (tag in the nav) · inactive (hidden from nav &amp; overview). Changes save to config.json.</span>
+      <h1>Manage projects</h1>
     </div>
+    <div class="pinSummary ${full ? 'full' : ''}" id="pinSummary">${pinned.length} of ${PIN_CAP} pinned</div>
     <div class="mpNew">
       <input type="color" id="npColor" value="#7ea2f5" title="color">
       <input id="npName" placeholder="New project name" spellcheck="false">
@@ -1100,13 +1125,50 @@ export function renderManage() {
       api('PATCH', `/api/projects/${enc(el.dataset.pk)}`, { name });
     });
   });
-  host.querySelectorAll('.mpColor').forEach(el => el.addEventListener('change', () =>
+  // recolour — the hover-revealed "colour" link at the far right of the row
+  // (the swatch itself left the row with the pins redesign)
+  host.querySelectorAll('.mpHue input').forEach(el => el.addEventListener('change', () =>
     api('PATCH', `/api/projects/${enc(el.dataset.pk)}`, { color: el.value })));
+  // pin / unpin / reorder — fire-and-forget like the rest; the broadcast
+  // re-renders this page and the bar. The server owns the slot bookkeeping:
+  // ☆ asks for the next slot, ★ clears the pin (later slots close up), ▲▼
+  // send the whole order so a reorder is one atomic write.
+  const nameOf = (k) => state.projects[k]?.name || k;
+  host.querySelectorAll('[data-pin]').forEach(el => el.addEventListener('click', async () => {
+    const k = el.dataset.pin;
+    if (pinnedKeys().length >= PIN_CAP) { toast(pinFullMsg()); return; }
+    // ask for slot PIN_CAP: the server inserts at n and a slot past the end
+    // APPENDS, so two quick ☆ clicks land in click order even though this
+    // client's count is stale; the response's pinOrder is the real slot.
+    // quiet: the only 400 a ☆ can draw is the cap (inactive rows are disabled
+    // here), i.e. someone else filled the bar since this render — say so
+    const r = await api('PATCH', `/api/projects/${enc(k)}`, { pinOrder: PIN_CAP }, { quiet: true });
+    if (!r) { toast(pinFullMsg()); return; }
+    const slot = r.pinOrder;
+    toast(slot ? `${nameOf(k)} pinned · slot ${slot} · ⌘${slot}` : `${nameOf(k)} pinned`);
+  }));
+  host.querySelectorAll('[data-unpin]').forEach(el => el.addEventListener('click', async () => {
+    const k = el.dataset.unpin;
+    const r = await api('PATCH', `/api/projects/${enc(k)}`, { pinOrder: null });
+    if (r) toast(`${nameOf(k)} unpinned`);
+  }));
+  host.querySelectorAll('[data-up], [data-down]').forEach(el => el.addEventListener('click', () => {
+    const k = el.dataset.up || el.dataset.down;
+    const keys = pinnedKeys().slice();
+    const i = keys.indexOf(k), j = i + (el.dataset.up ? -1 : 1);
+    if (i < 0 || j < 0 || j >= keys.length) return;
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+    api('PUT', '/api/projects/pins', { keys });
+  }));
   host.querySelectorAll('.mpStPill').forEach(el => el.addEventListener('click', () => {
     const [k, s] = el.dataset.pkst.split('::');
     if ((state.projects[k]?.status || 'active') === s) return; // already that designation
     api('PATCH', `/api/projects/${enc(k)}`, { status: s });
   }));
+  if (focusKey && focusAttr) {
+    const row = host.querySelector(`[data-mp="${CSS.escape(focusKey)}"]`);
+    (row?.querySelector(`[${focusAttr}]:not(:disabled)`) || row?.querySelector('.mpPin:not(:disabled)'))?.focus();
+  }
   const nbrowse = host.querySelector('#npBrowse');
   if (nbrowse) nbrowse.addEventListener('click', async () => {
     // native folder picker — same as the pinned-files ＋; the dialog opens on

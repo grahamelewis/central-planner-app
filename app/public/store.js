@@ -16,7 +16,9 @@ window.__pdfPanes = pdfPanes; // debug handle for out-of-repo QA probe scripts
 
 /** @type {StateSnapshot} */
 export const state = {
-  projects: {},   // key → {name, root, color, texWatch}
+  projects: {},   // key → {name, root, color, texWatch, status, pinOrder}
+  pinned: null,   // string[] | null — the top-bar set in slot order (≤ 7), server-derived;
+                  // null until a snapshot carries it (pinnedKeys() falls back to projKeys())
   categories: {},
   abstracts: {},
   tasks: {},      // key → Task[]
@@ -178,6 +180,21 @@ sysLight.addEventListener('change', () => { if (themePref() === 'system') applyT
 export function projKeys() { return Object.keys(state.projects).filter(k => state.projects[k]?.status !== 'inactive'); }
 /** @returns {string[]} every project key, inactive included */
 export function allProjKeys() { return Object.keys(state.projects); }
+/** The most projects the top bar holds — slots are the ⌘1–⌘7 shortcuts. */
+export const PIN_CAP = 7;
+// pinnedKeys() is the TOP-BAR set (nav tabs + ⌘n shortcuts) in slot order: the
+// server-derived `pinned` list from the snapshot. Pinning decides only what is
+// on the bar — projKeys() stays the visible/usable set for everything else. A
+// snapshot without `pinned` (older server) degrades to the first 7 visible.
+/** @returns {string[]} the pinned project keys in slot order (≤ PIN_CAP) */
+export function pinnedKeys() {
+  if (Array.isArray(state.pinned)) {
+    return state.pinned
+      .filter(k => state.projects[k] && state.projects[k].status !== 'inactive')
+      .slice(0, PIN_CAP);
+  }
+  return projKeys().slice(0, PIN_CAP);
+}
 /**
  * @param {string} k project key
  * @returns {Task[]}

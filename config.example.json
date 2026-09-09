@@ -32,7 +32,7 @@
   },
   "//kaimon": "Warm Julia REPL (github.com/kahliburke/Kaimon.jl) — ON by default and fully dashboard-managed: sessions in auto-detected Julia projects get a persistent REPL that keeps packages+state loaded across turns. Nothing to configure; if kaimon isn't installed, a one-click enable card appears in Julia projects (needs Julia >= 1.12). Set \"kaimon\": false to disable, or tune with {\"bin\": \"/path/to/kaimon\", \"idleMinutes\": 30}.",
   "projects": {
-    "//": "Keys are permanent identifiers (tasks/ledger/etc. are stored under them) — pick a short slug. status: active (default, no tag) | trial (tag in nav) | inactive (hidden from nav & overview). Manage these in-app via the Manage Projects tab.",
+    "//": "Keys are permanent identifiers (tasks/ledger/etc. are stored under them) — pick a short slug. status: active (default, no tag) | trial (tag in nav) | inactive (hidden from nav & overview). pinOrder: the project's slot on the top bar, 1..7 (⌘1..⌘7); null = explicitly unpinned. Omit it everywhere and the bar shows the first 7 non-inactive projects in this order until you pin one in-app. Manage these in-app via the Manage Projects tab.",
     "myproject": {
       "name": "My Project",
       "root": "/absolute/path/to/your/project",

@@ -14,19 +14,25 @@
 //   detectRuntime(command) → 'julia' | 'python' | 'pytest' | 'cargo' | 'rust' |
 //     'go' | 'node' | 'tsc' | 'vite' | 'latex' | 'r' | 'curl' | 'wget' | 'rsync' |
 //     'make' | 'cmake' | 'ninja' | 'ctest' | 'cc' | 'stata' | 'papermill' |
-//     'nbconvert' | 'sql' | 'shell' | null
+//     'nbconvert' | 'sql' | 'java' | 'matlab' | 'shell' | null
+//   stataLogSummary(logText) → { counters, rc, codes, errors[], endOfDoFile,
+//     commands } — the batch log tail (stdout is empty; see stata below)
 //
 //   Phase words: fetching · compiling n/m · linking · built · running · tests n/m ·
 //     report (plus configuring/generating/generated/building for cmake/make).
-//   Counter keys: errors warnings notes · passed failed skipped todo · ok (go
-//     packages) · suites suitesFailed · crate · coverage · modules · timeS ·
-//     exitStatus · lastError {file,line,col,msg} (most recent error diagnostic).
+//   Counter keys: errors warnings notes · passed failed skipped todo · errored
+//     broken total (Julia Test / surefire / MATLAB runtests) · ok (go packages) ·
+//     suites suitesFailed · crate · coverage · modules · timeS · exitStatus ·
+//     rc (Stata return code, from the log) · unverified (1 = this runtime's
+//     stdout cannot vouch for the result) · lastError {file,line,col,msg}
+//     (most recent error diagnostic).
 //
 // Honesty rules baked in: cargo has no n/m unless the runner set
 // CARGO_TERM_PROGRESS_WHEN=always (the Building bar); openrsync (macOS) spells
 // `to-check=` and `xfer#` where rsync 3 prints `to-chk=`/`xfr#`; Stata batch
-// writes nothing to stdout, so its parser is deliberately empty; latexmk's
-// pass total is a soft ≤ max(N, 3).
+// writes nothing to stdout, so its stdout parser only raises the `unverified`
+// marker (stataLogSummary reads the log); latexmk's pass total is a soft
+// ≤ max(N, 3).
 
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
@@ -129,6 +135,10 @@ function runtimeOfTokens(tokens) {
   if (argv0 === 'papermill') return 'papermill';
   if (/^(jupyter(-nbconvert|-execute|-run)?|nbconvert|quarto)$/.test(argv0)) return 'nbconvert';
   if (/^(duckdb|psql|sqlite3|mysql)$/.test(argv0)) return 'sql';
+  // `java File.java` (source-file mode), javac, Maven (+ the ./mvnw wrapper), Gradle (+ ./gradlew)
+  if (/^(java|javac|mvn|mvnw|gradle|gradlew)$/.test(argv0)) return 'java';
+  // `matlab -batch "…"` · `/Applications/MATLAB_R2024b.app/bin/matlab -batch …`
+  if (/^matlab$/i.test(argv0)) return 'matlab';
   if (/^(bash|sh|zsh|fish|dash)$/.test(argv0)) {
     const ci = rest.indexOf('-c');
     if (ci !== -1 && rest[ci + 1]) {
@@ -160,8 +170,90 @@ export function detectRuntime(command) {
 // st.inc / st.set / st.progress. `st` persists for the job's lifetime.
 // ---------------------------------------------------------------------------
 
+// Right-aligned numeric tables (Julia's `Test Summary:` rows, testthat's
+// `F W  S  OK` rows): a cell's last digit sits under the last character of its
+// header word, so the header's column ends locate every later row's numbers.
+function columnEnds(header, from) {
+  const cols = [];
+  for (const m of header.slice(from).matchAll(/\S+/g)) cols.push({ key: m[0], end: from + m.index + m[0].length - 1 });
+  return cols;
+}
+function cellAt(line, end) {
+  if (!/\d/.test(line[end] || '')) return null;
+  let i = end;
+  while (i > 0 && /\d/.test(line[i - 1])) i -= 1;
+  return Number(line.slice(i, end + 1));
+}
+
+const JULIA_TEST_KEYS = { Pass: 'passed', Fail: 'failed', Error: 'errored', Broken: 'broken', Total: 'total' };
+
 function julia(line, st) {
   let m;
+  st.jl = st.jl || { pend: null, tbl: null, sums: {} };
+  const jl = st.jl;
+  // --- Test.jl "Test Summary:" table: the top-level row of each table adds to the totals.
+  // Program output without a trailing newline glues onto the header ("Hello World!Test
+  // Summary: | Pass  Total  Time" — a real capture), so the columns are measured from
+  // the header's own start and the rows' pipe is expected at that same offset.
+  if ((m = line.match(/^(.*?)(Test Summary:\s*\|)/))) {
+    const off = m[1].length;
+    jl.tbl = { pipe: m[0].length - 1 - off, cols: columnEnds(line, m[0].length).map((c) => ({ key: c.key, end: c.end - off })) };
+    jl.pend = null;
+    st.setPhase('report');
+    return;
+  }
+  if (jl.tbl) {
+    if (line.indexOf('|') === jl.tbl.pipe && !/^Test Summary:/.test(line)) {
+      if (!/^\s/.test(line)) { // nested testsets are indented and already counted in their parent
+        for (const c of jl.tbl.cols) {
+          const key = JULIA_TEST_KEYS[c.key]; if (!key) continue;
+          const v = cellAt(line, c.end);
+          if (v != null) { jl.sums[key] = (jl.sums[key] || 0) + v; st.set(key, jl.sums[key]); }
+        }
+      }
+      return;
+    }
+    jl.tbl = null;
+  }
+  // --- Pkg.test wrapper lines ---
+  if ((m = line.match(/^\s*Testing (\S+)$/))) { st.setPhase('tests'); return; }
+  if (/^\s*Testing Running tests\.\.\.$/.test(line)) { st.setPhase('tests'); return; }
+  if ((m = line.match(/^\s*Testing (\S+) tests passed\s*$/))) { st.setPhase('report'); return; }
+  // Pkg's wrap-up after a failing runtests.jl: an error, but the test's own location (already
+  // in lastError) is the better error line — only fill it in when nothing more specific was seen
+  if ((m = line.match(/^ERROR: (?:LoadError: )?Package (\S+) errored during testing/))) {
+    st.inc('errors');
+    if (!st.counters.lastError) setLastError(st, { file: null, line: null, col: null, msg: `Package ${m[1]} errored during testing` });
+    jl.pend = null;
+    return;
+  }
+  // "Some tests did not pass: 2 passed, 1 failed, 1 errored, 1 broken." — a total, not an error
+  if ((m = line.match(/^ERROR: (?:LoadError: )?Some tests did not pass: (\d+) passed, (\d+) failed, (\d+) errored, (\d+) broken\.$/))) {
+    const p = Number(m[1]); const f = Number(m[2]); const e = Number(m[3]); const b = Number(m[4]);
+    st.set('passed', p); st.set('failed', f); st.set('errored', e); st.set('broken', b); st.set('total', p + f + e + b);
+    st.setPhase('report'); jl.pend = null;
+    return;
+  }
+  // --- @testset failure / error blocks: "Arith: Test Failed at /x/tests.jl:4" then "  Expression: 2 * 2 == 5" ---
+  if ((m = line.match(/^(.*?): (Test Failed|Error During Test) at (.+?):(\d+)$/))) {
+    st.inc(m[2] === 'Test Failed' ? 'failed' : 'errored');
+    setLastError(st, { file: m[3], line: m[4], col: null, msg: `${m[1]}: ${m[2]}` });
+    jl.pend = { kind: 'expr', name: m[1] };
+    if (!st.phase || st.phase.name !== 'tests') st.setPhase('tests');
+    return;
+  }
+  if (jl.pend?.kind === 'expr' && (m = line.match(/^\s+Expression: (.*)$/))) { setLastError(st, { msg: `${jl.pend.name}: ${m[1]}` }); jl.pend = null; return; }
+  // --- uncaught "ERROR: msg" + Stacktrace: the first Main / top-level frame carries the location ---
+  if (/^Stacktrace:$/.test(line)) { jl.pend = jl.pend?.kind === 'err' ? { kind: 'stack' } : null; return; }
+  if (jl.pend?.kind === 'stack') {
+    if ((m = line.match(/^\s+@ (?:(\S+) )?(\S+?):(\d+)(?: \[inlined\])?$/))) {
+      if ((!m[1] || m[1] === 'Main') && !/^(none|REPL\[\d+\]|\.\/)/.test(m[2]) && !/\/stdlib\//.test(m[2])) { setLastError(st, { file: m[2], line: m[3] }); jl.pend = null; }
+      return;
+    }
+    if ((m = line.match(/^in expression starting at (.+?):(\d+)$/))) { if (st.counters.lastError?.file == null) setLastError(st, { file: m[1], line: m[2] }); jl.pend = null; return; }
+    if (/^\s/.test(line)) return;
+    jl.pend = null;
+  }
   if (/^Precompiling (?:packages|project|[A-Z]\w+)\.{3}/.test(line) || /^\[ Info: Precompiling/.test(line)) {
     st.pre = { n: 0, m: null };
     if ((m = line.match(/\((\d+)\/(\d+)\)/))) { st.pre.n = Number(m[1]); st.pre.m = Number(m[2]); }
@@ -200,7 +292,7 @@ function julia(line, st) {
     if (!st.phase) st.setPhase('running');
     return;
   }
-  if (/^ERROR: /.test(line)) { st.inc('errors'); return; }
+  if ((m = line.match(/^ERROR: (.*)$/))) { st.inc('errors'); setLastError(st, { file: null, line: null, col: null, msg: m[1] }); jl.pend = { kind: 'err' }; return; }
   if ((m = line.match(/^[┌\[] (Warning|Error|Info): /))) {
     if (m[1] === 'Warning') st.inc('warnings');
     else if (m[1] === 'Error') st.inc('errors');
@@ -224,10 +316,34 @@ function tqdm(line, st) {
   return true;
 }
 
+// A Python traceback: "Traceback (most recent call last):" counts the error,
+// the LAST `File "x.py", line N, in f` frame is the location, and the final
+// non-indented `ExceptionName: message` line closes it into lastError. The
+// SyntaxError form has the File line but no Traceback header — it is counted
+// when its exception line arrives. Returns true when the line was consumed.
+function pyTraceback(line, st) {
+  let m;
+  st.pyt = st.pyt || { pend: null, frame: null };
+  const t = st.pyt;
+  if (/^Traceback \(most recent call last\):$/.test(line)) { st.inc('errors'); t.pend = 'tb'; t.frame = null; return true; }
+  if ((m = line.match(/^\s+File "(.+?)", line (\d+)(?:, in .*)?$/))) { t.frame = { file: m[1], line: m[2] }; if (!t.pend) t.pend = 'file'; return true; }
+  if (!t.pend) return false;
+  if (/^(During handling of the above exception|The above exception was the direct cause)/.test(line)) return true;
+  if ((m = line.match(/^([A-Z][\w.]*)(?:: (.*))?$/))) {
+    if (t.pend === 'file') st.inc('errors');
+    setLastError(st, { file: t.frame?.file ?? null, line: t.frame?.line ?? null, col: null, msg: m[2] != null ? `${m[1]}: ${m[2]}` : m[1] });
+    t.pend = null; t.frame = null;
+    return true;
+  }
+  if (/^\s/.test(line)) return true; // the echoed source line and its caret
+  t.pend = null;
+  return false;
+}
+
 function python(line, st) {
   if (tqdm(line, st)) return;
   let m;
-  if (/^Traceback \(most recent call last\):$/.test(line)) { st.inc('errors'); return; }
+  if (pyTraceback(line, st)) return;
   if ((m = line.match(/^(.+?):(\d+): (\w+Warning): /))) { st.inc('warnings'); return; }
   if ((m = line.match(/^(WARNING|ERROR|CRITICAL):[\w.]*:/))) {
     st.inc(m[1] === 'WARNING' ? 'warnings' : 'errors');
@@ -291,7 +407,35 @@ function pytest(line, st) {
     return;
   }
   if (/^!+ Interrupted: /.test(line)) { st.setPhase('interrupted'); return; }
-  if (/^Traceback \(most recent call last\):$/.test(line)) st.inc('errors');
+  // --- failure blocks → lastError ---
+  // "______ test_bad ______" opens a block; its first "E   …" line is the message and
+  // "tests/test_x.py:9: AssertionError" the location. The short summary
+  // "FAILED tests/test_x.py::test_bad - AssertionError: sum mismatch" re-selects that
+  // test's block (so the last failure listed is the row's error line), or stands
+  // alone with the file when the block was not seen.
+  st.pyl = st.pyl || { open: null, fails: {} };
+  const pl = st.pyl;
+  if ((m = line.match(/^_{3,} (.+?) _{3,}$/))) { pl.open = { name: m[1], msg: null }; return; }
+  if (pl.open && (m = line.match(/^E\s{2,}(.*)$/))) {
+    if (pl.open.msg == null) { pl.open.msg = m[1]; setLastError(st, { file: null, line: null, col: null, msg: m[1] }); }
+    return;
+  }
+  if (pl.open && (m = line.match(/^(\S+?\.py):(\d+): ([A-Z]\w*)$/))) {
+    setLastError(st, { file: m[1], line: m[2], col: null });
+    pl.fails[pl.open.name] = { ...st.counters.lastError };
+    pl.open = { name: pl.open.name, msg: null }; // a chained "During handling…" block in the same test
+    return;
+  }
+  if ((m = line.match(/^(FAILED|ERROR) (\S+?\.py)(?:::(\S+))?(?: - (.*))?$/))) {
+    const name = (m[3] || '').replace(/::/g, '.');
+    const known = name && pl.fails[name];
+    if (known) setLastError(st, { ...known, msg: m[4] ?? known.msg });
+    else setLastError(st, { file: m[2], line: null, col: null, msg: m[4] ?? (m[3] || m[1]) });
+    pl.open = null;
+    return;
+  }
+  if (/^=+ .* =+$/.test(line)) pl.open = null;
+  pyTraceback(line, st);
 }
 
 // --- compiled-language diagnostics -----------------------------------------
@@ -593,8 +737,44 @@ function latex(line, st) {
   if (best != null && best > 0 && best < 100000 && best > (st.counters.page || 0)) st.set('page', best);
 }
 
+// testthat's ProgressReporter (reporter-progress.R): header "✔ | F W  S  OK | Context",
+// one row per context "✖ | 1        3 | bad [0.2s]" (F/W single-width, S %2d, OK %3d,
+// each right-aligned under its header word; a braille spinner glyph marks a row
+// still being redrawn), issue headers "── Failure (test-x.R:12:3): name ──" and the
+// closing "[ FAIL 1 | WARN 0 | SKIP 0 | PASS 12 ]". ASCII fallbacks (v x ! -) accepted.
+const TT_KEYS = { F: 'failed', W: 'warnings', S: 'skipped', OK: 'passed' };
+function testthat(line, st, m) {
+  st.tt = st.tt || { cols: null, sums: {}, pend: null };
+  const tt = st.tt;
+  if ((m = line.match(/^[✔v] \| (?=F W)/))) { tt.cols = columnEnds(line, m[0].length); st.setPhase('tests'); return true; }
+  if (tt.cols && (m = line.match(/^([✔✖⚠Svx!⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]) \| (.*?) \| (.+?)(?: \[[\d.]+s\])?$/))) {
+    if (/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/.test(m[1])) { st.setPhase('tests'); return true; } // spinner frame: not final
+    for (const c of tt.cols) {
+      const key = TT_KEYS[c.key]; if (!key) continue;
+      const v = cellAt(line, c.end);
+      if (v != null) { tt.sums[key] = (tt.sums[key] || 0) + v; st.set(key, tt.sums[key]); }
+    }
+    return true;
+  }
+  if ((m = line.match(/^\[ FAIL (\d+) \| WARN (\d+) \| SKIP (\d+) \| PASS (\d+) \]$/))) {
+    st.set('failed', Number(m[1])); st.set('warnings', Number(m[2])); st.set('skipped', Number(m[3])); st.set('passed', Number(m[4]));
+    st.setPhase('report');
+    return true;
+  }
+  if ((m = line.match(/^(?:[─-]{2,} )?(Failure|Error|Warning|Skip) \((.+?):(\d+):(\d+)\): (.*?)(?: [─-]{2,})?$/))) {
+    if (m[1] === 'Failure' || m[1] === 'Error') { setLastError(st, { file: m[2], line: m[3], col: m[4], msg: `${m[1]}: ${m[5]}` }); tt.pend = { name: m[5] }; } else tt.pend = null;
+    return true;
+  }
+  if (tt.pend) {
+    if ((m = line.match(/^(?![─═-]{2,})(\S.*)$/))) { setLastError(st, { msg: `${tt.pend.name}: ${m[1]}` }); tt.pend = null; return true; }
+    if (/^[─═-]{2,}/.test(line)) tt.pend = null;
+  }
+  return false;
+}
+
 function r(line, st) {
   let m;
+  if (testthat(line, st, m)) return;
   if (/^(Loading required package|Attaching package): /.test(line)) { st.setPhase('loading'); return; }
   if (/^processing file: /.test(line) || /^\s*label: \S+$/.test(line)) { st.setPhase('rendering'); return; }
   if (/^(output file|Output created): /.test(line)) { st.setPhase('rendered'); return; }
@@ -615,7 +795,10 @@ function r(line, st) {
     if (/^\d+: /.test(line)) { st.inc('warnings'); return; }
     if (!/^\s/.test(line)) st.rDeferred = false;
   }
-  if (/^Error(?: in .+?)? ?: /.test(line) || /^\s*\*\*\* caught (segfault|bus error) \*\*\*/.test(line)) { st.inc('errors'); return; }
+  // "Error in f(y) : negative input" · "Error: boom" · a caught segfault — errors + the row's error line
+  if (/^Error(?: in .+?)? ?: /.test(line) || /^\s*\*\*\* caught (segfault|bus error) \*\*\*/.test(line)) {
+    st.inc('errors'); setLastError(st, { file: null, line: null, col: null, msg: line.trim() }); return;
+  }
   if (/^Execution halted$/.test(line)) { st.setPhase('halted'); return; }
   if (st.phase?.name === 'loading' && !/^\s/.test(line)) st.setPhase('running');
 }
@@ -813,8 +996,9 @@ function notebook(line, st) {
   if (/^\[NbConvertApp\] Converting notebook /.test(line) || /^\[NbClientApp\] Executing /.test(line)) { st.setPhase('executing'); return; }
   if (/^\[NbConvertApp\] Executing cell:$/.test(line)) { st.inc('cells'); return; }
   if (/^\[NbConvertApp\] Writing \d+ bytes to /.test(line)) { st.setPhase('wrote'); return; }
-  if (/^(nbclient\.exceptions\.\w+|papermill\.exceptions\.\w+):/.test(line) || /Kernel died while waiting/.test(line)) { st.inc('errors'); return; }
-  if (/^Traceback \(most recent call last\):$/.test(line)) st.inc('errors');
+  // the CLI's traceback ends in the papermill/nbclient exception line: one error, not two
+  if (/^(nbclient\.exceptions\.\w+|papermill\.exceptions\.\w+):/.test(line) || /Kernel died while waiting/.test(line)) { if (st.nbTb) st.nbTb = false; else st.inc('errors'); return; }
+  if (/^Traceback \(most recent call last\):$/.test(line)) { st.inc('errors'); st.nbTb = true; }
 }
 
 function sql(line, st) {
@@ -829,20 +1013,155 @@ function shell(line, st) {
   build(line, st);
 }
 
-const stata = () => { /* stata -b writes only to <file>.log — nothing reaches stdout */ };
+// stata -b / -e writes only to <file>.log — nothing on stdout says whether the
+// do-file ran, so whatever arrives here (a runner banner, an echoed command)
+// only raises the `unverified` marker; the result lives in stataLogSummary().
+function stata(line, st) {
+  if (!st.counters.unverified) st.set('unverified', 1);
+}
+
+/**
+ * Read a Stata batch log's tail: every `r(NNN);` is an error whose message is
+ * the line printed just before it (Stata repeats the code once more after
+ * `end of do-file` — that echo is not a second error), `. ` command echoes
+ * are counted, not parsed. `counters` is wire-shaped (errors · rc · lastError)
+ * for the session job; `verified` is true because the log was read.
+ */
+export function stataLogSummary(text) {
+  const errors = [];
+  let rc = null; let endOfDoFile = false; let commands = 0; let prev = ''; let prevIsEnd = false;
+  for (const raw of String(text ?? '').replace(/\r/g, '\n').split('\n')) {
+    const line = stripAnsi(raw).replace(/\s+$/, '');
+    if (!line) continue;
+    let m;
+    if (/^\.( |$)/.test(line)) { commands += 1; prev = ''; prevIsEnd = false; continue; } // "." alone: the trailing-space echo before "end of do-file"
+    if (/^end of do-file$/.test(line)) { endOfDoFile = true; prevIsEnd = true; prev = ''; continue; }
+    if ((m = line.match(/^r\((\d+)\);?$/))) {
+      rc = Number(m[1]);
+      if (!prevIsEnd) errors.push({ rc, msg: prev || `r(${rc})` });
+      prev = ''; prevIsEnd = false;
+      continue;
+    }
+    prev = line; prevIsEnd = false;
+  }
+  const counters = { errors: errors.length };
+  if (rc != null) counters.rc = rc;
+  if (errors.length) counters.lastError = { file: null, line: null, col: null, msg: String(errors[errors.length - 1].msg).slice(0, 200) };
+  return { counters, rc, codes: errors.map((e) => e.rc), errors, endOfDoFile, commands, verified: true };
+}
+
+// javac / `java File.java` diagnostics, an uncaught exception's stack, Maven
+// (surefire "Tests run:" totals, [ERROR] file:[l,c] diagnostics, BUILD SUCCESS /
+// FAILURE) and Gradle ("> Task :x", "N tests completed, M failed", "BUILD
+// SUCCESSFUL in"). A test count line without "Time elapsed" is the run's total.
+function java(line, st) {
+  let m;
+  st.jv = st.jv || { pend: null, sums: null };
+  const jv = st.jv;
+  if (jv.pend === 'stack') {
+    if ((m = line.match(/^\s+at [\w$.<>/ ]+\((\S+?\.(?:java|kt|scala|groovy)):(\d+)\)$/))) { setLastError(st, { file: m[1], line: m[2] }); jv.pend = null; return; }
+    if (/^\s+at /.test(line) || /^\s*\.\.\. \d+ more$/.test(line) || /^Caused by: /.test(line)) return;
+    jv.pend = null;
+  }
+  if (jv.pend === 'gradle') {
+    // "    java.lang.AssertionError: expected:<4> but was:<3> at FooTest.java:12"
+    if ((m = line.match(/^\s+(\S+?)(?:: (.*?))? at (\S+?\.(?:java|kt)):(\d+)$/))) { setLastError(st, { file: m[3], line: m[4], msg: m[2] ? `${st.counters.lastError?.msg}: ${m[2]}` : undefined }); jv.pend = null; return; }
+    if (!/^\s/.test(line)) jv.pend = null;
+  }
+  // --- javac "Bad.java:3: error: incompatible types…" · maven "[ERROR] /x/Bad.java:[3,17] …" ---
+  if ((m = line.match(/^(\S+?\.java):(\d+): (error|warning): (.*)$/)) || (m = line.match(/^\[(ERROR|WARNING)\] (\S+?\.java):\[(\d+),(\d+)\] (.*)$/))) {
+    const maven = m[0].startsWith('[');
+    const kind = (maven ? m[1] : m[3]).toLowerCase();
+    if (kind === 'error') { st.inc('errors'); setLastError(st, maven ? { file: m[2], line: m[3], col: m[4], msg: m[5] } : { file: m[1], line: m[2], col: null, msg: m[4] }); }
+    else st.inc('warnings');
+    if (!st.phase) st.setPhase('compiling');
+    return;
+  }
+  if ((m = line.match(/^(?:\[(?:INFO|ERROR|WARNING)\] )?(\d+) (errors?|warnings?)$/))) { // javac's own total: reconcile upward only
+    const key = m[2].startsWith('error') ? 'errors' : 'warnings';
+    if ((st.counters[key] || 0) < Number(m[1])) st.set(key, Number(m[1]));
+    return;
+  }
+  if (/^error: compilation failed$/.test(line)) return; // `java File.java` wrap-up after the diagnostics
+  if ((m = line.match(/^(?:warning|error): (.*)$/))) { if (line.startsWith('error')) { st.inc('errors'); setLastError(st, { file: null, line: null, col: null, msg: m[1] }); } else st.inc('warnings'); return; }
+  // --- an uncaught exception: 'Exception in thread "main" java.lang.X: msg' then "\tat Crash.f(Crash.java:2)" ---
+  if ((m = line.match(/^Exception in thread "[^"]*" (\S+?)(?:: (.*))?$/))) {
+    st.inc('errors'); setLastError(st, { file: null, line: null, col: null, msg: m[2] != null ? `${m[1]}: ${m[2]}` : m[1] }); jv.pend = 'stack'; return;
+  }
+  // --- surefire / gradle test totals ---
+  if ((m = line.match(/^(?:\[(?:INFO|ERROR|WARNING)\] )?Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)(.*)$/))) {
+    const n = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+    if (/Time elapsed/.test(m[5])) { // one test class — running sums until the Results total arrives
+      jv.sums = jv.sums || [0, 0, 0, 0];
+      n.forEach((v, i) => { jv.sums[i] += v; });
+      st.setPhase('tests');
+    } else { jv.sums = n.slice(); st.setPhase('report'); }
+    const [t, f, e, s] = jv.sums;
+    st.set('total', t); st.set('failed', f); st.set('errored', e); st.set('skipped', s); st.set('passed', Math.max(0, t - f - e - s));
+    return;
+  }
+  if ((m = line.match(/^(\d+) tests completed, (\d+) failed(?:, (\d+) skipped)?$/))) {
+    const t = Number(m[1]); const f = Number(m[2]); const s = Number(m[3] || 0);
+    st.set('total', t); st.set('failed', f); if (m[3]) st.set('skipped', s); st.set('passed', Math.max(0, t - f - s));
+    st.setPhase('report');
+    return;
+  }
+  // "[ERROR]   FooTest.testBad:12 expected:<4> but was:<3>" — surefire's failure recap
+  if ((m = line.match(/^\[ERROR\] {2,}(\S+?)\.(\w+):(\d+)(?: (.*))?$/))) { setLastError(st, { file: `${m[1].split('.').pop()}.java`, line: m[3], col: null, msg: `${m[2]}: ${m[4] || 'failed'}` }); return; }
+  // "FooTest > testBad FAILED" — gradle's per-test line; the reason follows indented
+  if ((m = line.match(/^(\S+) > (\S+) FAILED$/))) { st.inc('failed'); setLastError(st, { file: null, line: null, col: null, msg: `${m[1]}.${m[2]}` }); jv.pend = 'gradle'; st.setPhase('tests'); return; }
+  // --- phases ---
+  if ((m = line.match(/^\[INFO\] --- \S+?:[^:\s]+:(\w+)/))) { st.setPhase(/compile/i.test(m[1]) ? 'compiling' : m[1] === 'test' ? 'tests' : 'building'); return; }
+  if (/^\[INFO\] Running \S+$/.test(line)) { st.setPhase('tests'); return; }
+  if ((m = line.match(/^> Task :(\S+)/))) { st.setPhase(/compile/i.test(m[1]) ? 'compiling' : /(^|:)test$/.test(m[1]) ? 'tests' : 'building'); return; }
+  if (/^\[INFO\] BUILD SUCCESS$/.test(line) || /^BUILD SUCCESSFUL in /.test(line)) { st.setPhase('built'); return; }
+  if (/^\[INFO\] BUILD FAILURE$/.test(line) || /^BUILD FAILED in /.test(line) || /^FAILURE: Build failed with an exception\.$/.test(line)) { st.setPhase('failed'); return; }
+  if ((m = line.match(/^\[ERROR\] Failed to execute goal .*?: (.*?)(?: -> \[Help \d+\])?$/))) { if (!st.counters.lastError) setLastError(st, { file: null, line: null, col: null, msg: m[1] }); return; }
+}
+
+// MATLAB -batch: "Error using f (line 12)" (message on the next line), "Error in
+// script (line 3)" (the caller frames of the same error, or a fresh error whose
+// message came just before), "Error: File: x.m Line: 3 Column: 5" (syntax);
+// runtests prints "Running t" … "Totals:" then "N Passed, M Failed, K Incomplete."
+// (Incomplete → errored).
+function matlab(line, st) {
+  let m;
+  st.ml = st.ml || { pend: null, open: false, last: null };
+  const ml = st.ml;
+  if (ml.pend === 'msg') { if (line.trim()) { setLastError(st, { msg: line.trim() }); ml.pend = null; } return; }
+  if ((m = line.match(/^Error using (.+?) \(line (\d+)\)$/))) { st.inc('errors'); setLastError(st, { file: m[1], line: m[2], col: null, msg: null }); ml.pend = 'msg'; ml.open = true; return; }
+  if ((m = line.match(/^Error in (.+?) \(line (\d+)\)$/))) {
+    if (!ml.open) { st.inc('errors'); setLastError(st, { file: m[1], line: m[2], col: null, msg: ml.last }); ml.open = true; }
+    return;
+  }
+  if ((m = line.match(/^Error: File: (\S+) Line: (\d+) Column: (\d+)$/))) { st.inc('errors'); setLastError(st, { file: m[1], line: m[2], col: m[3], msg: null }); ml.pend = 'msg'; ml.open = true; return; }
+  if ((m = line.match(/^Error: (.*)$/))) { st.inc('errors'); setLastError(st, { file: null, line: null, col: null, msg: m[1] }); ml.open = true; return; }
+  if (/^Warning: /.test(line)) { st.inc('warnings'); return; }
+  if ((m = line.match(/^Running (\S+)$/))) { st.setPhase('tests'); return; }
+  if ((m = line.match(/^Error occurred in (\S+) and it did not run to completion\.$/))) { st.inc('errored'); setLastError(st, { file: null, line: null, col: null, msg: `${m[1]}: did not run to completion` }); return; }
+  if ((m = line.match(/^Verification failed in (\S+)\.$/))) { st.inc('failed'); setLastError(st, { file: null, line: null, col: null, msg: `${m[1]}: verification failed` }); return; }
+  if ((m = line.match(/^\s*(\d+) Passed, (\d+) Failed, (\d+) Incomplete\.$/))) {
+    const p = Number(m[1]); const f = Number(m[2]); const e = Number(m[3]);
+    st.set('passed', p); st.set('failed', f); st.set('errored', e); st.set('total', p + f + e);
+    st.setPhase('report');
+    return;
+  }
+  if (/^Totals:$/.test(line)) { st.setPhase('report'); return; }
+  if (line.trim() && !/^\s/.test(line)) { ml.open = false; ml.last = line.trim(); }
+}
 
 const HANDLERS = {
   julia, python, pytest, cargo, rust: cargo, go, node, tsc: node, vite: node, latex, r,
   curl: download, wget: download, rsync: download,
   make: build, cmake: build, ninja: build, ctest: build, cc: build, build,
-  stata, papermill: notebook, nbconvert: notebook, sql, shell,
+  stata, papermill: notebook, nbconvert: notebook, sql, java, matlab, shell,
 };
 
 // coarse language OR a registry `parser` key (lib/runtimes.js step.parser) → handler
 const LANG_DEFAULT = {
   julia: 'julia', python: 'python', r: 'r', shell: 'shell', sql: 'sql', notebook: 'nbconvert', stata: 'stata',
   cargo: 'cargo', rust: 'rust', go: 'go', node: 'node', javascript: 'node', typescript: 'node', tsx: 'node',
-  build: 'build', c: 'build', cpp: 'build',
+  build: 'build', c: 'build', cpp: 'build', java: 'java', matlab: 'matlab',
 };
 
 /**
