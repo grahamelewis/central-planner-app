@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  STATES, resolvePort, classifyProbe, probe, tcpAccepts, launchdLoaded,
+  STATES, resolvePort, installationDataRoot, classifyProbe, probe, tcpAccepts, launchdLoaded,
   createLifecycle, createNotifier, shellLog, sanitizeBounds, shouldIntervene,
   themeFromBackground,
 } from '../serverlink.js';
@@ -523,6 +523,119 @@ test('launchdLoaded: exit 0 → true; non-zero → false; ENOENT → false + log
 });
 
 // ---------------------------------------------------------------- resolvePort
+
+function installationFixture(t) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cp-desktop-install-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const root = path.join(dir, 'runtime'), data = path.join(dir, 'data');
+  fs.mkdirSync(root); fs.mkdirSync(data);
+  const owner = { version: 1, installationRoot: root, sourceRoot: path.join(dir, 'source'), dataRoot: data };
+  const config = { version: 1, sourceRoot: owner.sourceRoot, dataRoot: data,
+    active: 'release-12345678-1234-1234-1234-123456789abc', previous: null };
+  const marker = path.join(root, '.central-planner-installation.json');
+  const pointer = path.join(root, 'deployment.json');
+  fs.writeFileSync(marker, JSON.stringify(owner));
+  fs.writeFileSync(pointer, JSON.stringify(config));
+  fs.writeFileSync(path.join(data, 'config.json'), JSON.stringify({ port: 4545 }));
+  return { root, data, marker, pointer, owner, config };
+}
+
+test('installed data-root port is resolved before probing and overrides inherited legacy CP_ROOT', t => {
+  const f = installationFixture(t);
+  assert.equal(installationDataRoot(f.root), f.data);
+  assert.equal(resolvePort({ repoRoot: f.root, env: {} }), 4545);
+  assert.equal(resolvePort({ repoRoot: f.root, env: { CP_ROOT: '/stale-checkout' } }), 4545);
+  assert.equal(resolvePort({ repoRoot: f.root, env: { CP_ROOT: '/stale-checkout', CP_PORT: '4567' } }), 4567);
+});
+
+test('installed pointer disagreement, missing marker and missing data fail closed', t => {
+  const f = installationFixture(t);
+  fs.writeFileSync(f.pointer, JSON.stringify({ ...f.config, dataRoot: '/different-data' }));
+  assert.throws(() => resolvePort({ repoRoot: f.root, env: {} }), /disagree/);
+  fs.writeFileSync(f.pointer, JSON.stringify(f.config));
+  fs.renameSync(f.marker, `${f.marker}.saved`);
+  assert.throws(() => resolvePort({ repoRoot: f.root, env: { CP_PORT: '4242' } }), /metadata/);
+  fs.renameSync(`${f.marker}.saved`, f.marker);
+  fs.renameSync(f.data, `${f.data}.saved`);
+  assert.throws(() => resolvePort({ repoRoot: f.root, env: {} }), /missing or changed/);
+});
+
+test('installed symlink metadata and redirected data roots cannot choose a different dashboard', t => {
+  const f = installationFixture(t);
+  fs.renameSync(f.pointer, `${f.pointer}.saved`);
+  fs.symlinkSync(`${f.pointer}.saved`, f.pointer);
+  assert.throws(() => installationDataRoot(f.root), /metadata/);
+  fs.unlinkSync(f.pointer);
+  fs.renameSync(`${f.pointer}.saved`, f.pointer);
+  fs.renameSync(f.data, `${f.data}.saved`);
+  fs.symlinkSync(`${f.data}.saved`, f.data);
+  assert.throws(() => installationDataRoot(f.root), /missing or changed/);
+});
+
+test('legacy selected checkout uses its own nondefault port without changing CP_ROOT precedence', t => {
+  const f = installationFixture(t);
+  fs.unlinkSync(f.pointer); fs.unlinkSync(f.marker);
+  fs.writeFileSync(path.join(f.root, 'config.json'), JSON.stringify({ port: 4646 }));
+  assert.equal(installationDataRoot(f.root), null);
+  assert.equal(resolvePort({ repoRoot: f.root, env: {} }), 4646);
+  assert.equal(resolvePort({ repoRoot: f.root, env: { CP_ROOT: f.data } }), 4545);
+});
+
+test('invalid installation configuration emits failure without probing or starting a server', async () => {
+  const states = [], clock = makeClock();
+  let calls = 0;
+  const lifecycle = createLifecycle({ resolvePort: () => { throw new Error('invalid installation'); },
+    probe: async () => { calls++; }, tcpAccepts: async () => { calls++; },
+    launchdLoaded: async () => { calls++; }, startServer: async () => { calls++; },
+    onState: value => states.push(value), setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
+  });
+  lifecycle.trigger();
+  await drain();
+  assert.equal(calls, 0);
+  assert.equal(states[0].name, STATES.SERVER_FAILED);
+  assert.match(states[0].reason, /invalid installation/);
+  await clock.advance(5000);
+  assert.equal(calls, 0);
+  lifecycle.dispose();
+});
+
+test('desktop probe lookup remains non-interactive and uses the same selected root as startup', () => {
+  const source = fs.readFileSync(path.join(DESKTOP_DIR, 'main.js'), 'utf8');
+  assert.match(source, /resolvePort: \(\) => resolvePort\(\{ log, repoRoot: knownRepoRoot\(\)\?\.root \}\)/);
+  assert.match(source, /getPort: \(\) => resolvePort\(\{ log, repoRoot: knownRepoRoot\(\)\?\.root \}\)/);
+  const known = source.slice(source.indexOf('function knownRepoRoot()'), source.indexOf('function resolveRepoRoot()'));
+  assert.equal(known.includes('showOpenDialog'), false);
+  assert.match(known, /persisted/);
+  assert.match(known, /packaged hint/);
+  const start = source.slice(source.indexOf('function startOwnedServer(port)'), source.indexOf('async function stopOwnedServer'));
+  assert.match(start, /if \(resolvePort\(\{ log, repoRoot \}\) !== port\)/);
+  assert.ok(start.indexOf("trigger('server-location-selected')") < start.indexOf('spawn(node'));
+});
+
+test('first-start selection re-probes a newly discovered port without stale-generation startup', async () => {
+  const states = [], probes = [], clock = makeClock();
+  let port = 4242, starts = 0;
+  const lifecycle = createLifecycle({ resolvePort: () => port,
+    probe: async value => { probes.push(value); return value === 4545 ? 'HEALTHY' : 'REFUSED'; },
+    tcpAccepts: async () => false, launchdLoaded: async () => false,
+    startServer: () => {
+      starts++;
+      port = 4545; // the non-interactive candidates were empty; the picker found this root
+      queueMicrotask(() => { lifecycle.dispose(); lifecycle.trigger('server-location-selected'); });
+      return Promise.resolve();
+    },
+    onState: value => states.push(value), setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
+  });
+  lifecycle.trigger();
+  await drain();
+  assert.deepEqual(probes, [4242, 4545]);
+  assert.equal(starts, 1);
+  assert.equal(states.at(-1).name, STATES.ATTACH);
+  assert.equal(states.at(-1).port, 4545);
+  await clock.advance(20000);
+  assert.deepEqual(probes, [4242, 4545]);
+  lifecycle.dispose();
+});
 
 test('resolvePort: invalid CP_PORT values fall through WITH a log line', () => {
   for (const bad of ['abc', '0', '70000', '12.5']) {

@@ -5,8 +5,8 @@ window and dock identity, native macOS banners even with the window closed, and
 `backgroundThrottling:false` so the dashboard's heartbeat and stale-checks run
 at full rate while hidden. It attaches to an existing server or loaded launchd
 job; only when both are absent does it start and own one local Node server. The
-binding rules live in `CONTRACT.md`; `BLUEPRINT.html` is the historical Phase-1
-design record.
+binding rules live in `CONTRACT.md`; locally retained `BLUEPRINT.html` is the
+historical Phase-1 design record (no longer distributed).
 
 ## Run / pack / test
 
@@ -33,9 +33,13 @@ The server binds before running startup sweeps/watchers, so a launch race exits
 without mutating state. Close hides and keeps an owned server running. Cmd+Q
 stops only the shell's own child; an attached launchd/manual server is untouched.
 
-The packaged app carries a build-time checkout hint and persists a validated,
-repairable repository location in Electron userData. It still runs the server
-from the checkout—server code and durable state are not copied into the app.
+The packaged app carries a build-time location hint and persists a validated,
+repairable server location in Electron userData. For production, point it at
+the separate installation directory containing the stable `app/server.js`
+launcher; server releases and durable state are not copied into the desktop
+bundle. Development checkouts remain supported. Installation-aware port
+resolution reads the preserved data root before probing. See
+[the distribution and migration guide](../app/docs/distribution-boundary.md).
 
 ## Tailnet access
 

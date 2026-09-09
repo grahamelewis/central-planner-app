@@ -2,7 +2,7 @@
 // and read-only access to ROOT/abstracts/<project>.md. Synchronous fs.
 import fs from 'fs';
 import path from 'path';
-import { ROOT, PROJECTS } from './config.js';
+import { ROOT, APP_DIR, PROJECTS } from './config.js';
 import { broadcast } from './events.js';
 import { writeFileAtomic } from './paths.js';
 import { getAgentDefaults } from './agentSettings.js';
@@ -244,7 +244,7 @@ export function getCategories() {
   // the user's categories.json wins; a fresh clone (no categories.json yet)
   // falls back to the shipped categories.example.json so the Add Task picker
   // isn't empty out of the box. A malformed user file surfaces (not masked).
-  for (const file of [CATEGORIES_FILE, CATEGORIES_EXAMPLE]) {
+  for (const file of [...new Set([CATEGORIES_FILE, CATEGORIES_EXAMPLE, path.resolve(APP_DIR, '..', 'categories.example.json')])]) {
     try {
       return JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch (err) {

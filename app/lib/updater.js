@@ -16,12 +16,17 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { APP_DIR } from './config.js';
 import { broadcast } from './events.js';
+import { readDeployment, deployRelease } from './deployment.js';
 
 const execFileAsync = promisify(execFile);
 
-const REPO_DIR = process.env.CP_UPDATE_REPO
+const INSTALLATION_ROOT = process.env.CP_INSTALLATION_ROOT || null;
+const installation = INSTALLATION_ROOT ? readDeployment(INSTALLATION_ROOT) : null;
+// A test/development override must never redirect an installed updater into a
+// different repository before deployment's identity checks can run.
+const REPO_DIR = installation?.sourceRoot || (process.env.CP_UPDATE_REPO
   ? path.resolve(process.env.CP_UPDATE_REPO)
-  : path.resolve(APP_DIR, '..'); // the checkout the dashboard runs from
+  : path.resolve(APP_DIR, '..')); // source checkout, never installed payload
 const CHECK_EVERY_MS = Number(process.env.CP_UPDATE_CHECK_MS) > 0
   ? Number(process.env.CP_UPDATE_CHECK_MS)
   : 24 * 60 * 60 * 1000;
@@ -139,7 +144,9 @@ async function doCheck() {
   const fetched = await git(['fetch', '--quiet', remote], { timeout: 45_000 });
 
   const head = (await git(['rev-parse', '--short', 'HEAD'])).stdout.trim() || null;
-  const behindR = await git(['rev-list', '--count', `HEAD..${upstream}`]);
+  const deployed = INSTALLATION_ROOT ? readDeployment(INSTALLATION_ROOT) : null;
+  const baseline = deployed?.sourceRevision || 'HEAD';
+  const behindR = await git(['rev-list', '--count', `${baseline}..${upstream}`]);
   const aheadR = await git(['rev-list', '--count', `${upstream}..HEAD`]);
   if (!behindR.ok) {
     return setStatus({ state: 'error', branch, upstream, head, error: behindR.message || combinedErr(behindR), lastChecked: new Date().toISOString() });
@@ -149,7 +156,7 @@ async function doCheck() {
 
   let commits = [];
   if (behind > 0) {
-    const logR = await git(['log', '--pretty=%h%x09%s', '-n', String(COMMITS_SHOWN), `HEAD..${upstream}`]);
+    const logR = await git(['log', '--pretty=%h%x09%s', '-n', String(COMMITS_SHOWN), `${baseline}..${upstream}`]);
     if (logR.ok) {
       commits = logR.stdout.split('\n').filter(Boolean).map((l) => {
         const i = l.indexOf('\t');
@@ -158,7 +165,7 @@ async function doCheck() {
     }
   }
   // untracked files never block a fast-forward — only tracked modifications do
-  const dirtyR = await git(['status', '--porcelain', '--untracked-files=no']);
+  const dirtyR = await git(['status', '--porcelain', INSTALLATION_ROOT ? '--untracked-files=all' : '--untracked-files=no']);
   const dirty = dirtyR.ok ? dirtyR.stdout.trim().length > 0 : false;
 
   const next = setStatus({
@@ -198,13 +205,27 @@ export async function applyUpdate() {
     }
 
     setStatus({ state: 'updating' });
-    const from = s.head;
+    const from = INSTALLATION_ROOT ? readDeployment(INSTALLATION_ROOT).sourceRevision : s.head;
     const merged = await git(['merge', '--ff-only', s.upstream]);
     if (!merged.ok) {
       setStatus({ state: 'error', error: `fast-forward failed: ${combinedErr(merged)}` });
       throw httpError(409, `fast-forward failed: ${combinedErr(merged)}`);
     }
     const to = (await git(['rev-parse', '--short', 'HEAD'])).stdout.trim() || null;
+
+    if (INSTALLATION_ROOT) {
+      try {
+        const configured = readDeployment(INSTALLATION_ROOT);
+        await deployRelease({ sourceRoot: REPO_DIR, installationRoot: INSTALLATION_ROOT, dataRoot: configured.dataRoot });
+      } catch (error) {
+        setStatus({ state: 'error', error: 'Release staging failed; the previous production release remains selected.' });
+        throw httpError(500, `Release staging failed; previous release retained: ${error.message}`);
+      }
+      const updated = { from, to, npmInstalled: true, needsRestart: true, productionRelease: true };
+      await checkForUpdates();
+      setStatus({ updated });
+      return { ok: true, ...updated };
+    }
 
     // new dependencies? npm install before the user restarts into them
     let npmInstalled = false;

@@ -30,14 +30,50 @@ export const STATES = {
 
 const validPort = (v) => Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 65535;
 
+// The production launcher pins its data root. Resolve the same binding BEFORE
+// probing, even when the shell inherited CP_ROOT for an older checkout. A
+// partial/corrupt installation must not silently fall back to a blank dashboard.
+export function installationDataRoot(repoRoot, { fs: fsi = fs } = {}) {
+  if (!repoRoot) return null;
+  const root = path.resolve(repoRoot);
+  const marker = path.join(root, '.central-planner-installation.json');
+  const pointer = path.join(root, 'deployment.json');
+  const stat = file => {
+    try { return fsi.lstatSync(file); } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+  };
+  const markerStat = stat(marker), pointerStat = stat(pointer);
+  if (!markerStat && !pointerStat) return null; // ordinary legacy checkout
+  const ordinaryFile = value => value && value.isFile() && !value.isSymbolicLink();
+  if (!ordinaryFile(markerStat) || !ordinaryFile(pointerStat)) throw new Error('Invalid production installation metadata');
+  const owner = JSON.parse(fsi.readFileSync(marker, 'utf8'));
+  const config = JSON.parse(fsi.readFileSync(pointer, 'utf8'));
+  const id = /^release-[0-9a-f-]{36}$/;
+  if (!owner || !config || owner.version !== 1 || config.version !== 1
+    || owner.installationRoot !== fsi.realpathSync(root)
+    || typeof owner.sourceRoot !== 'string' || !path.isAbsolute(owner.sourceRoot)
+    || typeof owner.dataRoot !== 'string' || !path.isAbsolute(owner.dataRoot)
+    || config.sourceRoot !== owner.sourceRoot || config.dataRoot !== owner.dataRoot
+    || !id.test(config.active) || (config.previous !== null && !id.test(config.previous))) {
+    throw new Error('Production installation ownership and pointer disagree');
+  }
+  const data = stat(config.dataRoot);
+  if (!data || !data.isDirectory() || data.isSymbolicLink()
+    || fsi.realpathSync(config.dataRoot) !== config.dataRoot) throw new Error('Production data root is missing or changed');
+  return config.dataRoot;
+}
+
 // Port resolution — mirrors app/lib/config.js:21-24,:50 (coupling #1):
 // CP_PORT env → config.json "port" (located via CP_ROOT env, else the repo
 // root = parent of desktop/) → 4242. Garbage falls through to the next source
 // WITH a log line; '' counts as absent (config.js gates on truthiness); a
 // missing config.json is a normal fresh clone and stays silent. repoRoot is a
-// test-only override of the default root — CP_ROOT still wins over it.
+// checkout override. A validated installation instead pins its recorded data root.
 export function resolvePort({ env = process.env, readFile = fs.readFileSync, log = () => {}, repoRoot } = {}) {
-  const root = env.CP_ROOT ? path.resolve(env.CP_ROOT) : (repoRoot ?? path.resolve(DESKTOP_DIR, '..'));
+  const installedRoot = installationDataRoot(repoRoot);
+  const root = installedRoot || (env.CP_ROOT ? path.resolve(env.CP_ROOT) : (repoRoot ?? path.resolve(DESKTOP_DIR, '..')));
   if (env.CP_PORT) {
     if (validPort(env.CP_PORT)) return Number(env.CP_PORT);
     log(`port: invalid CP_PORT "${env.CP_PORT}" — falling through`);
@@ -185,7 +221,14 @@ export function createLifecycle({
   async function iterate(g) {
     inFlight = true;
     try {
-      const port = resolvePortDep();
+      let port;
+      try { port = resolvePortDep(); }
+      catch (error) {
+        const reason = error?.message || String(error);
+        log(`lifecycle: invalid server configuration (${reason})`);
+        emit({ name: STATES.SERVER_FAILED, reason, gen: g });
+        return schedule(g, 5000);
+      }
       const cls = await probeDep(port);
       if (stale(g)) return;
       log(`lifecycle: gen ${g} port ${port} probe ${cls}`);

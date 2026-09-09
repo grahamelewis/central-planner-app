@@ -63,6 +63,10 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
+      - name: Enforce repository artifact boundary
+        working-directory: app
+        run: node scripts/check-boundary.mjs
+
       # latex.monarch.test.mjs is not a ui.* file but does drive a browser.
       - name: Assert Chrome is present
         run: |
@@ -80,6 +84,18 @@ jobs:
       - name: Typecheck
         working-directory: app
         run: npm run typecheck
+
+      - name: Build production-only runtime
+        working-directory: app
+        run: npm run build:runtime -- --out "$RUNNER_TEMP/central-planner-runtime" --install
+
+      - name: Verify production runtime boundary
+        working-directory: app
+        run: npm run check:runtime -- "$RUNNER_TEMP/central-planner-runtime" --require-dependencies
+
+      - name: Smoke test the installed production runtime
+        working-directory: app
+        run: node scripts/smoke-runtime.mjs "$RUNNER_TEMP/central-planner-runtime"
 
       # No npm ci: lifecycle.test.mjs imports only node: builtins and
       # serverlink.js, which imports only node: builtins. Installing would

@@ -81,7 +81,7 @@ function init() {
   createWindow();
   loadSplash(''); // never sit on about:blank while the first probe decides (§4)
   lifecycle = createLifecycle({
-    resolvePort: () => resolvePort({ log }),
+    resolvePort: () => resolvePort({ log, repoRoot: knownRepoRoot()?.root }),
     probe: (port) => probe({ port, log }),
     tcpAccepts: (port) => tcpAccepts({ port }),
     launchdLoaded: () => launchdLoaded({ log }),
@@ -120,7 +120,9 @@ function persistJson(file, value) {
   }
 }
 
-function resolveRepoRoot() {
+// Non-interactive lookup is also used for probing. Only an actual owned-server
+// start can open a picker, so attaching to an existing legacy server stays quiet.
+function knownRepoRoot() {
   const persisted = readJson(serverLocationFile())?.repoRoot;
   const packagedHint = readJson(REPO_HINT)?.repoRoot;
   const devRoot = app.isPackaged ? null : path.resolve(DESKTOP_DIR, '..');
@@ -131,15 +133,22 @@ function resolveRepoRoot() {
     ['development checkout', devRoot],
   ]) {
     if (!validRepoRoot(candidate)) continue;
-    const root = path.resolve(candidate);
-    persistJson(serverLocationFile(), { repoRoot: root });
-    log(`server-owner: repo ${root} (${source})`);
-    return root;
+    return { root: path.resolve(candidate), source };
+  }
+  return null;
+}
+
+function resolveRepoRoot() {
+  const known = knownRepoRoot();
+  if (known) {
+    persistJson(serverLocationFile(), { repoRoot: known.root });
+    log(`server-owner: repo ${known.root} (${known.source})`);
+    return known.root;
   }
 
   const picked = dialog.showOpenDialogSync(win, {
     title: 'Locate the Central Planner folder',
-    message: 'Choose the folder that contains app/server.js and desktop/.',
+    message: 'Choose the installation or development folder containing app/server.js.',
     properties: ['openDirectory'],
   })?.[0];
   if (validRepoRoot(picked)) {
@@ -178,6 +187,16 @@ function startOwnedServer(port) {
     throw new Error('server exited twice within 60 seconds; automatic restart stopped');
   }
   const repoRoot = resolveRepoRoot();
+  // A first-start folder selection can reveal a different configured port than
+  // the initial legacy/default probe. Re-probe it before any process is spawned;
+  // it may already belong to a running dashboard or another service.
+  if (resolvePort({ log, repoRoot }) !== port) {
+    queueMicrotask(() => {
+      lifecycle?.dispose();
+      lifecycle?.trigger('server-location-selected');
+    });
+    return Promise.resolve();
+  }
   const appDir = path.join(repoRoot, 'app');
   const node = resolveNode();
   const serverLog = path.join(app.getPath('userData'), 'logs', 'server.log');
@@ -562,7 +581,7 @@ function ensureNotifier() {
     return;
   }
   notifier = createNotifier({
-    getPort: () => resolvePort({ log }), // re-resolved per connect (G11)
+    getPort: () => resolvePort({ log, repoRoot: knownRepoRoot()?.root }), // same installation binding as lifecycle
     WebSocketImpl: globalThis.WebSocket, // Node's native global — no ws dep (R2)
     NotificationImpl: Notification,
     statePath: path.join(app.getPath('userData'), 'notify-state.json'),
