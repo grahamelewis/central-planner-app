@@ -53,3 +53,25 @@ desktop/dist/
 .Rhistory
 .RData
 .Rproj.user/
+
+# Local research and generated evidence are not application source.
+# Keep maintained Markdown docs and regression test/fixture source in Git;
+# app/scripts/check-boundary.mjs also rejects these paths in the Git index.
+**/.local/
+**/.artifacts/
+**/research/
+**/experiments/
+**/renders/
+**/mockups/
+**/*-mockups/
+**/test-results/
+**/playwright-report/
+**/coverage/
+**/screenshots/
+/app/docs/**/*.html
+/app/docs/language-support/
+/app/docs/token-efficiency-review/
+/desktop/BLUEPRINT.html
+/desktop/BLUEPRINT_AUDIT.txt
+/desktop/logo-concepts.html
+*.log
