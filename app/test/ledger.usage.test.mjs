@@ -23,7 +23,7 @@ const LIMITS = {
 let tmp, ledgerFile;
 /** Bind the extracted functions against a given USAGE_LIMITS. */
 function build(limits) {
-  const bodies = ['weekStart', 'usageWindows', 'topLabel']
+  const bodies = ['weekStart', 'usageWindows', 'topLabel', 'inferProvider']
     .map((n) => extractFunction(SRC, n)).join('\n');
   const factory = new Function('loadEntries', 'USAGE_LIMITS',
     `${bodies}\nreturn { usageWindows };`);
@@ -133,11 +133,12 @@ describe('usageWindows — the two weekly windows', () => {
     assert.equal(byKey(r, 'fable').spent, 400);
   });
 
-  test('pre-model entries count toward all-models but not the per-model row', () => {
+  test('unattributed legacy entries are excluded rather than attributed to Claude', () => {
     const now = Date.now();
     writeLedger([{ ts: agoISO(now, HOUR), type: 'tokens', project: 'alpha', in: 700, out: 0, costUsd: 0 }]);
     const r = build(LIMITS).usageWindows(now);
-    assert.equal(byKey(r, 'wk').spent, 700);
+    assert.equal(byKey(r, 'wk').spent, 0);
+    assert.equal(r.unknownProviderTokens, 700);
     assert.equal(byKey(r, 'fable').spent, 0);
   });
 
@@ -175,7 +176,7 @@ describe('weekSummary — choosing plan data over the estimate', () => {
 
   /** weekSummary bound to a given USAGE_LIMITS + realUsage() stub. */
   function summaryWith(limits, realUsageStub) {
-    const bodies = ['weekStart', 'usageWindows', 'topLabel', 'weekSummary']
+    const bodies = ['weekStart', 'usageWindows', 'topLabel', 'weekSummary', 'costCoverage', 'addCostCoverage', 'inferProvider']
       .map((n) => extractFunction(SRC, n)).join('\n');
     return new Function('loadEntries', 'PROJECTS', 'WEEKLY_HOUR_TARGET', 'USAGE_LIMITS', 'realUsage',
       `${bodies}\nreturn weekSummary;`)(() => [], { alpha: {} }, 35, limits, realUsageStub)();

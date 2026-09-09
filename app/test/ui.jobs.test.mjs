@@ -23,7 +23,9 @@ import { startUI, sleep, CHROME } from './uiHarness.mjs';
 const hasChrome = fs.existsSync(CHROME);
 const opts = { skip: hasChrome ? false : 'Google Chrome not installed' };
 
-let ui, sb, page, wsPush, id, jobKey;
+let ui, sb, page, wsPush, id, jobKey, taskFixture;
+const SESSION_TURN = 'job-card-contract-turn';
+let sessionInvocation = 1;
 const stopPosts = [];
 const pageErrors = [];
 
@@ -34,6 +36,8 @@ const RUN_START = iso(30000);
 /** the full v3 wire shape for a session job (IMPLEMENTATION.md §1) */
 const sessJob = (over = {}) => ({
   key: jobKey, source: 'session', project: 'alpha', taskId: id,
+  appTurnId: SESSION_TURN, taskCreated: taskFixture?.created,
+  jobRunId: `${over.key || jobKey}:invocation-${sessionInvocation}`,
   file: 'models/fig3.jl', lang: 'julia', command: 'julia --project=. --threads=4 models/fig3.jl --chains 4 --draws 10000',
   state: 'running', bg: false, detached: false, inline: false, stopping: false,
   startedAt: SESSION_START, elapsedMs: 65000, pid: 48213,
@@ -77,13 +81,14 @@ before(async () => {
     category: 'calibration', oversight: 'coop',
   });
   id = created.id;
+  taskFixture = created;
   jobKey = `sess:alpha/${id}/toolu_01`;
   await sb.fetchJson('PATCH', `/api/tasks/alpha/${id}`, { status: 'running' });
   await page.goto(`${sb.base}/#alpha`);
   await page.waitForSelector('#v-alpha .wb .ctabs', { timeout: 15000 });
   await sleep(600);
-  await wsPush('session:stream', { project: 'alpha', id, chunk: '▸ you ─────\nRegenerate Fig 3.\n' });
-  await wsPush('session:stream', { project: 'alpha', id, chunk: '\n[tool: Bash] julia --project=. models/fig3.jl\n' });
+  await wsPush('session:stream', { project: 'alpha', id, turnId: SESSION_TURN, chunk: '▸ you ─────\nRegenerate Fig 3.\n' });
+  await wsPush('session:stream', { project: 'alpha', id, turnId: SESSION_TURN, chunk: '\n[tool: Bash] julia --project=. models/fig3.jl\n' });
   await sleep(400);
 });
 
@@ -261,6 +266,8 @@ test('wave-1 counters: lastError renders as "last: file:line:col msg"; coverage,
   c = await readCard();
   assert.match(c.left, /^✗ exit 1 · last: main\.go:8:2 undefined: foo · program exit 1 · /);
   // back to a plain running card for the tests that follow
+  // A terminal invocation cannot become running again: this is a new run.
+  sessionInvocation++;
   await wsPush('job:status', { project: 'alpha', job: sessJob() });
   await sleep(200);
 });
@@ -325,6 +332,7 @@ test('stale: numbers grey to --dim (≥ 3:1 on --panel), the clock keeps its ink
 });
 
 test('the expanded card: click toggles, aria-expanded, two sparklines, phase timeline, copyable pid, Escape collapses', opts, async () => {
+  await page.evaluate(() => { document.querySelector('.csJobs .jobCard')._marked = true; });
   // a few samples so the sparklines have shape, a phase change and a stall window
   for (let i = 0; i < 6; i++) {
     await wsPush('job:status', { project: 'alpha', job: sessJob({
@@ -359,9 +367,10 @@ test('the expanded card: click toggles, aria-expanded, two sparklines, phase tim
   assert.equal(x.svgs, 2, 'two inline-SVG sparklines (cores, mem)');
   assert.equal(x.polylines, 2);
   assert.ok(x.phases.some((t) => /^start /.test(t)) && x.phases.some((t) => /^precompiling /.test(t)) && x.phases.some((t) => /^running /.test(t)), `phase timeline from phase.name changes: ${x.phases}`);
-  // two windows: the 48 s stall from the health test above and this 21 s one
+  // The earlier 48s stall belonged to a completed invocation. Only the new
+  // invocation's 21s window may appear in this card's measured history.
   assert.ok(x.hatch >= 1, 'stalled windows are hatched');
-  assert.match(x.cap, /stalled 1m09s/, 'the caption sums the stalled windows');
+  assert.match(x.cap, /stalled 21s/, 'the caption excludes a previous invocation\'s stalled windows');
   assert.deepEqual(x.tail, ['line 3', 'line 4', 'line 5'], 'last 3 output lines');
   assert.equal(x.pidBtn, 'pid 48213 ⧉');
   assert.equal(x.proc, '3 procs · 9 thr');
@@ -395,7 +404,7 @@ test('the card never flickers: no entrance replays across streams, patches, and 
     }, true);
   });
   for (const c of ['∴ thinking…\n', 'solving the model, output pending…\n'.repeat(6)]) {
-    await wsPush('session:stream', { project: 'alpha', id, chunk: c });
+    await wsPush('session:stream', { project: 'alpha', id, turnId: SESSION_TURN, chunk: c });
     await sleep(60);
   }
   await wsPush('job:status', { project: 'alpha', job: sessJob({ elapsedMs: 90000, cores: 3.4 }) });
@@ -413,8 +422,8 @@ test('the card never flickers: no entrance replays across streams, patches, and 
   await page.fill('#composerInput', 'How is the fit looking so far?');
   await page.press('#composerInput', 'Enter');
   const minOpacity = await dipPromise;
-  await wsPush('task:update', { project: 'alpha', task: { id, status: 'running', title: 'Regenerate Fig 3', project: 'alpha' } });
-  await wsPush('session:status', { project: 'alpha', id, status: 'running' });
+  await wsPush('task:update', { project: 'alpha', task: { ...taskFixture, status: 'running' } });
+  await wsPush('session:status', { project: 'alpha', id, turnId: SESSION_TURN, status: 'running' });
   await sleep(300);
   const replays = await page.evaluate(() => window.__jobInReplays);
   assert.equal(replays, 0, 'the entrance animation never replays after first appearance');
@@ -452,8 +461,12 @@ test('an OLD event (cpu/mem only) still renders — labelled % / rss — and nev
   await wsPush('job:status', { project: 'alpha', job: { key: oldKey, source: 'session', project: 'alpha', taskId: id, file: 'old.R', lang: 'r', command: 'Rscript old.R', state: 'done', exitCode: 0, ms: 21000, startedAt: iso(21000), elapsedMs: 21000, pid: 777, cpu: 0, mem: 2.1e9 } });
   await sleep(200);
   const d = await readCard(`.csJobs .jobCard[data-jobkey="${oldKey}"]`);
-  assert.equal(d.stateTxt, 'done');
-  assert.equal(d.left, '✓ 21s');
+  assert.equal(d, null, 'unowned legacy completion cannot attach itself to a current turn');
+  const legacySummary = await page.evaluate(async () => {
+    const { jobFeedRow } = await import('/jobs.js');
+    return jobFeedRow({ state: 'done', ms: 21000, exitCode: 0 }).html;
+  });
+  assert.match(legacySummary, /21s/, 'legacy summary remains renderable for task history');
   assert.equal(pageErrors.length, 0, `no page errors: ${pageErrors.join(' | ')}`);
 });
 
@@ -600,7 +613,7 @@ test('both the terminal hold timer and in-flight fade are fenced to their origin
 test('⊘ stop posts the job key and shows the stopping state', opts, async () => {
   await page.click(`.csJobs .jobCard[data-jobkey="${jobKey}"] .jobStop`);
   await sleep(200);
-  assert.deepEqual(stopPosts, [{ key: jobKey, startedAt: SESSION_START }]);
+  assert.deepEqual(stopPosts, [{ key: jobKey, startedAt: SESSION_START, jobRunId: sessJob().jobRunId }]);
   const btnTxt = await page.evaluate((k) => document.querySelector(`.csJobs .jobCard[data-jobkey="${k}"] .jobStop`)?.textContent, jobKey);
   assert.equal(btnTxt, 'stopping…');
   await wsPush('job:status', { project: 'alpha', job: sessJob({ stopping: true }) });
@@ -633,7 +646,7 @@ test('a ▶ run job: honest bar, iter counter, ≈ETA, owned output cell; clicki
   await sleep(150);
   const after = await readCard('.runJobSlot .jobCard');
   assert.ok(!after.expanded, 'the stop button does not toggle the card');
-  assert.deepEqual(stopPosts.at(-1), { key: 'run:alpha', startedAt: RUN_START });
+  assert.deepEqual(stopPosts.at(-1), { key: 'run:alpha', startedAt: RUN_START, jobRunId: runJob().jobRunId });
 });
 
 test('background + detached + notebook chips; the turn ends → detached becomes a LIVE feed row with ⊘ stop', opts, async () => {
@@ -657,7 +670,7 @@ test('background + detached + notebook chips; the turn ends → detached becomes
 
   const { body: tw } = await sb.fetchJson('PATCH', `/api/tasks/alpha/${id}`, { status: 'waiting' });
   await wsPush('task:update', { project: 'alpha', task: tw });
-  await wsPush('session:status', { project: 'alpha', id, status: 'waiting' });
+  await wsPush('session:status', { project: 'alpha', id, turnId: SESSION_TURN, status: 'waiting' });
   await sleep(400);
   const after = await page.evaluate(() => ({
     states: Object.fromEntries([...document.querySelectorAll('.csJobs .jobCard')].map((el) => [el.dataset.jobkey, el.dataset.state])),
@@ -680,7 +693,8 @@ test('background + detached + notebook chips; the turn ends → detached becomes
   assert.match(row, /90% · 8m5\ds · ≈1m40s left/);
   await page.click('.csJobFeed .jobFeedRow.live .jfAct.stop');
   await sleep(150);
-  assert.deepEqual(stopPosts.at(-1), { key: detKey, startedAt: SESSION_START });
+  assert.deepEqual(stopPosts.at(-1), { key: detKey, startedAt: SESSION_START,
+    jobRunId: sessJob({ key: detKey }).jobRunId });
   // the detached job ends: its live row becomes an end-summary row (after the fade)
   await wsPush('job:status', { project: 'alpha', job: sessJob({ key: detKey, detached: true, file: 'sim.jl', lang: 'julia', command: 'nohup julia sim.jl &', state: 'stopped', ms: 540000, exit: { code: null, signal: 'SIGTERM', byUser: true }, progress: { frac: 0.9, iter: 900, total: 1000, etaS: null }, memPeakBytes: 1.4e9 }) });
   const { body: tr2 } = await sb.fetchJson('PATCH', `/api/tasks/alpha/${id}`, { status: 'running' });

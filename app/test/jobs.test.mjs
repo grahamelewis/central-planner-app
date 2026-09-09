@@ -378,13 +378,23 @@ test('supervisor loop: card follows interpreter respawns, ⊘ stop kills the loo
     //   nohup bash -c 'until python3 x.py; do sleep …; done' &
     // the interpreter dies and RESPAWNS — the card must ride across the
     // boundary, and ⊘ stop must kill the loop first or it would just respawn
-    fs.writeFileSync(path.join(proj, 'sup_pulse.py'), 'import time\ntime.sleep(300)\n');
-    const cmd = `nohup bash -c 'cd ${proj}; until python3 sup_pulse.py; do sleep 0.4; done' >/dev/null 2>&1 & disown`;
+    const fixture = path.join(proj, `supervisor-${path.basename(root)}.py`);
+    fs.writeFileSync(fixture, 'import time\ntime.sleep(300)\n');
+    const cmd = `nohup bash -c 'cd ${proj}; until python3 ${fixture}; do sleep 0.4; done' >/dev/null 2>&1 & disown`;
+    // Use the unique full path, not a global process-name query: a concurrent
+    // suite has a different temp project and must never be asserted or killed.
+    const ownTree = async () => {
+      const snap = await _test.psSnapshot();
+      assert.ok(snap, 'process snapshot required to verify fixture ownership');
+      const roots = [...snap.procs].filter(([, p]) => p.args.includes(fixture));
+      const pids = new Set(roots.flatMap(([pid]) => _test.descendantsOf(snap, pid, true)));
+      return [...pids].filter(pid => snap.procs.has(pid)).map(pid => ({ pid, ...snap.procs.get(pid) }));
+    };
     // launch for real, re-parented to launchd like a genuine detached run
     spawn('bash', ['-c', cmd], { stdio: 'ignore', detached: true }).unref();
     const job = sessionJobStart('alpha', 'tsk-sup', 'toolu_sup', cmd);
-    assert.ok(job && job.detached === true, 'quoted supervisor launch detected as detached');
     try {
+      assert.ok(job && job.detached === true, 'quoted supervisor launch detected as detached');
       await until(() => _test.jobs.get(job.key)?.pid, 10000);
       const pid1 = _test.jobs.get(job.key).pid;
       sessionJobEnd('toolu_sup', { error: false });   // launch ack — ignored
@@ -397,14 +407,24 @@ test('supervisor loop: card follows interpreter respawns, ⊘ stop kills the loo
       }, 10000);
       assert.equal(_test.jobs.get(job.key).state, 'running', 'card rode across the crash boundary');
       // ⊘ stop: the supervisor must die too, or it would respawn once more
+      const beforeStop = await ownTree();
+      assert.ok(beforeStop.length >= 2, 'own supervisor and interpreter are visible before Stop');
       stopSessionJob('alpha', job.key);
       await until(() => _test.jobs.get(job.key)?.state === 'stopped', 8000);
       await sleep(1500); // longer than the loop's 0.4s sleep — a respawn window
-      const left = execSync('pgrep -f sup_pulse || true', { encoding: 'utf8' }).trim();
-      assert.equal(left, '', 'no supervisor or interpreter left running after stop');
+      assert.deepEqual(await ownTree(), [], 'no own supervisor or respawned interpreter left after Stop');
+      const afterStop = await _test.psSnapshot();
+      assert.ok(afterStop);
+      assert.deepEqual(beforeStop.filter(p => afterStop.procs.get(p.pid)?.args === p.args), [],
+        'all observed own descendants are gone, including sleepers without the script in argv');
     } finally {
-      try { execSync('pkill -f sup_pulse'); } catch { /* already gone */ }
-      _test.jobs.delete(job.key);
+      const owned = await ownTree();
+      // Stop parents before children so a surviving supervisor cannot respawn.
+      const depth = p => { let n = 0; while ((p = owned.find(a => a.pid === p.ppid))) n++; return n; };
+      for (const p of owned.sort((a, b) => depth(a) - depth(b))) {
+        try { process.kill(p.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      }
+      if (job) _test.jobs.delete(job.key);
     }
   });
 
@@ -416,7 +436,9 @@ test('inline eval: a REAL `julia -e` program gets a card titled by the tool desc
       { label: 'Pass-through (BPP φ and structural Φ) at pe=0.50 fit' });
     assert.ok(job, 'inline julia -e detected');
     assert.equal(job.inline, true);
-    assert.equal(job.file, 'Pass-through (BPP φ and structural Φ) at pe=0.50 fit');
+    assert.equal(job.file, null, 'an inline program is not a file path');
+    assert.equal(job.displayTitle, 'Pass-through (BPP φ and structural Φ) at pe=0.50 fit');
+    assert.equal(job.titleKind, 'label');
     try {
       const vis = await until(() => getJobs().find((j) => j.key === job.key && j.pid), 10000);
       assert.equal(vis.state, 'running');
@@ -430,7 +452,8 @@ test('inline eval: a REAL `julia -e` program gets a card titled by the tool desc
       // history keeps the label + inline flag for the activity feed
       const rec = getJobHistory('alpha').pop();
       assert.equal(rec.inline, true);
-      assert.match(rec.file, /Pass-through/);
+      assert.match(rec.displayTitle, /Pass-through/);
+      assert.equal(rec.file, null);
     } finally {
       try { sh.kill('SIGKILL'); } catch { /* gone */ }
       sessionJobEnd('toolu_inl', { error: false });
@@ -1146,7 +1169,7 @@ test('session pin: REAL `cargo run` — cargo is pinned as the tree root, then e
     const job = sessionJobStart('alpha', 'tsk-cargo', 'toolu_cargo', cmd);
     assert.ok(job, 'cargo run detected');
     assert.equal(job.lang, 'rust');
-    assert.equal(job.file, 'sleepy (cargo run)');
+    assert.equal(job.displayTitle, 'sleepy (cargo run)');
     assert.ok(job._pin && job._pin.tree, 'cargo is a tree-root pin');
     try {
       await until(() => _test.jobs.get(job.key).pid, 15000);
@@ -1160,7 +1183,7 @@ test('session pin: REAL `cargo run` — cargo is pinned as the tree root, then e
       assert.equal(_test.jobs.get(job.key).pid, pid, 'the pin never moved');
       const vis = await until(() => getJobs().find((j) => j.key === job.key && j.cpu != null), 8000);
       assert.equal(vis.lang, 'rust');
-      assert.equal(vis.file, 'sleepy (cargo run)');
+      assert.equal(vis.displayTitle, 'sleepy (cargo run)');
       stopSessionJob('alpha', job.key);
       await until(() => _test.jobs.get(job.key)?.state === 'stopped', 8000);
     } finally {
@@ -1197,7 +1220,7 @@ test('session pin: REAL `npm run sleepy` — npm is found, then the card re-pins
     const sh = spawn('bash', ['-c', cmd], { stdio: 'ignore' });
     const job = sessionJobStart('alpha', 'tsk-npm', 'toolu_npm', cmd);
     assert.ok(job && job.lang === 'node');
-    assert.equal(job.file, 'pkgx (npm run sleepy)');
+    assert.equal(job.displayTitle, 'pkgx (npm run sleepy)');
     assert.ok(job._pin.child instanceof RegExp);
     try {
       const args = await untilAsync(async () => {
@@ -1210,7 +1233,7 @@ test('session pin: REAL `npm run sleepy` — npm is found, then the card re-pins
       assert.equal(_test.jobs.get(job.key)._pinChild, null, 'the child pin is one-shot');
       assert.ok((_test.jobs.get(job.key)._ancestry || []).length >= 1, 'ancestry recorded from the child (respawn containment)');
       const vis = await until(() => getJobs().find((j) => j.key === job.key), 10000);
-      assert.equal(vis.file, 'pkgx (npm run sleepy)');
+      assert.equal(vis.displayTitle, 'pkgx (npm run sleepy)');
       // ⊘ stop kills node; npm exits with it
       stopSessionJob('alpha', job.key);
       await until(() => _test.jobs.get(job.key)?.state === 'stopped', 8000);
@@ -1255,7 +1278,7 @@ test('session pin: REAL `go run .` — go is found, the card re-pins to the go-b
     const cmd = `cd ${gomod} && go run .`;
     const sh = spawn('bash', ['-c', cmd], { stdio: 'ignore' });
     const job = sessionJobStart('alpha', 'tsk-go', 'toolu_go', cmd);
-    assert.ok(job && job.lang === 'go' && job.file === 'gomod (go run)');
+    assert.ok(job && job.lang === 'go' && job.displayTitle === 'gomod (go run)');
     try {
       const args = await untilAsync(async () => {
         const pid = _test.jobs.get(job.key).pid;
@@ -1278,7 +1301,7 @@ test('respawn: REAL supervisor loop around `npm run sleepy` — the card follows
     const cmd = `cd ${js} && until npm run sleepy; do sleep 0.3; done`;
     const sh = spawn('bash', ['-c', cmd], { stdio: 'ignore' });
     const job = sessionJobStart('alpha', 'tsk-loop', 'toolu_loop', cmd, { bg: true });
-    assert.ok(job && job.file === 'pkgx (npm run sleepy)');
+    assert.ok(job && job.displayTitle === 'pkgx (npm run sleepy)');
     try {
       const pinnedNode = async () => {
         const pid = _test.jobs.get(job.key).pid;
@@ -1323,7 +1346,9 @@ test('seams: `go run .` re-pins from go to its go-build exe (shallowest child), 
 test('seams: `cargo watch -x run` pins the watcher as the tree root and never moves across its restarts', async () => {
   await synthetic(async (clock, t0) => {
     const job = sessionJobStart('alpha', 'tsk-syn', 'toolu_syn_watch', `cd ${rs} && cargo watch -x run`);
-    assert.ok(job && job._pin.tree && job.file === 'sleepy (cargo watch)');
+    assert.ok(job && job._pin.tree && job.displayTitle === 'sleepy (cargo watch)');
+    assert.equal(job.file, null);
+    assert.equal(job.titleKind, 'label');
     job.t0 = t0 - 5000;
     const gen = (bin) => snapOf([
       psRow(200, process.pid, 0.0, 3000, '0:00.05', 'S', 'bash -c cargo watch -x run', '00:03'),

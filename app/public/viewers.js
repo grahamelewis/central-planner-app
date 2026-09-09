@@ -471,7 +471,7 @@ export function syncViewerStack(top, key, vsel) {
    unsaved draft when one exists (live preview while typing — the editor's
    input handler calls this debounced), else the cached/fetched disk copy
    (refreshed on file:changed while a session edits it). Renders with the
-   console's own pipeline (md() = marked + DOMPurify + math stash; katexEl),
+   console's own pipeline (md() = marked + DOMPurify + math tokens; katexEl),
    patches only when the source actually changed, and keeps the reader's
    scroll position across re-renders. */
 function syncMdPane(key, rel) {

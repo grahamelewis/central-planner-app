@@ -11,10 +11,10 @@ import { createProject, updateProject, projectStatus } from './lib/projectStore.
 import { initWss, broadcast, onClientConnect } from './lib/events.js';
 import { allTasks, listTasks, createTask, updateTask, deleteTask, getTask, getCategories, getAbstract } from './lib/taskStore.js';
 import { isPathGranted } from './lib/extpins.js';
-import { logTime, logTokens, weekSummary, dailyActivity } from './lib/ledger.js';
+import { logTime, logTokenBatch, weekSummary, dailyActivity } from './lib/ledger.js';
 import { memorySettings } from './lib/memorySettings.js';
 import { configureTaskMemory } from './lib/taskMemory.js';
-import { launchTask, sendMessage, retryLastTurn, interrupt, recallTurn, getAllTurnStates, activeSessions, getTranscript, resolvePermission, hasActiveTurn, forgetTask, settleSession } from './lib/sessions.js';
+import { launchTask, sendMessage, retryLastTurn, interrupt, recallTurn, getAllTurnStates, activeSessions, getTranscript, resolvePermission, hasActiveTurn, forgetTask, settleSession, withRecordedSessionUsage } from './lib/sessions.js';
 import { getAuthStatus, checkAuth, startLogin, startAuthChecks } from './lib/auth.js';
 import { getProvidersSnapshot } from './lib/providers.js';
 import { getAgentDefaults, updateAgentDefaults } from './lib/agentSettings.js';
@@ -53,7 +53,21 @@ const app = express();
 const taskMemory = configureTaskMemory({
   getTask, getTranscript, isActive: hasActiveTurn,
   notify: (project, id) => broadcast('memory:update', { project, id }),
-  logUsage: (project, id, usage, model) => logTokens(project, id, usage.inputTokens, usage.outputTokens, usage.estimatedCostUsd, model, { action: 'memory', costSource: usage.costSource }),
+  logUsage: (project, id, usage, model) => {
+    const rows = usage.rows?.length ? usage.rows : [{ model, tokensIn: usage.inputTokens,
+      tokensOut: usage.outputTokens, costUsd: usage.estimatedCostUsd,
+      cachedInputTokens: usage.cachedInputTokens, cacheWriteInputTokens: usage.cacheWriteInputTokens }];
+    return logTokenBatch(rows.map(row => ({ project, taskId: id, tokensIn: row.tokensIn,
+      tokensOut: row.tokensOut, costUsd: row.costUsd, model: row.model === null ? null : row.model || model, details: {
+      action: 'memory', usageId: `${usage.usageId}:${row.model === null ? 'unallocated-cost' : row.model || model}`, provider: usage.provider,
+      taskCreated: usage.taskCreated,
+      superseded: row.superseded === true,
+      completeness: usage.completeness, scope: usage.scope, costSource: usage.costSource,
+      uncachedInputTokens: row.uncachedInputTokens, cachedInputTokens: row.cachedInputTokens,
+      cacheWriteInputTokens: row.cacheWriteInputTokens,
+      reasoningOutputTokens: usage.rows?.length ? row.reasoningOutputTokens : usage.reasoningTokens,
+    } })));
+  },
 });
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(APP_DIR, 'public')));
@@ -154,7 +168,8 @@ function snapshot() {
     projects,
     categories: safeCall('categories', () => getCategories(), {}),
     abstracts,
-    tasks: safeCall('tasks', () => allTasks(), {}),
+    tasks: safeCall('tasks', () => Object.fromEntries(Object.entries(allTasks()).map(([project, tasks]) =>
+      [project, tasks.map(task => withRecordedSessionUsage(project, task))])), {}),
     artifacts: safeCall('artifacts', () => getArtifacts(), []),
     pdf: safeCall('pdf', () => getPdfWatches(), {}),
     ledger: safeCall('ledger', () => weekSummary(), {}),
@@ -166,6 +181,7 @@ function snapshot() {
     // per-runtime toolchain summary (ok, versions, install hint — no paths); GET /api/toolchains has the detail
     toolchains: safeCall('toolchains', () => toolchainsSummary(), {}),
     jobs: safeCall('jobs', () => getJobs(), []),
+    jobHistory: safeCall('job history', () => Object.fromEntries(Object.keys(PROJECTS).map(project => [project, getJobHistory(project)])), {}),
     texfix: safeCall('texfix', () => getTexfix(), {}),
     kaimon: safeCall('kaimon', () => getKaimonStatus(), {}),
     update: safeCall('update', () => getUpdateStatus(), {}),
@@ -854,7 +870,12 @@ app.post('/api/jobs/:project/stop', route((req, res) => {
   assertProjectKey(project);
   const key = String((req.body || {}).key || '');
   const startedAt = req.body?.startedAt;
-  if (startedAt !== undefined) {
+  const jobRunId = req.body?.jobRunId;
+  if (jobRunId !== undefined) {
+    if (typeof jobRunId !== 'string' || !jobRunId) return res.status(400).json({ error: 'jobRunId must identify the displayed job instance' });
+    const current = getJobs().find(job => job.key === key && job.project === project);
+    if (!current || current.jobRunId !== jobRunId) return res.status(409).json({ error: 'That job instance is no longer current; refresh the card before stopping it.' });
+  } else if (startedAt !== undefined) {
     if (typeof startedAt !== 'string' || !Number.isFinite(Date.parse(startedAt))) {
       return res.status(400).json({ error: 'startedAt must identify the displayed job instance' });
     }

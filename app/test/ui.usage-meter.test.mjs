@@ -291,3 +291,37 @@ test('the left-hand status segments still render alongside the meter', opts, asy
     document.querySelector('#v-alpha .statusbar > .sbLeft')?.textContent || '');
   assert.match(left, /tok/, 'the wk … tok figure is still there');
 });
+
+test('session and project counters expose exact processed tokens and uncertainty', opts, async () => {
+  const result = await page.evaluate(async () => {
+    const { sessionBody } = await import('/session.js');
+    const { tasksOf } = await import('/store.js');
+    const task = { ...tasksOf('alpha')[0], status: 'waiting', session: {
+      provider: 'claude', tokensIn: 8123456, tokensOut: 376545, turns: 7,
+      usageCompleteness: 'legacy-unverified', usageLegacyTokens: 100,
+    } };
+    const box = document.createElement('div');
+    box.innerHTML = sessionBody('alpha', task);
+    const span = box.querySelector('.sessbar span[title]');
+    return { text: span?.textContent, title: span?.getAttribute('title'),
+      projectTitle: document.querySelector('#v-alpha .sbLeft span[title*="Project this week"]')?.getAttribute('title') };
+  });
+  assert.match(result.text, /8\.5M tok processed/);
+  assert.match(result.title, /8,500,001 tokens processed/);
+  assert.match(result.title, /100 historical tokens unverified/);
+  assert.match(result.title, /Active work may not yet be included/);
+  assert.match(result.projectTitle, /1,500 tokens processed/);
+});
+
+test('estimated quota tooltip is exact and discloses unknown-provider exclusions', opts, async () => {
+  await wsPush('ledger:update', ledger({ unknownProviderTokens: 1234567 }));
+  await sleep(200);
+  const value = await page.evaluate(() => ({
+    title: document.querySelector('#v-alpha .quota')?.getAttribute('title'),
+    foot: document.querySelector('#v-alpha .qpF')?.textContent,
+  }));
+  assert.match(value.title, /3,100,000 of 5,000,000 tokens processed/);
+  assert.match(value.title, /not subscription allowance/);
+  assert.match(value.foot, /Claude-attributed tokens only/);
+  assert.match(value.foot, /1,234,567 historical tokens with unknown provider excluded/);
+});

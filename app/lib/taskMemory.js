@@ -8,6 +8,7 @@ import { ROOT } from './config.js';
 import { writeFileAtomic } from './paths.js';
 import { memorySettings, MEMORY_MODELS, memoryError } from './memorySettings.js';
 import { requestCodexMemory } from './codexMemory.js';
+import { collectClaudeWorker, memoryAccounting } from './backgroundUsage.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const FIELDS = ['findings', 'constraints', 'uncertainties', 'nextSteps'];
@@ -26,19 +27,20 @@ const INSTRUCTIONS = `Maintain a concise task checkpoint, not a new investigatio
 //   input_tokens_details: { cached_tokens }, output_tokens_details: { reasoning_tokens } },
 //   output: [{ type: 'message', content: [{ type: 'output_text', text }] | [{ type: 'refusal' }] }],
 //   costUsd? }  — costUsd is the provider's own estimate when it offers one.
-export async function requestMemory(body, connection = 'codex-subscription') {
-  if (process.env.CP_NO_BILLED === '1') throw memoryError('Billed memory calls are disabled in this environment.', 403);
-  if (connection === 'claude-sdk') return requestClaudeSdk(body);
-  if (connection === 'codex-subscription') return requestCodexMemory(body);
-  throw memoryError('Unknown memory connection. OpenAI memory requires the Codex subscription connection.', 409);
+export async function requestMemory(body, connection = 'codex-subscription', { onUsage } = {}) {
+  if (process.env.CP_NO_BILLED === '1') throw Object.assign(memoryError('Billed memory calls are disabled in this environment.', 403), { dispatched: false });
+  if (connection === 'claude-sdk') return requestClaudeSdk(body, { onUsage });
+  if (connection === 'codex-subscription') return requestCodexMemory(body, { onUsage });
+  throw Object.assign(memoryError('Unknown memory connection. OpenAI memory requires the Codex subscription connection.', 409), { dispatched: false });
 }
 
 // One tool-less, single-turn Agent SDK query on the dashboard's own Claude
 // login. No project cwd, no settings sources, no tools: the writer sees only
 // the system prompt and the JSON payload, exactly like the API transport.
-export async function requestClaudeSdk(body, { run = query, cwd = ROOT, timeoutMs = 90000 } = {}) {
-  if (run === query && process.env.CP_NO_BILLED === '1') throw memoryError('Billed memory calls are disabled in this environment.', 403);
-  const q = run({
+export async function requestClaudeSdk(body, { run = query, cwd = ROOT, timeoutMs = 90000, onUsage } = {}) {
+  if (run === query && process.env.CP_NO_BILLED === '1') throw Object.assign(memoryError('Billed memory calls are disabled in this environment.', 403), { dispatched: false });
+  let q;
+  try { q = run({
     prompt: body.prompt,
     options: {
       cwd,
@@ -57,29 +59,25 @@ export async function requestClaudeSdk(body, { run = query, cwd = ROOT, timeoutM
       ...(body.effort ? { effort: body.effort } : {}),
       persistSession: false,
     },
+  }); } catch {
+    throw Object.assign(memoryError('Could not start the Claude memory worker.', 502), { dispatched: false });
+  }
+  const { result, failure, timedOut, accounting } = await collectClaudeWorker(q, {
+    model: body.model, timeoutMs, closeOnTimeout: true,
+    onUsage: onUsage ? snapshot => onUsage(memoryAccounting(snapshot)) : undefined,
   });
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try { q.close?.(); } catch { /* shutdown already underway */ }
-  }, timeoutMs);
-  let result = null;
-  try {
-    for await (const msg of q) if (msg && msg.type === 'result') result = msg;
-  } finally { clearTimeout(timer); }
-  if (timedOut) throw memoryError('Claude memory request timed out; previous checkpoint retained.', 502);
-  if (!result) throw memoryError('Claude memory request produced no result; no automatic retry.', 502);
-  const u = result.usage || {};
-  const inputTokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-  const usage = { input_tokens: inputTokens, output_tokens: u.output_tokens || 0,
-    input_tokens_details: { cached_tokens: u.cache_read_input_tokens || 0 },
-    output_tokens_details: { reasoning_tokens: 0 } };
+  const observed = memoryAccounting(accounting);
+  if (timedOut || failure || !result) {
+    const message = timedOut ? 'Claude memory request timed out; previous checkpoint retained.'
+      : failure ? 'Claude memory stream failed; previous checkpoint retained.'
+        : 'Claude memory request produced no result; no automatic retry.';
+    throw Object.assign(memoryError(message, 502), { accountingResponse: observed });
+  }
   const ok = result.subtype === 'success' && !result.is_error;
   const refused = result.stop_reason === 'refusal';
   const text = result.structured_output !== undefined && result.structured_output !== null
     ? JSON.stringify(result.structured_output) : String(result.result || '');
-  return { status: ok ? 'completed' : 'incomplete', usage,
-    costUsd: Number.isFinite(result.total_cost_usd) ? result.total_cost_usd : undefined,
+  return { status: ok ? 'completed' : 'incomplete', ...observed,
     output: [{ type: 'message', content: refused ? [{ type: 'refusal' }] : [{ type: 'output_text', text }] }] };
 }
 
@@ -218,6 +216,8 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
       settings: settings.publicSettings(), reservedTodayUsd: spentToday(),
       totals: { inputTokens: record.jobs.reduce((n, j) => n + (j.usage?.inputTokens || 0), 0),
         outputTokens: record.jobs.reduce((n, j) => n + (j.usage?.outputTokens || 0), 0),
+        incompleteJobs: jobs.filter(j => j.status !== 'blocked' && !j.notDispatched
+          && (j.status === 'interrupted' || !j.usage || j.usage.completeness !== 'complete')).length,
         estimatedCostUsd: record.jobs.reduce((n, j) => n + (j.usage?.estimatedCostUsd || 0), 0),
         reservedUsd: record.jobs.reduce((n, j) => n + (j.reservedUsd || 0), 0) },
     };
@@ -242,19 +242,53 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
     reserve(job); // must be durable before dispatch
     record.jobs.push(job); save(info, record); running.set(info.key, job.id);
     emit(project, id);
-    try {
-      const response = await request(prepared.body, s.connection);
+    let acceptingUsage = true;
+    const captureUsage = (response = {}) => {
+      const oldRows = job.usage?.rows || [];
       const u = response.usage;
-      if (u && Number.isFinite(u.input_tokens) && Number.isFinite(u.output_tokens) && u.input_tokens >= 0 && u.output_tokens >= 0) {
-        // Prefer the provider's own cost estimate (the Agent SDK reports one);
-        // otherwise price at the planning rates with the cache-write premium.
-        const rated = subscription ? 0 : (u.input_tokens * model.input * model.cacheWrite + u.output_tokens * model.output) / 1e6;
-        const reported = Number.isFinite(response.costUsd) && response.costUsd >= 0 ? response.costUsd : null;
-        job.usage = { inputTokens: u.input_tokens, outputTokens: u.output_tokens,
-          cachedInputTokens: u.input_tokens_details?.cached_tokens || 0, reasoningTokens: u.output_tokens_details?.reasoning_tokens || 0,
-          estimatedCostUsd: subscription ? 0 : reported ?? rated, costSource: subscription ? 'subscription' : reported === null ? 'planning-rates' : 'provider-estimate' };
-        try { logUsage(project, id, job.usage, s.model); } catch { job.ledgerWarning = 'Usage saved here, but the shared ledger could not be updated.'; }
+      const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+      const input = count(u?.input_tokens), output = count(u?.output_tokens);
+      const known = input !== null && output !== null;
+      const rated = subscription || !known ? null : (input * model.input * model.cacheWrite + output * model.output) / 1e6;
+      const reported = Number.isFinite(response.costUsd) && response.costUsd >= 0 ? response.costUsd : null;
+      job.usage = { inputTokens: input, outputTokens: output,
+        cachedInputTokens: count(u?.input_tokens_details?.cached_tokens),
+        cacheWriteInputTokens: count(u?.input_tokens_details?.cache_write_tokens),
+        reasoningTokens: count(u?.output_tokens_details?.reasoning_tokens),
+        estimatedCostUsd: subscription ? null : reported ?? rated,
+        costSource: subscription ? 'subscription' : reported !== null ? 'provider-estimate' : rated !== null ? 'planning-rates' : 'unknown',
+        completeness: !known ? input !== null || output !== null ? 'partial' : 'unknown' : response.usageCompleteness || 'complete',
+        scope: response.usageScope || 'whole-query', usageId: `memory:${job.id}`,
+        provider: subscription ? 'codex' : 'claude', taskCreated: info.task.created,
+      };
+      const rows = response.usageRows?.length ? response.usageRows.map(row => ({ ...row })) : [{
+        model: s.model, tokensIn: input, tokensOut: output, costUsd: job.usage.estimatedCostUsd,
+        cachedInputTokens: job.usage.cachedInputTokens, cacheWriteInputTokens: job.usage.cacheWriteInputTokens,
+        reasoningOutputTokens: job.usage.reasoningTokens,
+      }];
+      if (job.usage.costSource === 'planning-rates') {
+        if (rows.length === 1) rows[0].costUsd = job.usage.estimatedCostUsd;
+        else { job.usage.estimatedCostUsd = null; job.usage.costSource = 'unknown'; }
       }
+      const models = new Set(rows.map(row => row.model));
+      for (const row of oldRows) if (!models.has(row.model)) rows.push({ model: row.model,
+        tokensIn: 0, tokensOut: 0, costUsd: null, superseded: true,
+        cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningOutputTokens: 0 });
+      job.usage.rows = rows;
+    };
+    const checkpointUsage = response => {
+      if (!acceptingUsage || running.get(info.key) !== job.id) return;
+      captureUsage(response);
+      if (!deleted.has(info.key)) save(info, record);
+      try { logUsage(project, id, job.usage, s.model); delete job.ledgerWarning; }
+      catch {
+        job.ledgerWarning = 'Usage saved here, but the shared ledger could not be updated.';
+        if (!deleted.has(info.key)) save(info, record);
+      }
+    };
+    try {
+      const response = await request(prepared.body, s.connection, { onUsage: checkpointUsage });
+      captureUsage(response);
       if (response.status !== 'completed') throw memoryError('Memory response was incomplete; previous checkpoint retained.', 502);
       const parts = (response.output || []).filter(o => o.type === 'message').flatMap(o => o.content || []);
       if (parts.some(p => p.type === 'refusal')) throw memoryError('Memory request was refused; previous checkpoint retained.', 502);
@@ -273,10 +307,21 @@ export function createMemoryService({ root = ROOT, settings = memorySettings, ge
         validation: 'structure-and-source-ids-only', inspectionOnly: true });
       job.status = 'completed';
     } catch (e) {
+      if (e?.accountingResponse) captureUsage(e.accountingResponse);
+      if (e?.dispatched === false) {
+        job.notDispatched = true;
+        captureUsage({ usage: { input_tokens: 0, output_tokens: 0 }, usageCompleteness: 'complete', costUsd: 0 });
+      }
       job.status = 'failed';
       // Do not persist arbitrary transport exceptions, which may contain credentials.
-      job.error = e.status ? e.message : 'Memory request or validation failed; no automatic retry. Previous checkpoint retained.';
+      job.error = e?.status ? e.message : 'Memory request or validation failed; no automatic retry. Previous checkpoint retained.';
     } finally {
+      acceptingUsage = false; // late transport events cannot resurrect deleted or newer memory
+      if (!job.usage) captureUsage();
+      // Failure/refusal/timeout is not a refund. Emit even unknown usage so
+      // incomplete accounting remains visible, under one stable job ID.
+      try { if (!job.notDispatched) logUsage(project, id, job.usage, s.model); delete job.ledgerWarning; }
+      catch { job.ledgerWarning = 'Usage saved here, but the shared ledger could not be updated.'; }
       job.finishedAt = now().toISOString();
       job.durationMs = Date.parse(job.finishedAt) - Date.parse(job.startedAt);
       running.delete(info.key);

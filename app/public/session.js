@@ -3,7 +3,7 @@
 // themed dropdown portal, model/perm/effort selectors + task PATCH setters,
 // sendMsg.
 
-import { enc, esc, OVS_LABEL, fmtTok, toast, confirmBox } from './util.js';
+import { enc, esc, OVS_LABEL, fmtTok, tokenTooltip, toast, confirmBox } from './util.js';
 import {
   state, ui, tailBufs, transcripts, pendingPerms, composerDrafts, queuedMsgs,
   tasksOf, taskProvider, agentName, providerState, providerModels,
@@ -11,6 +11,7 @@ import {
 } from './store.js';
 import { api } from './net.js';
 import { pumps, pumpConsole, seedTailBuf } from './console.js';
+import { appendConsoleText, bindConsoleTurn, reviseConsoleText } from './consoleOwnership.js';
 import { texFixCardHtml } from './texrun.js';
 import { MIC_OK } from './voice.js';
 import { renderWB, focusOn } from './workbench.js';
@@ -602,7 +603,7 @@ export function sessionBody(key, task) {
     <span>${permSelHtml(task)}</span>
     ${warmChip}
     ${s
-    ? `<span><b>${fmtTok((s.tokensIn || 0) + (s.tokensOut || 0))} tok</b> · ${s.turns || 0} turn${s.turns === 1 ? '' : 's'}</span>`
+    ? `<span title="${esc(tokenTooltip(s, 'Saved task session counter'))}. Active work may not yet be included."><b>${fmtTok((s.tokensIn || 0) + (s.tokensOut || 0))} tok processed${s.usageHasIncomplete || ['partial', 'unknown'].includes(s.usageCompleteness) ? ' · partial' : ''}</b> · ${s.turns || 0} turn${s.turns === 1 ? '' : 's'}</span>`
     : '<span>no session yet</span>'}</div>`;
   // messages typed mid-turn wait here, visibly — each × returns to the composer
   const qd = queuedMsgs[k] || [];
@@ -649,7 +650,8 @@ export async function sendMsg(project, id, text, { explicit = false } = {}) {
   // the echoes below are OPTIMISTIC — if the server refuses the message they
   // are rolled back, else the ▸ you marker strands mid-stream and everything
   // the still-running turn emits after it renders inside the you-bubble
-  const entry = { role: 'user', text, ts: new Date().toISOString() };
+  const requestId = submission?.requestId || crypto.randomUUID();
+  const entry = { role: 'user', text, ts: new Date().toISOString(), requestId, turnId: null };
   (transcripts[k] ?? (transcripts[k] = { entries: [], fetched: true })).entries.push(entry);
   // a live console buffer gets the message inline (same marker format the
   // transcript seed uses) — without this, a mid-conversation console never
@@ -657,12 +659,12 @@ export async function sendMsg(project, id, text, { explicit = false } = {}) {
   const splice = `\n▸ you ─────────\n${text}\n`;
   const echoed = !!tailBufs[k];
   if (echoed) {
-    tailBufs[k] += splice;
+    tailBufs[k] = appendConsoleText(k, tailBufs[k], splice, entry);
     if (!pumps[k]) pumps[k] = requestAnimationFrame(() => pumpConsole(project, k));
   }
   if (ui.view === project) renderWB(project);
   const delivery = api('POST', `/api/tasks/${enc(project)}/${enc(id)}/message`, {
-    text, ...(submission ? { requestId: submission.requestId } : {}),
+    text, requestId,
   });
   if (submission) trackSubmissionDelivery(project, id, submission, delivery);
   const response = await delivery;
@@ -671,7 +673,11 @@ export async function sendMsg(project, id, text, { explicit = false } = {}) {
   if (submission?.restored) return;
   const recalling = submission && ['recalling', 'recall-recovery'].includes(submission.phase);
   if (submission && (response || !recalling)) acknowledgeSubmission(project, id, submission, response);
-  if (response) { persistRecallState(); return; }
+  if (response) {
+    entry.turnId = response.turnId || null;
+    bindConsoleTurn(k, requestId, entry.turnId);
+    persistRecallState(); return;
+  }
   // refused (a turn raced in, task deleted…) — undo both echoes and keep the
   // text: it lands back in the composer, never silently lost
   const entries = transcripts[k]?.entries;
@@ -679,7 +685,7 @@ export async function sendMsg(project, id, text, { explicit = false } = {}) {
   if (ei >= 0) entries.splice(ei, 1);
   if (echoed && tailBufs[k]) {
     const cut = tailBufs[k].lastIndexOf(splice);
-    if (cut >= 0) tailBufs[k] = tailBufs[k].slice(0, cut) + tailBufs[k].slice(cut + splice.length);
+    if (cut >= 0) tailBufs[k] = reviseConsoleText(k, tailBufs[k], tailBufs[k].slice(0, cut) + tailBufs[k].slice(cut + splice.length));
     if (!pumps[k]) pumps[k] = requestAnimationFrame(() => pumpConsole(project, k));
   }
   if (!recalling && !submission?.draftRecovered) composerDrafts[k] = composerDrafts[k] ? `${text}\n\n${composerDrafts[k]}` : text;

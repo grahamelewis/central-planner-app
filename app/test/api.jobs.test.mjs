@@ -129,6 +129,49 @@ test('a delayed Stop for an earlier run cannot stop its replacement', async () =
   }
 });
 
+test('immutable invocation ID fences a stale Stop and takes precedence over the mutable execution clock', async () => {
+  const { body: before } = await sb.fetchJson('GET', '/api/state');
+  const old = before.jobs.find(j => j.key === 'run:alpha');
+  assert.ok(old?.jobRunId);
+  const launched = await sb.fetchJson('POST', '/api/run', { project: 'alpha', rel: 'loop.sh' });
+  assert.equal(launched.status, 200);
+  try {
+    const current = await sb.poll('/api/state', b => b.jobs?.some(j =>
+      j.key === 'run:alpha' && j.jobRunId !== old.jobRunId && j.state === 'running'), { timeoutMs: 15000 });
+    const replacement = current.jobs.find(j => j.key === 'run:alpha');
+    assert.ok(replacement.createdAt);
+    for (const jobRunId of ['', null, {}, 123]) {
+      const invalid = await sb.fetchJson('POST', '/api/jobs/alpha/stop', { key: 'run:alpha', jobRunId });
+      assert.equal(invalid.status, 400, `invalid invocation ID ${JSON.stringify(jobRunId)}`);
+    }
+    const stale = await sb.fetchJson('POST', '/api/jobs/alpha/stop', {
+      key: 'run:alpha', jobRunId: old.jobRunId, startedAt: replacement.startedAt,
+    });
+    assert.equal(stale.status, 409, 'matching execution clock cannot override a stale immutable ID');
+    const crossed = await sb.fetchJson('POST', '/api/jobs/beta/stop', {
+      key: 'run:alpha', jobRunId: replacement.jobRunId,
+    });
+    assert.equal(crossed.status, 409, 'an invocation cannot be stopped through a different project');
+    const { body: alive } = await sb.fetchJson('GET', '/api/state');
+    assert.equal(alive.runs.alpha.state, 'running');
+    const stopped = await sb.fetchJson('POST', '/api/jobs/alpha/stop', {
+      key: 'run:alpha', jobRunId: replacement.jobRunId, startedAt: old.startedAt,
+    });
+    assert.equal(stopped.status, 200, 'current immutable ID remains valid if the execution clock changed');
+    const settled = await sb.poll('/api/state', b => b.jobHistory?.alpha?.some(j =>
+      j.jobRunId === replacement.jobRunId && j.state === 'stopped'), { timeoutMs: 8000 });
+    const history = settled.jobHistory.alpha.find(j => j.jobRunId === replacement.jobRunId);
+    assert.equal(history.key, replacement.key);
+    assert.equal(history.createdAt, replacement.createdAt);
+    assert.equal(history.startedAt, replacement.startedAt);
+    assert.ok(history.endedAt, 'terminal timing survives the persisted snapshot path');
+    assert.equal(history.displayTitle, 'loop.sh');
+    assert.equal(history.titleKind, 'file');
+  } finally {
+    await sb.fetchJson('DELETE', '/api/run/alpha');
+  }
+});
+
 test('a quick run never surfaces a job card', async () => {
   await sb.poll('/api/state', (b) => b.runs?.alpha?.state !== 'running', { timeoutMs: 8000 });
   const { status } = await sb.fetchJson('POST', '/api/run', { project: 'alpha', rel: 'quick.sh' });

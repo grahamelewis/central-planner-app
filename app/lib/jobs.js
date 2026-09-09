@@ -19,6 +19,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
+import { randomUUID } from 'node:crypto';
 import { broadcast } from './events.js';
 import { PROJECTS, ROOT } from './config.js';
 import { writeFileAtomic } from './paths.js';
@@ -202,7 +203,7 @@ const nameAt = (c, id) => {
   if (mk && (!id || mk.id === id)) return projectName(mk);
   return c.cwd ? path.basename(c.cwd) : null;
 };
-const mkHit = (lang, file, pin, tok) => ({ lang, file, detached: false, inline: false, pin: { ...pin, tok } });
+const mkHit = (lang, file, pin, tok, titleKind = 'label') => ({ lang, file, titleKind, detached: false, inline: false, pin: { ...pin, tok } });
 
 // a bare binary: `./x`, `./build/app`, `target/debug/app`, `bin/tool`. Paths
 // under a build dir are taken on faith (the agent just built them); a plain
@@ -333,7 +334,7 @@ const LAUNCHERS = {
       const file = nonFlags(rest).find((t) => RUNTIMES.node.session.ext.test(t));
       return mkHit('node', file || label(nameAt(c, 'node'), 'nodemon'), {
         any: [{ argv0: NODEISH_RE, needle: 'nodemon' }], child: null, tree: true,
-      }, 'nodemon');
+      }, 'nodemon', file ? 'file' : 'label');
     },
   },
   make: {
@@ -422,7 +423,7 @@ function launcherHit(tokens, c) {
       continue;
     }
     const b = binaryToken(tok, c);
-    if (b && b.lang) return mkHit(b.lang, b.rel, { any: [{ argv0: b.argv0, needle: null }], child: null, tree: true }, tok);
+    if (b && b.lang) return mkHit(b.lang, b.rel, { any: [{ argv0: b.argv0, needle: null }], child: null, tree: true }, tok, 'file');
   }
   return null;
 }
@@ -441,7 +442,7 @@ function chainTail(hit, segs, si, c) {
       if (!b) continue;
       const any = hit.pin ? [...hit.pin.any] : [{ argv0: INTERP_ARGV0_OF(hit.lang), needle: String(hit.file).split('/').pop() }];
       any.push({ argv0: b.argv0, needle: null });
-      return { ...hit, file: b.rel, pin: { ...(hit.pin || { child: null, tree: true, tok: t }), any, compile: false } };
+      return { ...hit, file: b.rel, titleKind: 'file', pin: { ...(hit.pin || { child: null, tree: true, tok: t }), any, compile: false } };
     }
   }
   return hit;
@@ -741,10 +742,16 @@ function publicJob(j) {
   const quietMs = j.source === 'run' && running && j.lastOutputAt ? now - j.lastOutputAt : null;
   return {
     key: j.key,
+    jobRunId: j.jobRunId || null,
+    appTurnId: j.appTurnId || null,
+    taskCreated: j.taskCreated || null,
+    createdAt: j.createdAt || null,
     source: j.source,
     project: j.project,
     taskId: j.taskId || null,
     file: j.file,
+    displayTitle: j.displayTitle || null,
+    titleKind: j.titleKind || null,
     lang: j.lang,
     command: j.command || null,
     state: j.state,
@@ -753,6 +760,7 @@ function publicJob(j) {
     inline: !!j.inline,
     stopping: !!j._stopReq,
     startedAt: new Date(j.t0).toISOString(),
+    endedAt: j.endedAt != null ? new Date(j.endedAt).toISOString() : null,
     elapsedMs: running ? now - j.t0 : (j.ms != null ? j.ms : now - j.t0),
     pid: j.pid || null,
     // legacy (one release): raw Σ pcpu and Σ rss over the tree
@@ -860,6 +868,7 @@ function recordHistory(j) {
     const h = loadHistory();
     const arr = h[j.project] || (h[j.project] = []);
     arr.push({
+      ...publicJob(j), // retain immutable ownership + terminal summary on reload
       ts: new Date(j.endedAt).toISOString(),
       file: j.file,
       lang: j.lang,
@@ -893,7 +902,7 @@ function historyFor(project, file, inline) {
   try {
     if (inline || !file) return null;
     const ms = getJobHistory(project)
-      .filter((r) => r.file === file && r.state === 'done' && Number(r.ms) > 0)
+      .filter((r) => (r.file || r.displayTitle) === file && r.state === 'done' && Number(r.ms) > 0)
       .map((r) => Number(r.ms))
       .sort((a, b) => a - b);
     if (!ms.length) return null;
@@ -1423,23 +1432,36 @@ async function tick(opts = null) {
     only the process table (or the turn ending) finishes the card. `label` =
     the tool call's own description — the card's title for inline evals,
     which have no filename to show. */
-export function sessionJobStart(project, taskId, toolUseId, command, { bg = false, label = '' } = {}) {
+export function sessionJobStart(project, taskId, toolUseId, command, { bg = false, label = '', appTurnId = null, taskCreated = null } = {}) {
   try {
     if (!toolUseId || !PROJECTS[project]) return null;
     const hit = detectScriptRun(command, { root: PROJECTS[project].root });
     if (!hit) return null;
-    const key = `sess:${project}/${taskId}/${toolUseId}`;
+    // Same provider tool IDs can recur in another turn/thread or after task
+    // ID reuse. Ownership is captured once, never inferred from current UI.
+    const ownerSuffix = appTurnId || taskCreated ? `/${encodeURIComponent(taskCreated || 'unknown')}/${encodeURIComponent(appTurnId || 'unowned')}` : '';
+    const key = `sess:${project}/${taskId}/${toolUseId}${ownerSuffix}`;
     if (jobs.has(key)) return jobs.get(key);
+    // A replayed tool-start must not resurrect a settled invocation merely
+    // because its live-registry linger elapsed. Legacy unowned IDs are not
+    // sufficient evidence to make this judgment.
+    if (appTurnId && getJobHistory(project).some(row => row.key === key && row.appTurnId === appTurnId
+      && (row.taskCreated ?? null) === taskCreated)) return null;
     const squeezed = String(label || '').replace(/\s+/g, ' ').trim().slice(0, 90);
     const job = {
       key,
+      jobRunId: randomUUID(),
+      appTurnId,
+      taskCreated,
+      createdAt: new Date(nowFn()).toISOString(),
       source: 'session',
       project,
       taskId,
       toolUseId,
-      file: hit.inline
-        ? (squeezed || String(command).replace(/\s+/g, ' ').trim().slice(0, 60))
-        : displayFile(project, hit.file),
+      file: hit.inline || hit.titleKind === 'label' ? null : displayFile(project, hit.file),
+      displayTitle: hit.inline ? squeezed || `inline ${RUNTIMES[hit.lang]?.label || hit.lang}`
+        : hit.titleKind === 'label' ? hit.file : displayFile(project, hit.file),
+      titleKind: hit.inline ? squeezed ? 'label' : 'inline' : hit.titleKind || 'file',
       lang: hit.lang,
       command: String(command).slice(0, 300),
       state: 'running',
@@ -1451,7 +1473,7 @@ export function sessionJobStart(project, taskId, toolUseId, command, { bg = fals
       inline: !!hit.inline,
     };
     job._pin = hit.pin || null; // launcher matchers + child rule (see detectScriptRun)
-    job._history = historyFor(project, job.file, job.inline);
+    job._history = historyFor(project, job.file || job.displayTitle, job.inline);
     job._parser = createJobParser(job.lang, command);
     jobs.set(key, job);
     ensurePolling();
@@ -1462,15 +1484,28 @@ export function sessionJobStart(project, taskId, toolUseId, command, { bg = fals
   }
 }
 
+function matchesSessionOwner(job, owner) {
+  return ['project', 'taskId', 'appTurnId', 'taskCreated'].every(field =>
+    !Object.hasOwn(owner, field) || (job[field] ?? null) === (owner[field] ?? null));
+}
+
+// Legacy unscoped callers remain usable only when the tool ID is unambiguous.
+// Never let a delayed result for another task/turn end the first matching job.
+function findSessionJob(toolUseId, owner = {}) {
+  const matches = [...jobs.values()].filter(job => job.source === 'session'
+    && job.toolUseId === toolUseId && matchesSessionOwner(job, owner));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 /** HOOK — a session job's output line(s), should the dashboard ever see them
     (today the SDK owns that stream and nothing calls this). Feeds the
     per-runtime parser (phase/counters/progress) only; `output.owned` stays
     false because the dashboard does not own the stream. */
-export function sessionJobOutput(toolUseId, chunk) {
+export function sessionJobOutput(toolUseId, chunk, owner = {}) {
   try {
     if (!toolUseId) return;
-    for (const j of jobs.values()) {
-      if (j.source !== 'session' || j.toolUseId !== toolUseId || j.state !== 'running') continue;
+    const j = findSessionJob(toolUseId, owner);
+    if (j?.state === 'running') {
       const now = nowFn();
       for (const line of String(chunk).split(/[\r\n]/)) if (line) feedLine(j, line, now);
       return;
@@ -1480,11 +1515,11 @@ export function sessionJobOutput(toolUseId, chunk) {
 
 /** tool_progress heartbeat — elapsed_time_seconds is authoritative for how
     long the tool has actually been executing. */
-export function sessionJobProgress(toolUseId, elapsedSeconds) {
+export function sessionJobProgress(toolUseId, elapsedSeconds, owner = {}) {
   try {
     if (!toolUseId || !Number.isFinite(elapsedSeconds)) return;
-    for (const j of jobs.values()) {
-      if (j.source !== 'session' || j.toolUseId !== toolUseId || j.state !== 'running') continue;
+    const j = findSessionJob(toolUseId, owner);
+    if (j?.state === 'running') {
       const t0 = nowFn() - elapsedSeconds * 1000;
       if (Math.abs(t0 - j.t0) > 3000) j.t0 = t0;
       return;
@@ -1496,11 +1531,11 @@ export function sessionJobProgress(toolUseId, elapsedSeconds) {
     backgrounded/detached launch it's just the launch ack — the process runs
     on, and the card ends when the process does (an error ack means it never
     started). */
-export function sessionJobEnd(toolUseId, { error = false } = {}) {
+export function sessionJobEnd(toolUseId, { error = false, ...owner } = {}) {
   try {
     if (!toolUseId) return;
-    for (const j of jobs.values()) {
-      if (j.source !== 'session' || j.toolUseId !== toolUseId) continue;
+    const j = findSessionJob(toolUseId, owner);
+    if (j) {
       if ((j.bg || j.detached) && !error && !j._stopReq) return;
       finish(j, j._stopReq ? 'stopped' : error ? 'error' : 'done');
       return;
@@ -1511,10 +1546,11 @@ export function sessionJobEnd(toolUseId, { error = false } = {}) {
 /** Turn over (completed, errored, or interrupted) — background shells die
     with the turn, so their cards end here too. Truly DETACHED jobs survive
     the turn by design: their card stays live until the process exits. */
-export function endSessionJobsFor(project, taskId, state = 'stopped') {
+export function endSessionJobsFor(project, taskId, state = 'stopped', owner = {}) {
   try {
     for (const j of jobs.values()) {
-      if (j.source === 'session' && j.project === project && j.taskId === taskId && j.state === 'running') {
+      if (j.source === 'session' && j.project === project && j.taskId === taskId && j.state === 'running'
+        && matchesSessionOwner(j, owner)) {
         if (j.detached) continue;
         finish(j, j._stopReq ? 'stopped' : state);
       }
@@ -1557,9 +1593,13 @@ export function runJobStart(project, rel, pid, command, { buffered = false, lang
     const key = `run:${project}`;
     const job = {
       key,
+      jobRunId: randomUUID(),
+      createdAt: new Date(nowFn()).toISOString(),
       source: 'run',
       project,
       file: rel,
+      displayTitle: rel,
+      titleKind: 'file',
       lang,
       command: String(command || '').slice(0, 300),
       state: 'running',

@@ -39,8 +39,46 @@ const push = (arr, v, max) => { arr.push(v); if (arr.length > max) arr.splice(0,
 const fmtInt = (n) => (n == null ? '' : Number(n).toLocaleString());
 const clock = (t) => (t ? new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '');
 
-/** Project runs reuse their key; startedAt identifies the actual invocation. */
-export const sameJobRun = (a, b) => !!a && !!b && a.key === b.key && a.startedAt === b.startedAt;
+/** Keys identify slots; immutable run IDs identify invocations. Old servers
+ * only have startedAt, retained as a compatibility fallback, never elapsedMs. */
+export const sameJobRun = (a, b) => !!a && !!b && a.key === b.key
+  && (a.jobRunId && b.jobRunId ? a.jobRunId === b.jobRunId
+    : a.startedAt != null && b.startedAt != null && a.startedAt === b.startedAt);
+
+/** A settled invocation cannot become running again through replay/resync. */
+export function shouldAcceptJobSnapshot(previous, incoming) {
+  if (previous && incoming && previous.key === incoming.key && previous.jobRunId && incoming.jobRunId
+      && previous.jobRunId !== incoming.jobRunId) {
+    const before = Date.parse(previous.createdAt), next = Date.parse(incoming.createdAt);
+    if (Number.isFinite(before) && Number.isFinite(next) && next < before) return false;
+  }
+  return !(sameJobRun(previous, incoming) && ['done', 'error', 'stopped'].includes(previous.state)
+    && incoming.state === 'running');
+}
+
+/** File paths and human/launcher labels are different data. Only the former
+ * may be reduced to a basename. In old inline records `file` may be a command
+ * cut in the middle of /Users/gra: never treat that fragment as a filename. */
+export function jobTitle(job) {
+  const display = typeof job.displayTitle === 'string' ? job.displayTitle.trim() : '';
+  const file = typeof job.file === 'string' ? job.file : '';
+  const command = typeof job.command === 'string' ? job.command : '';
+  const generic = `inline ${{ julia: 'Julia', python: 'Python', r: 'R', node: 'Node', shell: 'shell', sql: 'SQL' }[job.lang] || job.lang || 'program'}`;
+  const raw = display || file;
+  let name;
+  if (job.titleKind === 'label' || job.titleKind === 'inline') name = display || (job.inline ? generic : 'program');
+  else if (job.inline) name = display || generic;
+  else if (job.titleKind === 'file') name = raw.split('/').filter(Boolean).pop() || raw || 'program';
+  // Legacy launcher names already use "project (launcher target)". Slashes
+  // inside targets are not path separators for the complete label.
+  else if (display || /\([^)]*\)\s*$/.test(file)) name = raw;
+  else if (file) name = file.split('/').filter(Boolean).pop() || file;
+  else name = command || 'program';
+  if (!job.inline && job.titleKind !== 'label' && /\/$/.test(raw) && !name.endsWith('/')) name += '/';
+  const tooltip = command || (job.inline && !display && file
+    ? `Recorded inline label/command excerpt: ${file}` : raw || name);
+  return { name, tooltip };
+}
 
 function clearJobFade(key) {
   if (jobTimers[key]) clearTimeout(jobTimers[key]);
@@ -67,6 +105,7 @@ export function scheduleJobFade(job) {
  * @returns {JobInfo} j, with `_hist` attached
  */
 export function absorbJob(prev, j) {
+  if (!shouldAcceptJobSnapshot(prev, j)) return prev;
   const same = sameJobRun(prev, j);
   if (!same || j.state === 'running') clearJobFade(j.key);
   if (!same) {
@@ -438,6 +477,7 @@ export async function stopJob(job, btn) {
   if (btn) { btn.disabled = true; btn.textContent = 'stopping…'; }
   const result = await api('POST', `/api/jobs/${enc(job.project)}/stop`, {
     key: job.key, ...(job.startedAt ? { startedAt: job.startedAt } : {}),
+    ...(job.jobRunId ? { jobRunId: job.jobRunId } : {}),
   });
   if (!result && btn?.isConnected) {
     const owner = btn.closest('.jobCard, .jobFeedRow');
@@ -634,9 +674,10 @@ function renderJobCard(el, job) {
   chip.title = job.pid ? `pid ${job.pid} · click to copy` : (band.starting ? 'pid not pinned yet' : '');
   chip.classList.toggle('hasPid', !!job.pid);
   const fileEl = el.querySelector('.jobFile');
-  const fileTxt = job.command || job.file || '';
+  const title = jobTitle(job);
+  const fileTxt = job.displayTitle || job.inline ? title.name : job.command || job.file || '';
   if (fileEl.textContent !== fileTxt) fileEl.textContent = fileTxt;
-  fileEl.title = fileTxt;
+  fileEl.title = title.tooltip;
   const stopBtn = el.querySelector('.jobStop');
   if (st === 'running' && job.stopping && !stopBtn.disabled) { stopBtn.disabled = true; stopBtn.textContent = 'stopping…'; }
   // ── progress line ──
@@ -739,8 +780,7 @@ export function jobFeedRow(job) {
   const cls = live ? 'live' : st === 'done' ? 'ok' : st === 'error' ? 'bad' : 'stop';
   const ico = live ? '▶' : st === 'done' ? '✓' : st === 'error' ? '✗' : '⊘';
   const rt = (JOB_LANG_TXT[job.lang] || job.lang || '') + (job.detached ? ' · detached' : job.bg ? ' · background' : '');
-  const full = String(job.file || job.command || '');
-  const name = (full.split('/').filter(Boolean).pop() || full) + (/\/$/.test(full) ? '/' : ''); // "tests/" keeps its slash
+  const { name, tooltip } = jobTitle(job);
   let sum;
   if (live) {
     const band = bandOf(job);
@@ -757,7 +797,7 @@ export function jobFeedRow(job) {
   const acts = [];
   if (job.source === 'run') acts.push('<span class="jfAct out" title="open the ▶ output tab">output</span>');
   if (live) acts.push('<button class="jfAct stop" title="terminate this process tree">⊘ stop</button>');
-  const html = `<span class="jfIco">${ico}</span><span class="jfRt">${esc(rt)}</span><span class="jfCmd" title="${esc(job.command || job.file || '')}">${esc(name)}</span>`
+  const html = `<span class="jfIco">${ico}</span><span class="jfRt">${esc(rt)}</span><span class="jfCmd" title="${esc(tooltip)}">${esc(name)}</span>`
     + `<span class="jfSum" title="${esc(sum.replace(/<[^>]+>/g, ''))}">${sum}</span>${time ? `<span class="jfTime">${esc(time)}</span>` : ''}${acts.join('')}`;
   return { cls, html };
 }

@@ -22,7 +22,7 @@ function fixture(t, options = {}) {
     codexStatus: () => ({ connected: true, account: { type: 'chatgpt' }, models: ['gpt-5.6-luna', 'gpt-5.6-terra'].map(id => ({ id, supportedReasoningEfforts: [{ id: 'low' }, { id: 'medium' }] })) }) });
   settings.update({ connection: 'codex-subscription', model: 'gpt-5.6-luna', enabled: true, dailyBudgetUsd: 1, ...options.settings });
   const deps = { root, settings, getTask: () => state.task, getTranscript: () => state.events, isActive: () => state.active,
-    request: async body => { state.calls.push(body); return options.request ? options.request(body, state) : response(checkpoint()); },
+    request: async (body, _connection, observers) => { state.calls.push(body); return options.request ? options.request(body, state, observers) : response(checkpoint()); },
     logUsage: (...args) => state.logs.push(args), now: () => new Date('2026-09-04T12:00:00Z') };
   const service = createMemoryService(deps);
   t.after(() => { service.close(); rmTmp(root); });
@@ -101,7 +101,7 @@ test('publishes a versioned checkpoint, records usage, and leaves the working co
   assert.deepEqual(view.current.content, checkpoint());
   assert.equal(view.pending, false); assert.equal(view.totals.inputTokens, 1000);
   assert.equal(view.jobs[0].usage.reasoningTokens, 100); assert.equal(state.logs.length, 1);
-  assert.equal(view.jobs[0].usage.costSource, 'subscription'); assert.equal(view.jobs[0].usage.estimatedCostUsd, 0);
+  assert.equal(view.jobs[0].usage.costSource, 'subscription'); assert.equal(view.jobs[0].usage.estimatedCostUsd, null);
   assert.equal(JSON.stringify({ task: state.task, events: state.events }), before);
   const body = state.calls[0];
   assert.equal(body.model, 'gpt-5.6-luna'); assert.equal(body.reasoning.effort, 'low');
@@ -359,4 +359,110 @@ test('requestMemory routes by connection and stays blocked in test environments'
   process.env.CP_NO_BILLED = '0';
   try { await assert.rejects(requestMemory({}, 'nowhere'), /Unknown memory connection/); }
   finally { if (prior === undefined) delete process.env.CP_NO_BILLED; else process.env.CP_NO_BILLED = prior; }
+});
+
+test('memory transport failures retain reported usage once, with stable job identity and no leaked exception', async t => {
+  const { state, service } = fixture(t, { request: async () => {
+    throw Object.assign(new Error('private credential string'), { accountingResponse: {
+      usage: { input_tokens: 40, output_tokens: 5 }, usageCompleteness: 'partial',
+    } });
+  } });
+  await service.run('alpha', 'one');
+  const job = service.view('alpha', 'one').jobs[0];
+  assert.equal(job.status, 'failed');
+  assert.equal(job.usage.inputTokens, 40);
+  assert.equal(job.usage.completeness, 'partial');
+  assert.equal(job.usage.usageId, `memory:${job.id}`);
+  assert.equal(state.logs.length, 1);
+  assert.equal(state.logs[0][2].usageId, job.usage.usageId);
+  assert.doesNotMatch(JSON.stringify(job), /private credential/);
+});
+
+test('missing memory telemetry produces an explicit unknown record, not a zero-charge success', async t => {
+  const { state, service } = fixture(t, { request: async () => { throw new Error('no result'); } });
+  await service.run('alpha', 'one');
+  const view = service.view('alpha', 'one');
+  assert.equal(view.jobs[0].usage.completeness, 'unknown');
+  assert.equal(view.jobs[0].usage.inputTokens, null);
+  assert.equal(view.jobs[0].usage.outputTokens, null);
+  assert.equal(view.jobs[0].usage.estimatedCostUsd, null);
+  assert.equal(view.totals.incompleteJobs, 1);
+  assert.equal(state.logs.length, 1);
+});
+
+test('preflight failure before dispatch is known not-started, with no unknown expenditure row', async t => {
+  const { state, service } = fixture(t, { request: async () => {
+    throw Object.assign(new Error('No account'), { dispatched: false });
+  } });
+  await service.run('alpha', 'one');
+  const view = service.view('alpha', 'one');
+  assert.equal(view.jobs[0].notDispatched, true);
+  assert.equal(view.jobs[0].usage.inputTokens, 0);
+  assert.equal(view.jobs[0].usage.completeness, 'complete');
+  assert.equal(view.totals.incompleteJobs, 0);
+  assert.equal(state.logs.length, 0);
+});
+
+test('memory observations are durable mid-job, then late callbacks cannot resurrect deleted memory', async t => {
+  let late, release, seen;
+  const started = new Promise(resolve => { seen = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  const { state, service } = fixture(t, { request: async (_body, _state, { onUsage }) => {
+    late = onUsage;
+    onUsage({ usage: { input_tokens: 20, output_tokens: 2 }, usageCompleteness: 'partial' });
+    seen();
+    await hold;
+    return response(checkpoint());
+  } });
+  const pending = service.run('alpha', 'one');
+  await started;
+  assert.equal(service.view('alpha', 'one').jobs[0].usage.inputTokens, 20);
+  assert.equal(state.logs.length, 1);
+  const usageId = state.logs[0][2].usageId;
+  release(); await pending;
+  assert.equal(state.logs.at(-1)[2].usageId, usageId);
+  service.forget('alpha', 'one');
+  const before = state.logs.length;
+  late({ usage: { input_tokens: 9999, output_tokens: 999 }, usageCompleteness: 'complete' });
+  assert.equal(state.logs.length, before);
+  assert.equal(service.view('alpha', 'one').jobs.length, 0);
+});
+
+test('a timed-out SDK iterator released after memory deletion cannot resurrect its retired job', async t => {
+  let release;
+  const hold = new Promise(resolve => { release = resolve; });
+  const { state, service } = fixture(t, { request: (body, _state, { onUsage }) => requestClaudeSdk(body, {
+    timeoutMs: 5, onUsage, run: () => ({ close: () => {}, [Symbol.asyncIterator]: async function* () {
+      yield { type: 'assistant', message: { id: 'early', model: body.model, usage: { input_tokens: 20, output_tokens: 2 } } };
+      await hold;
+      yield { type: 'result', subtype: 'success', result: JSON.stringify(checkpoint()),
+        usage: { input_tokens: 9999, output_tokens: 500 } };
+    } }),
+  }) });
+  await service.run('alpha', 'one');
+  const before = service.view('alpha', 'one');
+  assert.equal(before.jobs[0].status, 'failed');
+  assert.equal(before.jobs[0].usage.inputTokens, 20);
+  service.forget('alpha', 'one');
+  const logCount = state.logs.length;
+  release(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.logs.length, logCount);
+  assert.equal(service.view('alpha', 'one').jobs.length, 0);
+});
+
+test('Claude memory retains whole-query model usage if the iterator fails after its terminal result', async () => {
+  const run = () => ({ [Symbol.asyncIterator]: async function* () {
+    yield { type: 'result', subtype: 'success', result: '{}', total_cost_usd: 0.12,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      modelUsage: { 'claude-sonnet-5': { inputTokens: 100, outputTokens: 30, cacheReadInputTokens: 700, cacheCreationInputTokens: 20, costUSD: 0.12 } } };
+    throw new Error('private provider detail');
+  } });
+  await assert.rejects(requestClaudeSdk({ model: 'claude-sonnet-5' }, { run }), err => {
+    assert.equal(err.accountingResponse.usage.input_tokens, 820);
+    assert.equal(err.accountingResponse.usage.output_tokens, 30);
+    assert.equal(err.accountingResponse.usageCompleteness, 'complete');
+    assert.equal(err.accountingResponse.costUsd, 0.12);
+    assert.doesNotMatch(err.message, /private provider/);
+    return true;
+  });
 });

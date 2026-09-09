@@ -48,6 +48,43 @@ export function fmtTok(n) {
   n = n || 0;
   return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n);
 }
+
+/** Exact, locale-readable observations; compact display is only a convenience. */
+export function exactTok(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+/** Token totals count repeated/cached input, not current context or money.
+ * @param {any} usage
+ * @param {string} [scope]
+ */
+export function tokenTooltip(usage, scope = 'Recorded usage') {
+  const input = usage?.tokensIn || 0, output = usage?.tokensOut || 0;
+  const total = usage?.tokens ?? (input + output);
+  const coverage = usage?.costCoverage;
+  const parts = [`${scope}: ${exactTok(total)} tokens processed`,
+    ...(usage?.tokens == null ? [`${exactTok(input)} input (includes cache), ${exactTok(output)} output`] : []),
+    'Cumulative provider observations, including repeated context; not context size, a bill, or subscription allowance'];
+  const legacy = usage?.usageLegacyTokens ?? coverage?.legacyTokens;
+  if (legacy || usage?.usageBase?.completeness === 'legacy-unverified' || usage?.usageCompleteness === 'legacy-unverified' || (!coverage && !usage?.usageCompleteness)) parts.push(`${legacy ? exactTok(legacy) + ' historical tokens' : 'Historical totals'} unverified; earlier accounting may be incomplete`);
+  if (usage?.usageHasIncomplete || coverage?.incompleteTokens || coverage?.unknownUsageEntries || ['partial', 'unknown'].includes(usage?.usageCompleteness) || ['partial', 'unknown'].includes(usage?.lastTurnUsage?.completeness)) parts.push(legacy || usage?.usageCompleteness === 'legacy-unverified'
+    ? 'Provider coverage is also incomplete; total is not a reliable expenditure benchmark'
+    : 'Incomplete provider coverage: recorded total is a lower bound, not a complete expenditure benchmark');
+  if (usage?.usageScope) parts.push(`Coverage: ${usage.usageScope}`);
+  if (usage?.usageWarning) parts.push(String(usage.usageWarning));
+  if (coverage?.unknownCostTokens) parts.push(`${exactTok(coverage.unknownCostTokens)} tokens have no known dollar cost (including subscription use)`);
+  return parts.join('. ');
+}
+
+/** A known-cost subtotal must never masquerade as the complete amount spent.
+ * @param {any} usage
+ */
+export function recordedCostLabel(usage) {
+  const c = usage?.costCoverage;
+  const dollars = Number(usage?.costUsd || 0);
+  if (c && !c.entries) return 'no cost observations';
+  if (!dollars && (!c || c.unknownCostEntries || c.unknownCostTokens || c.subscriptionTokens)) return 'cost unknown / subscription';
+  const qualifier = !c || c.legacyCostEntries ? 'recorded cost subtotal' : c.estimatedCostEntries ? 'estimated cost subtotal' : 'provider-reported cost subtotal';
+  return `$${dollars.toFixed(2)} ${qualifier}${c?.unknownCostEntries || c?.unknownCostTokens ? '; other cost unknown' : ''}`;
+}
 /**
  * Uppercased file extension, '?' when none.
  * @param {*} f path or file name

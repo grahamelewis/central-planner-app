@@ -96,7 +96,12 @@ interface TaskSession {
   reasoningEffort?: string | null;
   tokensIn?: number;
   tokensOut?: number;
-  costUsd?: number;
+  costUsd?: number | null;
+  usageCompleteness?: 'complete' | 'partial' | 'unknown' | 'legacy-unverified';
+  usageLegacyTokens?: number;
+  usageHasIncomplete?: boolean;
+  usageScope?: string;
+  usageBase?: { tokensIn?: number; tokensOut?: number; costUsd?: number | null; completeness?: string };
   turns?: number;
   [k: string]: any;
 }
@@ -203,12 +208,29 @@ interface UsageInfo {
   [k: string]: any;
 }
 
+interface CostCoverage {
+  entries: number;
+  knownCostTokens: number;
+  unknownCostTokens: number;
+  subscriptionTokens: number;
+  estimatedUsd: number;
+  providerReportedUsd: number;
+  legacyUsd: number;
+  incompleteTokens: number;
+  legacyTokens: number;
+  unknownUsageEntries: number;
+  unknownCostEntries: number;
+  estimatedCostEntries: number;
+  providerReportedCostEntries: number;
+  legacyCostEntries: number;
+}
+
 interface LedgerSummary {
   since?: string;
   perProject?: {
-    [project: string]: { seconds?: number; tokensIn?: number; tokensOut?: number; costUsd?: number };
+    [project: string]: { seconds?: number; tokensIn?: number; tokensOut?: number; costUsd?: number; costCoverage?: CostCoverage };
   };
-  totals?: { seconds?: number; tokens?: number; costUsd?: number };
+  totals?: { seconds?: number; tokens?: number; costUsd?: number; costCoverage?: CostCoverage };
   hourTarget?: number;
   usage?: UsageInfo | null;
   [k: string]: any;
@@ -431,6 +453,13 @@ interface JobLastError {
 
 interface JobInfo {
   key: string;
+  jobRunId?: string;
+  appTurnId?: string | null;
+  taskCreated?: string | null;
+  createdAt?: string;
+  endedAt?: string | null;
+  displayTitle?: string | null;
+  titleKind?: 'file' | 'label' | 'inline';
   source?: 'session' | 'run' | string;
   project?: ProjectKey;
   taskId?: string | null;

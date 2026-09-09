@@ -36,7 +36,7 @@ function fake({ account = { type: 'chatgpt' }, models = [available], events, han
 
 test('uses isolated subscription exec, strips API billing credentials, and cleans private files', async () => {
   const f = fake(); const result = await requestCodexMemory(body, f);
-  assert.equal(result.status, 'completed'); assert.equal(result.costUsd, 0);
+  assert.equal(result.status, 'completed'); assert.equal(result.costUsd, null, 'subscription usage is not a zero-dollar API charge');
   assert.match(result.output[0].content[0].text, /café ✓/);
   assert.equal(result.usage.input_tokens_details.cached_tokens, 20);
   assert.deepEqual(f.seen.requests.map(r => r[0]), ['account/read', 'model/list']);
@@ -98,4 +98,81 @@ test('timeout stops the worker and cleans up without retry', async () => {
 test('oversized output is incomplete but retains usage for accounting', async () => {
   const f = fake(); const result = await requestCodexMemory({ ...body, max_output_tokens: 10 }, f);
   assert.equal(result.status, 'incomplete'); assert.equal(result.usage.output_tokens, 50);
+});
+
+test('completed usage survives a later invalid/tool event that rejects the checkpoint', async () => {
+  const f = fake({ events: [
+    { type: 'turn.completed', usage: { input_tokens: 300, cached_input_tokens: 200, output_tokens: 50 } },
+    { type: 'item.started', item: { type: 'command_execution' } },
+  ] });
+  await assert.rejects(requestCodexMemory(body, f), err => {
+    assert.equal(err.accountingResponse.usage.input_tokens, 300);
+    assert.equal(err.accountingResponse.usageCompleteness, 'complete');
+    assert.equal(err.accountingResponse.costUsd, null);
+    return /tool operation/.test(err.message);
+  });
+});
+
+test('failed Codex result retains partial usage; absent usage is explicitly unknown', async () => {
+  for (const usage of [{ input_tokens: 70, output_tokens: 10 }, undefined]) {
+    const f = fake({ events: [{ type: 'turn.failed', usage }] });
+    await assert.rejects(requestCodexMemory(body, f), err => {
+      assert.equal(err.accountingResponse.usageCompleteness, usage ? 'partial' : 'unknown');
+      assert.equal(err.accountingResponse.usage?.input_tokens ?? null, usage ? 70 : null);
+      return true;
+    });
+  }
+});
+
+test('later failed or malformed telemetry cannot replace a captured completed total', async () => {
+  const f = fake({ events: [
+    { type: 'turn.completed', usage: { input_tokens: 300, cached_input_tokens: 200,
+      cache_write_input_tokens: 10, output_tokens: 50, reasoning_output_tokens: 20 } },
+    { type: 'turn.failed', usage: { input_tokens: 1, output_tokens: 1 } },
+  ] });
+  await assert.rejects(requestCodexMemory(body, f), err => {
+    assert.equal(err.accountingResponse.usage.input_tokens, 300);
+    assert.equal(err.accountingResponse.usage.input_tokens_details.cache_write_tokens, 10);
+    assert.equal(err.accountingResponse.usage.output_tokens_details.reasoning_tokens, 20);
+    assert.equal(err.accountingResponse.usageCompleteness, 'complete');
+    return true;
+  });
+});
+
+test('invalid usage breakdown retains valid totals as partial without inventing charges', async () => {
+  const f = fake({ events: [
+    { type: 'item.completed', item: { type: 'agent_message', text: '{}' } },
+    { type: 'turn.completed', usage: { input_tokens: 30, cached_input_tokens: 200,
+      output_tokens: 5, reasoning_output_tokens: 20 } },
+  ] });
+  const response = await requestCodexMemory(body, f);
+  assert.equal(response.usage.input_tokens, 30);
+  assert.equal(response.usage.input_tokens_details.cached_tokens, null);
+  assert.equal(response.usage.output_tokens_details.reasoning_tokens, null);
+  assert.equal(response.usageCompleteness, 'partial');
+});
+
+test('partial terminal updates cannot erase an earlier observed lower bound', async () => {
+  const f = fake({ events: [
+    { type: 'turn.failed', usage: { input_tokens: 100, output_tokens: 20 } },
+    { type: 'turn.failed', usage: { input_tokens: null, output_tokens: 1 } },
+  ] });
+  await assert.rejects(requestCodexMemory(body, f), err => {
+    assert.equal(err.accountingResponse.usage.input_tokens, 100);
+    assert.equal(err.accountingResponse.usage.output_tokens, 20);
+    assert.equal(err.accountingResponse.usageCompleteness, 'partial');
+    return true;
+  });
+});
+
+test('asynchronous missing-executable error records no dispatched-usage checkpoint', async () => {
+  const f = fake({ hang: true });
+  const originalSpawn = f.spawnFn;
+  const checkpoints = [];
+  await assert.rejects(requestCodexMemory(body, { ...f, onUsage: u => checkpoints.push(u), spawnFn: (...args) => {
+    const child = originalSpawn(...args);
+    queueMicrotask(() => child.emit('error', Object.assign(new Error('missing binary'), { code: 'ENOENT' })));
+    return child;
+  } }), err => err.dispatched === false);
+  assert.equal(checkpoints.length, 0);
 });

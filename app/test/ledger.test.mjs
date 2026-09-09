@@ -19,11 +19,13 @@ test('memory ledger distinguishes subscription consumption from estimated API-do
   // This function has an object default parameter; the simple brace-based
   // extractFunction helper would mistake that parameter for its body.
   const source = fs.readFileSync(SRC, 'utf8').match(/function logTokens\([\s\S]*?\n\}/)[0];
+  const snapshotSource = fs.readFileSync(SRC, 'utf8').match(/function tokenSnapshot\([\s\S]*?\n\}/)[0];
+  const helpers = ['tokenCount', 'inferProvider'].map(n => extractFunction(SRC, n)).join('\n') + '\n' + snapshotSource;
   const logTokens = new Function('assertProject', 'appendLine', 'broadcast', 'weekSummary',
-    `${source}\nreturn logTokens;`)(() => {}, row => entries.push(row), () => {}, () => ({}));
+    `${helpers}\n${source}\nreturn logTokens;`)(() => {}, row => { entries.push(row); return true; }, () => {}, () => ({}));
   logTokens('alpha', 'task', 100, 50, 0, 'account-model', { action: 'memory', costSource: 'subscription' });
   assert.equal(entries[0].costSource, 'subscription'); assert.equal(entries[0].costEstimated, false);
-  assert.equal(entries[0].costUsd, 0); assert.equal(entries[0].in, 100);
+  assert.equal(entries[0].costUsd, null); assert.equal(entries[0].in, 100);
   logTokens('alpha', 'task', 100, 50, 0.01, 'claude-model', { action: 'memory', costSource: 'provider-estimate' });
   assert.equal(entries[1].costEstimated, true); assert.equal(entries[1].costUsd, 0.01);
 });
@@ -55,7 +57,7 @@ before(() => {
   // topLabel it calls) must be in scope too. USAGE_LIMITS is null here — the
   // usage windows have their own suite in ledger.usage.test.mjs; this one is
   // about date bucketing.
-  const bodies = ['dayKey', 'weekStart', 'dailyActivity', 'usageWindows', 'topLabel', 'weekSummary']
+  const bodies = ['dayKey', 'weekStart', 'dailyActivity', 'usageWindows', 'topLabel', 'weekSummary', 'costCoverage', 'addCostCoverage', 'inferProvider']
     .map((n) => extractFunction(SRC, n)).join('\n');
   // weekSummary() also consults lib/usage.js for real plan windows; this suite
   // is about bucketing, so it runs with no cached reading (the estimate path).
@@ -170,9 +172,10 @@ describe('weekSummary (week boundary + per-project totals)', () => {
     writeLedger([]);
     const s = lib.weekSummary();
     for (const k of Object.keys(PROJECTS)) {
-      assert.deepEqual(s.perProject[k], { seconds: 0, tokensIn: 0, tokensOut: 0, costUsd: 0 });
+      assert.deepEqual(s.perProject[k], { seconds: 0, tokensIn: 0, tokensOut: 0, costUsd: 0, costCoverage: s.totals.costCoverage });
     }
-    assert.deepEqual(s.totals, { seconds: 0, tokens: 0, costUsd: 0 });
+    assert.deepEqual(s.totals, { seconds: 0, tokens: 0, costUsd: 0, costCoverage: s.totals.costCoverage });
+    assert.equal(s.totals.costCoverage.entries, 0);
   });
 
   test('creates a dynamic bucket for an unknown/retired project key', () => {

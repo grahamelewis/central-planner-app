@@ -10,6 +10,7 @@ import { ensureFeed } from './files.js';
 // go/loadState stay with the entry module.
 import { afNum, go, loadState } from './app.js';
 import { renderWB } from './workbench.js';
+import { jobTitle } from './jobs.js';
 
 /* ───────────── ◆ next up + ⧉ calendar — stage-1 planning ─────────────
    One countdown block in the workbench sidebar (project-scoped: the same
@@ -431,9 +432,10 @@ export function afRunRow(it, kid) {
   const mark = FEED_RUN_MARK[it.state] || '';
   // inline evals carry a prose label ("Pass-through at pe=0.50 fit"), not a
   // path — never basename-split those
-  const name = esc(it.inline ? String(it.file) : String(it.file).split('/').pop());
-  return `<div class="afRow" data-nav="run" data-task="${esc(it.taskId || '')}" data-src="${esc(it.source)}" data-file="${esc(it.file)}"
-    title="${esc(it.file)} · ${esc(it.lang)}${it.detached ? ' · detached' : it.bg ? ' · background' : ''} — ${esc(it.state)}">
+  const title = jobTitle(it);
+  const name = esc(title.name);
+  return `<div class="afRow" data-nav="run" data-task="${esc(it.taskId || '')}" data-src="${esc(it.source)}" data-file="${esc(it.file || '')}"
+    title="${esc(title.tooltip)} · ${esc(it.lang)}${it.detached ? ' · detached' : it.bg ? ' · background' : ''} — ${esc(it.state)}">
     <span class="afIc run">▶</span>
     <span class="nm">${kid ? '' : 'ran '}${name} · ${fmtJobDur(it.ms)} ${mark}</span>
     <span class="afTo">▶ →</span>${kid ? '' : `<span class="afW">${fmtAgo(it.ts)}</span>`}</div>`;

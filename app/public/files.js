@@ -29,6 +29,7 @@ import {
 import { selectViewer } from './viewers.js';
 import { renderWB } from './workbench.js';
 import { transcriptRevision, replaceTranscript } from './undoSend.js';
+import { reviseConsoleText } from './consoleOwnership.js';
 
 const fileLists = {};     // project → { files:[rel,…] } | { loading } — for the pin picker
 const dirCache = {};      // `${project}::${rel}` → { entries, sig, loaded, loading } — sidebar folder browser
@@ -81,7 +82,7 @@ export async function refreshTranscript(project, id, { reconcileTail = false, re
     replaceTranscript(project, id, data.transcript);
   } else if (reconcileTail && data && Array.isArray(data.transcript)) {
     const final = [...entries].reverse().find(e => e && e.role === 'assistant' && typeof e.text === 'string');
-    if (final) tailBufs[k] = reconcileFinalTranscriptTail(tailBufs[k], final.text);
+    if (final) tailBufs[k] = reviseConsoleText(k, tailBufs[k], reconcileFinalTranscriptTail(tailBufs[k], final.text));
   }
   if (ui.view === project && curTask(project)?.id === id) renderWB(project);
 }

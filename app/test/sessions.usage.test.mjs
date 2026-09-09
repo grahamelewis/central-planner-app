@@ -69,8 +69,9 @@ describe('runTurn wiring (source-level)', () => {
   });
 
   test('the ledger gets one row PER MODEL when the whole-tree breakdown exists', () => {
-    assert.match(src, /for \(const r of modelRows\) logTokens\(project, id, r\.tokensIn, r\.tokensOut, r\.costUsd, r\.model\)/);
-    // and the single-row fallback survives for results without modelUsage
-    assert.match(src, /logTokens\(project, id, usageIn, usageOut, costUsd, \(task && task\.model\) \|\| DEFAULT_MODEL\)/);
+    assert.match(src, /const observed = usageTracker\.observe\(msg\)/);
+    assert.match(src, /writeUsage\(observed\)/);
+    assert.match(src, /logTokenBatch\(records\)/, 'all per-model replacements commit atomically');
+    assert.doesNotMatch(src, /streamIn \+=/, 'replayed message wrappers are not additive');
   });
 });

@@ -1,8 +1,10 @@
 // Inspection-only memory UI. Deliberately separate from the session composer.
 import { api } from './net.js';
-import { esc, enc, toast, confirmBox, fmtTok } from './util.js';
+import { esc, enc, toast, confirmBox } from './util.js';
 
 const dollars = value => `$${Number(value || 0).toFixed(4)}`;
+const memoryTokens = (value, completeness) => value == null ? 'unknown'
+  : `${Number(value).toLocaleString()}${completeness === 'complete' ? '' : ' recorded'}`;
 
 /** @param {Element} host */
 export async function mountMemorySettings(host) {
@@ -121,17 +123,21 @@ export async function openTaskMemory(project, id, title) {
     if (!data) { panel.innerHTML = '<p>Memory could not be loaded. Close and reopen this panel to retry.</p>'; return; }
     const selected = data.revisions.find(r => r.revision === revision) || data.current;
     const inProgress = ['running', 'queued'].includes(data.status);
+    const incompleteJobs = data.totals.incompleteJobs ?? data.jobs.filter(j => j.status !== 'blocked' && !j.notDispatched
+      && (!j.usage || j.usage.completeness !== 'complete')).length;
+    const accountingComplete = incompleteJobs ? 'partial' : 'complete';
     const labels = { findings: 'Findings & rejected approaches', constraints: 'Constraints & user decisions', uncertainties: 'Uncertainties', nextSteps: 'Next steps' };
     panel.innerHTML = `<div class="memoryNotice"><b>Inspection only.</b> This checkpoint is not being read by the working agent. Validation checks structure and source IDs, not factual accuracy.</div>
       <div class="memoryActions"><span class="memoryBadge">${esc(data.status)}</span><button class="gbtn" id="memoryRefresh">Refresh</button>
       <button class="gbtn" id="memoryUpdate"${inProgress || !data.settings.enabled || data.settings.billingBlocked || !data.pending ? ' disabled' : ''}>Update checkpoint</button></div>
       <p class="memoryNote">${!data.settings.enabled ? 'Enable Task memory in Settings to create checkpoints.' : data.settings.billingBlocked ? 'Paid calls are blocked in this test environment.' : data.pending ? 'New or changed material remains. Each job reads a bounded chunk; large backlogs may need several updates.' : 'Checkpoint covers the available transcript.'} Conversations remain unchanged.</p>
-      <div class="memoryStats"><div><b>${fmtTok(data.totals.inputTokens)}</b><span>input tokens</span></div><div><b>${fmtTok(data.totals.outputTokens)}</b><span>output tokens</span></div><div><b>${data.settings.connection === 'codex-subscription' ? 'Codex plan' : dollars(data.totals.estimatedCostUsd)}</b><span>${data.settings.connection === 'codex-subscription' ? 'subscription usage, not API billing' : 'estimated usage cost'}</span></div><div><b>${data.jobs.length}</b><span>recorded jobs</span></div></div>
+      <div class="memoryStats"><div><b>${memoryTokens(data.totals.inputTokens, accountingComplete)}</b><span>reported input tokens</span></div><div><b>${memoryTokens(data.totals.outputTokens, accountingComplete)}</b><span>reported output tokens</span></div><div><b>${dollars(data.totals.estimatedCostUsd)}</b><span>known estimated subtotal; subscription / unknown costs excluded</span></div><div><b>${data.jobs.length}</b><span>recorded jobs</span></div></div>
+      ${incompleteJobs ? `<p class="memoryNote">Accounting is incomplete or historically unverified for ${incompleteJobs} job${incompleteJobs === 1 ? '' : 's'}. Recorded totals are not a complete expenditure benchmark.</p>` : ''}
       ${selected ? `<label class="memoryVersion">Checkpoint version<select id="memoryVersion">${data.revisions.map(r => `<option value="${r.revision}"${selected.revision === r.revision ? ' selected' : ''}>v${r.revision} · ${esc(new Date(r.createdAt).toLocaleString())}</option>`).join('')}</select></label>
         <p class="memoryNote">${esc(selected.model)} · ${esc(selected.reasoningEffort)} effort · ${selected.coverage.cursor.index} complete transcript entries${selected.coverage.cursor.offset ? ` + ${selected.coverage.cursor.offset} characters of the next entry` : ''}</p>
         <div class="memorySections">${Object.entries(labels).map(([key, label]) => `<section><h3>${label}</h3>${selected.content[key].length ? `<ul>${selected.content[key].map(text => `<li>${esc(text)}</li>`).join('')}</ul>` : '<p class="memoryNote">None recorded.</p>'}</section>`).join('')}
         <section><h3>Evidence references</h3>${selected.content.evidence.length ? `<ul>${selected.content.evidence.map(e => `<li><button class="gbtn memorySource" data-source="${esc(e.source)}">${esc(e.source)}</button> — ${esc(e.claim)}</li>`).join('')}</ul><div id="memoryEvidence" aria-live="polite"></div>` : '<p class="memoryNote">None recorded.</p>'}</section></div>` : '<div class="memoryEmpty"><h3>No checkpoint yet</h3><p>After setup, completed task turns will queue a background update. Existing tasks can use “Update checkpoint” while idle.</p></div>'}
-      <details class="memoryJobs"${data.jobs[0]?.error ? ' open' : ''}><summary>Recent update jobs (${data.jobs.length})</summary>${data.jobs.map(j => `<article><b>${esc(j.status)}</b> · ${esc(new Date(j.startedAt).toLocaleString())}${j.configuration ? ` · ${esc(j.configuration.model)}` : ''}<p>${j.usage ? `${fmtTok(j.usage.inputTokens)} in / ${fmtTok(j.usage.outputTokens)} out · ` : ''}${j.durationMs != null ? `${(j.durationMs / 1000).toFixed(1)}s · ` : ''}${j.configuration?.connection === 'codex-subscription' ? '1 subscription job reserved' : dollars(j.reservedUsd) + ' reserved'}</p>${j.error ? `<p class="memoryError">${esc(j.error)}</p>` : j.status === 'interrupted' ? '<p>Server stopped during this request. Its reservation is retained; it will not retry automatically.</p>' : ''}</article>`).join('') || '<p>No updates have run.</p>'}</details>`;
+      <details class="memoryJobs"${data.jobs[0]?.error ? ' open' : ''}><summary>Recent update jobs (${data.jobs.length})</summary>${data.jobs.map(j => `<article><b>${esc(j.status)}</b> · ${esc(new Date(j.startedAt).toLocaleString())}${j.configuration ? ` · ${esc(j.configuration.model)}` : ''}<p>${j.notDispatched ? 'Not dispatched · ' : `${memoryTokens(j.usage?.inputTokens, j.usage?.completeness)} in / ${memoryTokens(j.usage?.outputTokens, j.usage?.completeness)} out · ${esc(j.usage?.completeness || 'legacy-unverified')} accounting · `}${j.durationMs != null ? `${(j.durationMs / 1000).toFixed(1)}s · ` : ''}${j.configuration?.connection === 'codex-subscription' ? '1 subscription job reserved' : dollars(j.reservedUsd) + ' reserved'}</p>${j.ledgerWarning ? `<p class="memoryError">${esc(j.ledgerWarning)}</p>` : ''}${j.error ? `<p class="memoryError">${esc(j.error)}</p>` : j.status === 'interrupted' ? '<p>Server stopped during this request. Its reservation is retained; it will not retry automatically.</p>' : ''}</article>`).join('') || '<p>No updates have run.</p>'}</details>`;
     panel.querySelector('#memoryRefresh').addEventListener('click', refresh);
     panel.querySelectorAll('.memorySource').forEach(button => button.addEventListener('click', async () => {
       const source = /** @type {HTMLElement} */ (button).dataset.source;

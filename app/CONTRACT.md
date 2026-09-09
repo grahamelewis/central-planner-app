@@ -134,26 +134,45 @@ silently fall back to one another.
 Append-only JSONL at `ROOT/ledger/ledger.jsonl`. Lines:
 `{"ts":ISO,"type":"time","project":k,"seconds":30}` and
 `{"ts":ISO,"type":"tokens","project":k,"taskId":id,"in":n,"out":n,"costUsd":x,"model":id}`.
-`model` was added later — entries without it count toward the all-models usage
-window but cannot be attributed to the per-model one.
+New accounting rows also carry stable `usageId`, provider/action identity,
+completeness, scope, cost provenance, and reported cache/reasoning breakdowns.
+Input is cache-inclusive; reasoning is a subset of output. Missing usage may
+be null on partial/unknown rows. Subscription dollars are unknown, not zero.
+Repeated `usageId` rows are revisions: use the latest valid snapshot, not their
+sum. Identity and original accounting timestamp cannot migrate on revision.
+Multi-model snapshots commit atomically as one JSONL record:
+`{"type":"token-batch","version":2,"entries":[...tokenRows]}`.
+Only complete valid batches apply; readers flatten them into effective token
+rows. External scripts must support batches and revision replacement; do not
+use an older app's ledger reader on a ledger containing this format.
+Legacy rows retain their original amounts and are explicitly unverified.
+Unknown-provider legacy tokens stay in overall totals but are excluded from
+the Claude-specific fallback quota estimate.
 
 ```js
 export function logTime(project, seconds)
-export function logTokens(project, taskId, tokensIn, tokensOut, costUsd, model)
+export function logTokens(project, taskId, tokensIn, tokensOut, costUsd, model, details?)
+export function logTokenBatch(records) // [{project,taskId,tokensIn,tokensOut,costUsd,model,details}]
+export function tokenEntries(filters?) // copies of effective, revision-deduplicated token rows
 export function weekSummary()  // → { since, perProject: {k:{seconds,tokensIn,tokensOut,costUsd}},
                                //     totals: {seconds,tokens,costUsd},
                                //     hourTarget, usage }  (week starts Monday 00:00 local)
 export function usageWindows(nowMs?)  // → { limits: [{key,name,sub,pct,spent,budget,resetAt}], source: 'estimate' } | null
 ```
-After logTime/logTokens: `broadcast('ledger:update', weekSummary())`.
+After changed logTime/logTokens/logTokenBatch writes: `broadcast('ledger:update', weekSummary())`.
+Token writes return whether effective data changed; identical retries are
+no-ops. Failed persistence throws. Daily/weekly summaries include cost coverage
+metadata; a numeric cost subtotal is not a complete invoice. See
+`docs/token-accounting.md` for scope, uncertainty, and verification rules.
 
 `usageWindows()` is the **fallback** estimate behind the status bar's usage
 meter (mockup: `docs/quota-mockups/quota-meter.html`): the session row is a
 SLIDING last-`sessionHours` sum — `resetAt` = oldest in-window turn +
 `sessionHours`, so it slides forward under continuous use (a budget meter, NOT
 a mirror of claude.ai's anchored sessions) and is `null` when no window is
-open — plus the all-models and per-model weekly windows on the
-Monday-00:00-local boundary. Spend is real; the budgets are the user's own
+open — plus the all-Claude-models and per-model weekly windows on the
+Monday-00:00-local boundary. The numerator is recorded Claude-attributed usage,
+subject to historical and telemetry gaps; budgets are the user's own
 targets from `USAGE_LIMITS`. Returns `null` when the meter is disabled. Nothing
 imports it directly: it reaches the UI embedded as `weekSummary().usage`, which
 prefers `realUsage()` (below) and falls back to this, so the payload carries

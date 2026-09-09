@@ -53,8 +53,13 @@ test('ledger summary starts at zero with the configured target and a Monday star
   const { body } = await sb.fetchJson('GET', '/api/state');
   const led = body.ledger;
   assert.equal(led.hourTarget, 35);
-  assert.deepEqual(led.totals, { seconds: 0, tokens: 0, costUsd: 0 });
-  assert.deepEqual(led.perProject.alpha, { seconds: 0, tokensIn: 0, tokensOut: 0, costUsd: 0 });
+  const { costCoverage, ...totals } = led.totals;
+  const { costCoverage: projectCoverage, ...alpha } = led.perProject.alpha;
+  assert.deepEqual(totals, { seconds: 0, tokens: 0, costUsd: 0 });
+  assert.deepEqual(alpha, { seconds: 0, tokensIn: 0, tokensOut: 0, costUsd: 0 });
+  assert.equal(costCoverage.entries, 0);
+  assert.ok(Object.values(costCoverage).every(value => value === 0));
+  assert.deepEqual(projectCoverage, costCoverage);
   const since = new Date(led.since);
   assert.ok(!Number.isNaN(since.getTime()), 'ledger.since parses as a date');
   assert.equal(since.getDay(), 1, 'week starts on Monday');

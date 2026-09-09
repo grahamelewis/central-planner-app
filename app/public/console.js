@@ -16,6 +16,8 @@ import { syncJobCards, syncJobFeed, jobsEnded } from './jobs.js';
 import { getAddedViewers, showProposalInPanel } from './viewers.js';
 import { renderWB } from './workbench.js';
 import { runActivityHtml, syncRunActivities } from './runActivity.js';
+import { mathExtensions } from './mathMarkdown.js';
+import { appendConsoleText, consoleSlices, resetConsoleOwnership } from './consoleOwnership.js';
 
 /* ── console rendering: markdown + LaTeX, web-claude style ──
    The stream buffer is parsed into typed segments (you / thinking / answer /
@@ -24,21 +26,13 @@ import { runActivityHtml, syncRunActivities } from './runActivity.js';
 
 /**
  * Markdown → sanitized HTML through the app pipeline (marked + DOMPurify +
- * math stash); plain-escaped fallback when the CDN scripts are absent.
+ * math tokens); plain-escaped fallback when the CDN scripts are absent.
  * @param {string} text
  * @param {{ chat?: boolean }} [opts] chat = console engine (raw HTML shown literally)
  * @returns {string}
  */
 export function md(text, { chat = false } = {}) {
-  // protect math from the markdown parser ($x_t$ underscores etc.), then
-  // parse, sanitize, and restore the math for KaTeX to typeset
-  const stash = [];
-  // private-use-area sentinels — effectively impossible in real prose, unlike
-  // a literal '@@MATH0@@' which Claude could legitimately write
-  const SL = '', SR = '';
-  const protectedText = String(text).replace(
-    /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$[^\n$]+\$)/g,
-    (m) => { stash.push(m); return `${SL}${stash.length - 1}${SR}`; });
+  const source = String(text);
   let html = null;
   try {
     if (window.marked && window.DOMPurify) {
@@ -47,12 +41,11 @@ export function md(text, { chat = false } = {}) {
       // + rendered-markdown pane) — a viewed .md could otherwise restyle or
       // overlay the whole dashboard. KaTeX is unaffected: katexEl() typesets
       // into the DOM after sanitization.
-      html = DOMPurify.sanitize(mdEngine(chat).parse(protectedText, { breaks: true, mangle: false, headerIds: false }),
+      html = DOMPurify.sanitize(mdEngine(chat).parse(source, { breaks: true, mangle: false, headerIds: false }),
         { FORBID_TAGS: ['style'], FORBID_ATTR: ['style'] });
     }
   } catch { /* fall back to plain */ }
-  if (html == null) html = esc(protectedText).replace(/\n/g, '<br>');
-  return html.replace(new RegExp(`${SL}(\\d+)${SR}`, 'g'), (_, i) => esc(stash[+i] ?? ''));
+  return html == null ? esc(source).replace(/\n/g, '<br>') : html;
 }
 
 /* Two configured marked instances, built lazily (the CDN script loads
@@ -77,35 +70,32 @@ function mdEngine(chat) {
       return m && { type: 'del', raw: m[0], text: m[1], tokens: this.lexer.inlineTokens(m[1]) };
     }
     const doc = new marked.Marked();
-    doc.use({ tokenizer: { del } });
+    doc.use({ tokenizer: { del }, extensions: mathExtensions(esc) });
     const conv = new marked.Marked();
-    conv.use({ tokenizer: { del, html: () => null, tag: () => null } });
+    conv.use({ tokenizer: { del, html: () => null, tag: () => null }, extensions: mathExtensions(esc) });
     mdEngines = { doc, conv };
   }
   return chat ? mdEngines.conv : mdEngines.doc;
 }
 
 /**
- * Typeset $…$/$$…$$ inside an element with KaTeX auto-render (no-op without
- * the CDN script; deliberately skips <pre>/<code>).
+ * Typeset only math tokens approved during Markdown parsing. Never scan
+ * ordinary DOM text for dollars: that would reinterpret currency and escapes.
  * @param {Element} el
  * @param {{ [name: string]: string } | null} [macros] harvested \newcommand dialect
  * @returns {void}
  */
 export function katexEl(el, macros) {
   try {
-    if (window.renderMathInElement) {
-      renderMathInElement(el, {
-        delimiters: [
-          { left: '$$', right: '$$', display: true },
-          { left: '\\[', right: '\\]', display: true },
-          { left: '\\(', right: '\\)', display: false },
-          { left: '$', right: '$', display: false },
-        ],
-        throwOnError: false,
-        // KaTeX mutates the macros object on \def/\gdef — hand it a copy
-        macros: macros ? { ...macros } : undefined,
-        ignoredTags: ['pre', 'code', 'script', 'style', 'textarea'],
+    if (window.katex?.render) {
+      // Preserve definitions within this render, but never mutate harvested macros.
+      const localMacros = macros ? { ...macros } : {};
+      el.querySelectorAll('.cpMath').forEach(node => {
+        if (node.closest('pre, code, script, style, textarea') || node.querySelector('.katex')) return;
+        katex.render(node.getAttribute('data-tex') || '', node, {
+          displayMode: node.getAttribute('data-display') === 'block',
+          throwOnError: false, trust: false, macros: localMacros,
+        });
       });
     }
   } catch { /* partial math mid-stream — renders once complete */ }
@@ -650,13 +640,55 @@ export function updateConsole(box, k, upto) {
     wrap.className = 'csegWrap';
     box.appendChild(wrap);
   }
+  // CSS disables native anchoring for the streaming console. Preserve a
+  // paused reader's visible block when a late completion inserts above it.
+  const viewport = !stick ? box.getBoundingClientRect() : null;
+  const visibleBlocks = viewport ? [...wrap.children].map(child => ({ child, rect: child.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.bottom > viewport.top + 4 && rect.top < viewport.bottom) : [];
+  // Prefer a block beginning near the viewport top over a few pixels of the
+  // previous block's tail. A late row inserted BETWEEN those blocks must not
+  // move the prompt being read. For a tall block occupying the viewport, keep
+  // that intersecting block as the anchor instead.
+  const readerAnchor = (visibleBlocks.find(({ rect }) => rect.top >= viewport.top
+    && rect.top < viewport.top + viewport.height / 3) || visibleBlocks[0])?.child;
+  const readerTop = readerAnchor?.getBoundingClientRect().top;
   // slice in RAW coords (keeps the stream-reveal offsets aligned), THEN
   // relativize just the visible portion before parsing
-  const segs = parseConsole(relativizePaths(raw.slice(0, upto), project, taskId));
+  const t = (state.tasks[project] || []).find(x => x && x.id === taskId);
+  const mine = (j) => j && j.source === 'session' && j.project === project && j.taskId === taskId
+    && (!j.taskCreated || j.taskCreated === t?.created);
+  const terminal = new Map();
+  // Old/unowned history stays in Recent Activity, never in the live tail.
+  for (const j of [...(state.jobHistory?.[project] || []), ...Object.values(jobsEnded),
+    ...Object.values(jobsLive)]) {
+    if (mine(j) && j.appTurnId && j.jobRunId && j.taskCreated === t?.created && j.state !== 'running') {
+      terminal.set(j.jobRunId, j);
+    }
+  }
+  const slices = consoleSlices(k, raw, upto);
+  const segs = [];
+  const blocks = new Map();
+  for (let i = 0; i < slices.length; i++) {
+    const slice = slices[i];
+    const owner = slice.turnId || '(unowned)';
+    const block = blocks.get(owner) || 0;
+    blocks.set(owner, block + 1);
+    const prefix = JSON.stringify([owner, block]);
+    segs.push(...parseConsole(relativizePaths(slice.text, project, taskId))
+      .map((seg, index) => ({ ...seg, key: `${prefix}:${index}` })));
+    // A single owned segment participates in normal keyed/indexed reconciliation.
+    // Never insert unrelated children into the text segment wrapper.
+    if (slice.turnId && !slices.slice(0, i).some(s => s.turnId === slice.turnId)) {
+      const jobs = [...terminal.values()].filter(j => j.appTurnId === slice.turnId)
+        .sort((a, b) => String(a.createdAt || a.startedAt).localeCompare(String(b.createdAt || b.startedAt)));
+      if (jobs.length) segs.push({ type: 'jobs', text: JSON.stringify({ jobs,
+        held: jobs.filter(j => jobsLive[j.key]?.jobRunId === j.jobRunId).map(j => j.jobRunId) }), jobs, turnId: slice.turnId,
+        key: `${prefix}:jobs` });
+    }
+  }
   // the tail renders raw only while the turn is live; once it stops running the
   // last segment settles into formatted markdown + KaTeX (one paint). Opening a
   // finished task's console has running=false, so it's fully formatted at once.
-  const t = (state.tasks[project] || []).find(x => x && x.id === taskId);
   const running = !!(t && t.status === 'running');
   // the paper's math dialect — pins, pdf-sibling tex, watch tex, and any
   // project .tex already seen. Computed BEFORE macRev is read
@@ -668,16 +700,30 @@ export function updateConsole(box, k, upto) {
     wrap._n = 0;
   } else {
     if (wrap._n === 0 && wrap.firstChild) wrap.innerHTML = ''; // the empty-state note
+    // A late completion can insert a summary BEFORE an already rendered
+    // later turn. Move/create keyed slots first, preserving that turn's DOM
+    // and reader anchor instead of overwriting every shifted index.
+    const wanted = new Set(segs.map(seg => seg.key));
+    for (const child of [...wrap.children]) if (!wanted.has(child.getAttribute('data-seg-key'))) child.remove();
+    const existing = new Map([...wrap.children].map(child => [child.getAttribute('data-seg-key'), child]));
+    for (let j = 0; j < segs.length; j++) {
+      const key = segs[j].key;
+      if (wrap.children[j]?.getAttribute('data-seg-key') === key) continue;
+      const child = existing.get(key) || document.createElement('div');
+      child.setAttribute('data-seg-key', key);
+      wrap.insertBefore(child, wrap.children[j] || null);
+    }
     // Streaming legitimately re-segments the tail (a fence opener swallows
     // later lines; a growing last line turns into a marker): find the first
     // segment that differs from the DOM and refresh from there — never wipe
     // the whole console, which flashes, drops scroll anchoring, and forces a
     // full re-typeset
-    const lastIdx = segs.length - 1;
     const isStream = (type) => type === 'think' || type === 'ans' || type === 'ques';
     const typesets = (type) => type === 'you' || isStream(type);
     // raw = plain text (no markdown/KaTeX): only the live tail of a running turn
-    const rawAt = (j) => running && j === lastIdx && isStream(segs[j].type);
+    let lastTextIdx = segs.length - 1;
+    while (lastTextIdx >= 0 && segs[lastTextIdx].type === 'jobs') lastTextIdx--;
+    const rawAt = (j) => running && j === lastTextIdx && isStream(segs[j].type);
     const kids = wrap.children;
     const fresh = (el, j) => el
       && el._txt === segs[j].text
@@ -695,13 +741,26 @@ export function updateConsole(box, k, upto) {
       const seg = segs[j];
       const raw = rawAt(j);
       const cls = `cseg cs-${seg.type}`;
-      if (raw) {
+      if (seg.type === 'jobs') {
+        if (el.className !== cls) el.replaceChildren();
+        el.className = cls;
+        el.dataset.turnId = seg.turnId;
+        let cards = el.querySelector(':scope > .csJobs');
+        let feed = el.querySelector(':scope > .csJobFeed');
+        if (!cards) { cards = document.createElement('div'); cards.className = 'csJobs'; el.appendChild(cards); }
+        if (!feed) { feed = document.createElement('div'); feed.className = 'csJobFeed'; el.appendChild(feed); }
+        const held = seg.jobs.filter(job => jobsLive[job.key]?.jobRunId === job.jobRunId);
+        syncJobCards(cards, held);
+        syncJobFeed(feed, seg.jobs.filter(job => !held.includes(job)));
+      } else if (raw) {
+        delete el.dataset.turnId;
         // already streaming raw → grow the text node only (true append, no
         // wrapper rebuild); otherwise lay out the raw shell once
         const body = el._raw && el.className === cls ? el.querySelector(':scope > .csRaw') : null;
         if (body) body.textContent = seg.text;
         else { el.className = cls; el.innerHTML = consoleSegRaw(seg); }
       } else {
+        delete el.dataset.turnId;
         el.className = cls;
         el.innerHTML = consoleSegHtml(seg);
         if (typesets(seg.type)) {
@@ -854,13 +913,12 @@ export function updateConsole(box, k, upto) {
   // live job cards — long-running scripts this task's turn is executing
   // (job:status events; state.jobs seeds after a reload). Independent of
   // `running`: a just-finished card holds its terminal state while it fades.
-  const mine = (j) => j && j.source === 'session' && j.project === project && j.taskId === taskId;
   const byStart = (a, b) => (a.startedAt < b.startedAt ? -1 : 1);
   // a DETACHED job outlives the turn: while the turn runs it keeps its full
   // card; once the turn has ended it collapses to a live feed row (⊘ stop
   // still reachable) beside the ended jobs' one-line end summaries
   const myJobs = Object.values(jobsLive)
-    .filter(j => mine(j) && (running || !(j.detached && j.state === 'running')))
+    .filter(j => mine(j) && j.state === 'running' && (running || !j.detached))
     .sort(byStart);
   let jobsEl = box.querySelector(':scope > .csJobs');
   if (myJobs.length) {
@@ -876,7 +934,6 @@ export function updateConsole(box, k, upto) {
   // the session feed: what stays after a card fades — one row per ended job
   // (✓ / ✗ / ⊘ + end summary), plus the live row of a detached job after the turn
   const feedJobs = [
-    ...Object.values(jobsEnded).filter(mine),
     ...(running ? [] : Object.values(jobsLive).filter(j => mine(j) && j.detached && j.state === 'running')),
   ].sort(byStart);
   let feedEl = box.querySelector(':scope > .csJobFeed');
@@ -917,6 +974,13 @@ export function updateConsole(box, k, upto) {
     // our own write fires one scroll event — flag it so the wireWB listener
     // doesn't mistake it for the user scrolling
     if (box.scrollTop !== before) box._prog = (box._prog || 0) + 1;
+  } else if (readerAnchor?.isConnected && readerTop != null) {
+    const delta = readerAnchor.getBoundingClientRect().top - readerTop;
+    if (Math.abs(delta) > 0.5) {
+      const before = box.scrollTop;
+      box.scrollTop += delta;
+      if (box.scrollTop !== before) box._prog = (box._prog || 0) + 1;
+    }
   }
 }
 
@@ -1066,10 +1130,14 @@ export function seedTailBuf(key, task) {
   if (!tailBufs[tk]) {
     const tr = transcripts[tk];
     if (tr?.entries?.length) {
-      tailBufs[tk] = tr.entries.map(e =>
-        (e.role === 'user' ? '\n▸ you ─────────\n' : `\n▸ ${agentName(e.provider || taskProvider(task)).toLowerCase()} ──────\n`) + e.text + '\n'
+      resetConsoleOwnership(tk);
+      tailBufs[tk] = '';
+      for (const e of tr.entries) {
+        const chunk = (e.role === 'user' ? '\n▸ you ─────────\n' : `\n▸ ${agentName(e.provider || taskProvider(task)).toLowerCase()} ──────\n`) + e.text + '\n'
         // rebuild the "— turn done · … —" divider saved on the assistant entry
-        + (e.turnLine ? `${e.turnLine}\n` : '')).join('');
+          + (e.turnLine ? `${e.turnLine}\n` : '');
+        tailBufs[tk] = appendConsoleText(tk, tailBufs[tk], chunk, e, Infinity);
+      }
     }
   }
   return tk;

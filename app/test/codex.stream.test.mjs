@@ -2,6 +2,7 @@
 // extraction: no Codex process, provider request, browser, or billed route.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { resetConsoleOwnership, appendConsoleText } from '../public/consoleOwnership.js';
 import path from 'node:path';
 import { APP_DIR, loadPrivateFns } from './helpers.mjs';
 
@@ -22,6 +23,7 @@ test('saved Codex history keeps user and assistant entries separate', () => {
     path.join(APP_DIR, 'public', 'console.js'), ['parseConsole', 'seedTailBuf'], {
       tailBufs,
       transcripts,
+      resetConsoleOwnership, appendConsoleText,
       agentName: (provider) => provider === 'codex' ? 'Codex' : 'Claude',
       taskProvider: (task) => task?.provider === 'codex' ? 'codex' : 'claude',
       QUES_RE: /^(?:#{1,4}\s+)?(?:\*\*|__)?QUESTION(?::\s*(?:\*\*|__)?|(?:\*\*|__):)\s*/,

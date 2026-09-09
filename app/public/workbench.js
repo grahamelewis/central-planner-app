@@ -5,7 +5,7 @@ import { hlFor, hlText } from './hl.js';
 import { creepTarget, CREEP_EASE } from './pdfPane.js';
 import { texOutlineMenu, TEX_EXTS } from './latex/texUi.js';
 import {
-  enc, esc, OVS_LABEL, statusDot, SHOW_HOURS, hrs, fmtTok, extOf,
+  enc, esc, OVS_LABEL, statusDot, SHOW_HOURS, hrs, fmtTok, exactTok, tokenTooltip, extOf,
   isPdfFile, isHtmlFile, isDataFile, pinKindOf, pinLabelOf, PIN_ICON, isExtRel,
   toast, confirmBox, unifiedDiffHtml, fmtAgo, texComplete,
 } from './util.js';
@@ -532,7 +532,8 @@ function paintQuota(q) {
       + `, as of <b>${esc(ago || 'unknown')}</b> — refreshed when a task runs.`;
   } else {
     foot.innerHTML = `<b>Estimated</b> from this dashboard's own ledger against the budgets in`
-      + ` config.json — not your real plan limits.`;
+      + ` config.json — Claude-attributed tokens only, not your real plan limits or spending.`
+      + (u?.unknownProviderTokens ? ` ${exactTok(u.unknownProviderTokens)} historical tokens with unknown provider excluded.` : '');
   }
   limits.forEach((L, i) => {
     const row = pop.querySelector(`.qpRow[data-key="${CSS.escape(L.key)}"]`);
@@ -551,7 +552,7 @@ function paintQuota(q) {
     estimate reports tokens against the configured budget. */
 function qDetail(L) {
   return L.real ? `${L.pct}% of your plan's window used`
-    : `${fmtTok(L.spent)} of ${fmtTok(L.budget)} tok (estimated)`;
+    : `${exactTok(L.spent)} of ${exactTok(L.budget)} tokens processed (configured-budget estimate, not subscription allowance)`;
 }
 
 /** Repaint every mounted meter — the countdown has to move once a second. */
@@ -583,8 +584,8 @@ function statusbarHtml(key, ts, lg) {
   if (queued) segs.push(`<span>${queued} queued</span>`);
   if (!segs.length) segs.push(`<span style="color:var(--dim)">○ idle</span>`);
   if (lg) segs.push(SHOW_HOURS
-    ? `<span>wk <b>${hrs(lg.seconds)}h</b> · <b class="p">${fmtTok((lg.tokensIn || 0) + (lg.tokensOut || 0))} tok</b></span>`
-    : `<span>wk <b class="p">${fmtTok((lg.tokensIn || 0) + (lg.tokensOut || 0))} tok</b></span>`);
+    ? `<span title="${esc(tokenTooltip(lg, 'Project this week'))}">wk <b>${hrs(lg.seconds)}h</b> · <b class="p">${fmtTok((lg.tokensIn || 0) + (lg.tokensOut || 0))} tok processed</b></span>`
+    : `<span title="${esc(tokenTooltip(lg, 'Project this week'))}">wk <b class="p">${fmtTok((lg.tokensIn || 0) + (lg.tokensOut || 0))} tok processed</b></span>`);
   const focusBtn = `<span class="focusTog" id="focusTog" title="${focusOn()
     ? 'exit focus mode — bring back the sidebar and stacked panes'
     : 'focus mode — hide the sidebar; editor · viewer · console side by side'}">${focusOn() ? FOCUS_BACK : FOCUS_GO}</span>`;

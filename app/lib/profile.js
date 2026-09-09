@@ -6,10 +6,12 @@
 // from smoke tests; the UI's ↻ button is the intended trigger.
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { ROOT, PROJECTS, USER_NAME } from './config.js';
 import { allTasks, getAbstract, getCategories } from './taskStore.js';
-import { dailyActivity } from './ledger.js';
+import { dailyActivity, logTokenBatch } from './ledger.js';
+import { collectClaudeWorker, createWorkerUsageWriter } from './backgroundUsage.js';
 
 const PROFILE_FILE = path.join(ROOT, 'profile.json');
 const MODEL = 'claude-haiku-4-5-20251001'; // cheap, plenty for a bio
@@ -27,6 +29,7 @@ export function readProfile() {
       interests: Array.isArray(p.interests) ? p.interests.filter(s => typeof s === 'string').slice(0, 4) : [],
       generatedAt: p.generatedAt || null,
       model: p.model || null,
+      ...(p.ledgerWarning ? { ledgerWarning: p.ledgerWarning } : {}),
     };
   } catch {
     return { name: NAME, bio: null, interests: [], generatedAt: null, model: null };
@@ -75,7 +78,7 @@ function gatherMaterial() {
     }, { seconds: 0, tokens: 0, per: {} });
     const top = Object.entries(totals.per).sort((a, b) => b[1] - a[1])[0];
     parts.push(`## Activity\n${(totals.seconds / 3600).toFixed(1)} logged hours, `
-      + `${Math.round(totals.tokens / 1000)}k Claude tokens`
+      + `${Math.round(totals.tokens / 1000)}k recorded tokens across providers (historical coverage may be incomplete)`
       + (top ? `, most time in "${PROJECTS[top[0]]?.name || top[0]}"` : ''));
   } catch (err) { logErr('activity material failed:', err.message); }
 
@@ -102,7 +105,13 @@ let inflight = null; // single concurrent generation
 /** BILLED: one-shot haiku call → { bio, interests } written to profile.json. */
 export function generateProfile() {
   if (inflight) return inflight;
+  if (process.env.CP_NO_BILLED) return Promise.resolve({ error: 'Billed profile calls are disabled in this environment.' });
   inflight = (async () => {
+    const usageId = `profile:${randomUUID()}`;
+    let dispatched = false;
+    let response;
+    let accounting = { rows: [], costUsd: null, completeness: 'unknown', scope: 'observed-messages' };
+    const writeUsage = createWorkerUsageWriter(logTokenBatch, null, null, { usageId, action: 'profile', model: MODEL });
     try {
       const material = gatherMaterial();
       const prompt = [
@@ -132,37 +141,40 @@ export function generateProfile() {
           disallowedTools: ['Bash', 'Edit', 'Write', 'Read', 'Glob', 'Grep', 'Task', 'WebSearch', 'WebFetch', 'NotebookEdit'],
         },
       });
-      const timer = setTimeout(() => {
-        q.interrupt().catch((err) => logErr('interrupt failed:', err?.message || err));
-      }, 90_000);
-      let finalText = '';
-      let costUsd = 0;
-      try {
-        for await (const msg of q) {
-          if (msg && msg.type === 'result') {
-            finalText = msg.result || '';
-            costUsd = Number(msg.total_cost_usd) || 0;
-          }
-        }
-      } finally {
-        clearTimeout(timer);
+      dispatched = true;
+      const collected = await collectClaudeWorker(q, { model: MODEL, timeoutMs: 90000, onUsage: writeUsage });
+      accounting = collected.accounting;
+      if (collected.failure) throw collected.failure;
+      if (collected.timedOut || !collected.result || collected.result.is_error
+          || collected.result.subtype !== 'success') {
+        return response = { error: 'Profile generation did not complete; previous profile retained.' };
       }
+      const finalText = collected.result.result || '';
+      const costUsd = accounting.costUsd;
       const parsed = parseProfileJson(finalText);
-      if (!parsed) return { error: 'Claude did not return a usable profile — try again' };
+      if (!parsed) return response = { error: 'Claude did not return a usable profile — try again' };
       const profile = {
         name: NAME,
         ...parsed,
         generatedAt: new Date().toISOString(),
         model: MODEL,
         costUsd,
+        ...(collected.persistenceFailed ? { ledgerWarning: 'Usage could not be saved to the shared ledger; expenditure accounting is incomplete.' } : {}),
       };
       writeProfile(profile);
-      log(`profile written (${profile.interests.length} interests, $${costUsd.toFixed ? costUsd.toFixed(4) : costUsd})`);
-      return readProfile();
+      log(`profile written (${profile.interests.length} interests, cost ${costUsd == null ? 'unknown' : '$' + costUsd.toFixed(4)})`);
+      return response = readProfile();
     } catch (err) {
       logErr('generate failed:', err.message);
-      return { error: err.message };
+      return response = { error: err.message };
     } finally {
+      if (dispatched) {
+        try { writeUsage(accounting); }
+        catch (err) {
+          logErr('logTokens failed:', err.message);
+          if (response) response.ledgerWarning = 'Usage could not be saved to the shared ledger; expenditure accounting is incomplete.';
+        }
+      }
       inflight = null;
     }
   })();

@@ -21,7 +21,7 @@ npm start          # → http://127.0.0.1:4242  (localhost only — never expose
   - `sessions.js` — provider dispatcher: Claude Agent SDK or Codex app-server, context packets, handoff parsing
   - `codexAppServer.js` — persistent local Codex JSONL client: account, live models, usage, threads and turns
   - `watchers.js` — chokidar artifact indexing + live PDF watches (push-triggered one-shot latexmk compiles on save)
-  - `ledger.js` — `../ledger/ledger.jsonl` (your seconds + Claude tokens/cost, weekly summary)
+  - `ledger.js` — `../ledger/ledger.jsonl` (time + provider-reported token observations, cost provenance and weekly summaries; see `docs/token-accounting.md`)
 - `public/` — the dashboard frontend (no build step)
 - `public/m/` — the phone app (same API/WS; tasks, sessions, add, artifacts; PWA-installable)
 - `../categories.json` — category primers injected into sessions

@@ -4,7 +4,7 @@
 // projects, Categories browser + editor, git panel.
 
 import {
-  enc, esc, OVS_LABEL, statusDot, SHOW_HOURS, hrs, fmtTok, fmtWhen, isoWeek,
+  enc, esc, OVS_LABEL, statusDot, SHOW_HOURS, hrs, fmtTok, exactTok, tokenTooltip, recordedCostLabel, fmtWhen, isoWeek,
   toast, confirmBox, fmtAgo,
 } from './util.js';
 import {
@@ -59,7 +59,7 @@ export function renderOverview() {
       <div class="av ${wait ? 'y' : avCls[i % 4]}">${wait ? '?' : '⚙'}</div>
       <div><div class="nm">${esc(state.projects[k]?.name || k)} · ${esc(t.title)} <span class="providerTag ${taskProvider(t)}">${agentName(taskProvider(t))}</span></div>
       <div class="st">${sub}</div></div>
-      <div class="tm ${wait ? 'y' : ''}">${wait ? '⏸ needs you' : '● running'}<small>${tok} tok this wk</small></div>
+      <div class="tm ${wait ? 'y' : ''}">${wait ? '⏸ needs you' : '● running'}<small title="${esc(tokenTooltip(per, 'Project this week'))}">${tok} tok processed · project wk</small></div>
     </div>`;
   }).join('') : `<div class="sideNote" style="padding:16px 4px;">no active sessions — open a project and launch a queued task</div>`;
 
@@ -115,7 +115,7 @@ export function renderOverview() {
     return `<tr data-go="${esc(k)}" style="cursor:pointer;">
       <td class="pn"><i style="background:${esc(col)}"></i>${esc(state.projects[k]?.name || k)}</td>
       ${SHOW_HOURS ? `<td class="sumh">${hrs(e.seconds)}h</td>` : ''}
-      <td class="sumt">${fmtTok((e.tokensIn || 0) + (e.tokensOut || 0))}</td></tr>`;
+      <td class="sumt" title="${esc(tokenTooltip(e, 'Project this week'))}">${fmtTok((e.tokensIn || 0) + (e.tokensOut || 0))}</td></tr>`;
   }).join('');
   const ledgerHtml = lgRows
     ? `<table class="ledger">
@@ -123,11 +123,11 @@ export function renderOverview() {
         ${lgRows}
         <tr class="tot"><td class="pn">Σ week</td>
           ${SHOW_HOURS ? `<td class="sumh">${hrs(secs)}h</td>` : ''}
-          <td class="sumt">${fmtTok(tokens)}</td></tr>
+          <td class="sumt" title="${esc(tokenTooltip(lw?.totals, 'All usage this week'))}">${fmtTok(tokens)}</td></tr>
       </table>
       <div class="lgNote">${SHOW_HOURS
         ? `Hours <b>${hrs(secs)}h of ${hourTarget}h</b> weekly target · agents <b>${fmtTok(tokens)} tok</b> alongside.`
-        : `Agents <b>${fmtTok(tokens)} tok</b> this week.`}</div>`
+        : `Agents <b>${fmtTok(tokens)} tokens processed</b> this week, including global background helpers. Hover for exact counts and coverage; not a bill or context size.`}</div>`
     : `<div class="sideNote" style="padding:14px 4px;">${SHOW_HOURS
         ? 'nothing logged this week yet — hours accrue while a project workbench is focused'
         : 'no agent activity logged this week yet'}</div>`;
@@ -184,12 +184,12 @@ export function renderOverview() {
           <circle class="fg" cx="50" cy="50" r="42" style="stroke-dasharray:${C1.toFixed(1)};stroke-dashoffset:${ringMainOffset.toFixed(1)}"/>
           ${ringInner}
         </svg>
-        <div class="ringNum">${ringNumHtml}</div>
+        <div class="ringNum" title="${esc(tokenTooltip(lw?.totals, 'All usage this week'))}">${ringNumHtml}</div>
       </div>
       <div class="ringSplit">${ringSplitHtml}</div>
     </div>
     <div class="cell c-ledger">
-      <div class="ch">Weekly ledger <span class="anno">${SHOW_HOURS ? 'your hours + claude tokens' : 'claude tokens'}</span></div>
+      <div class="ch">Weekly ledger <span class="anno">${SHOW_HOURS ? 'your hours + tokens processed' : 'tokens processed · all providers'}</span></div>
       ${ledgerHtml}
     </div>
     <div class="cell c-pdf">
@@ -833,8 +833,8 @@ function heatmapHtml(days) {
     if (!d || (!d.seconds && !d.tokens)) return `${base} — no activity`;
     const bits = [];
     if (d.seconds) bits.push(`${(d.seconds / 3600).toFixed(1)}h you`);
-    if (d.tokens) bits.push(`${fmtTok(d.tokens)} tok`);
-    if (d.costUsd) bits.push(`$${d.costUsd.toFixed(2)}`);
+    if (d.tokens) bits.push(`${exactTok(d.tokens)} tokens processed`);
+    if (d.tokens || d.costUsd) bits.push(recordedCostLabel(d));
     const per = Object.entries(d.perProject || {}).sort((a, b) => b[1] - a[1])
       .map(([k, s]) => `${state.projects[k]?.name || k} ${(s / 3600).toFixed(1)}h`).join(', ');
     return `${base} — ${bits.join(' · ')}${per ? ` (${per})` : ''}`;
@@ -842,7 +842,7 @@ function heatmapHtml(days) {
 
   let monthCells = '';
   let gridCells = '';
-  const stats = { seconds: 0, tokens: 0, costUsd: 0, active: 0, streak: 0, bestStreak: 0 };
+  const stats = { seconds: 0, tokens: 0, costUsd: 0, active: 0, streak: 0, bestStreak: 0, costCoverage: {} };
   for (let w = 0; w < 53; w++) {
     const weekStartD = new Date(start);
     weekStartD.setDate(start.getDate() + w * 7);
@@ -858,6 +858,9 @@ function heatmapHtml(days) {
         stats.seconds += d.seconds || 0;
         stats.tokens += d.tokens || 0;
         stats.costUsd += d.costUsd || 0;
+        for (const [key, value] of Object.entries(d.costCoverage || {})) {
+          stats.costCoverage[key] = (stats.costCoverage[key] || 0) + Number(value || 0);
+        }
         if (d.seconds || d.tokens) {
           stats.active++;
           stats.streak++;
@@ -877,8 +880,8 @@ function heatmapHtml(days) {
         <span class="hmStat"><b>${hrs(stats.seconds)}h</b> logged</span>
         <span class="hmStat"><b>${stats.active}</b> active day${stats.active === 1 ? '' : 's'}</span>
         <span class="hmStat"><b>${stats.bestStreak}</b> day best streak</span>
-        <span class="hmStat"><b class="p">${fmtTok(stats.tokens)}</b> tok · <b class="p">$${stats.costUsd.toFixed(0)}</b></span>
-        <span class="hmLegend">less <span class="hmCell l0"></span><span class="hmCell l1"></span><span class="hmCell l2"></span><span class="hmCell l3"></span><span class="hmCell l4"></span> more · <span class="hmCell lC"></span> Claude only</span>
+        <span class="hmStat" title="${esc(tokenTooltip(stats, 'Activity shown'))}"><b class="p">${fmtTok(stats.tokens)}</b> tokens processed · ${esc(recordedCostLabel(stats))}</span>
+        <span class="hmLegend">less <span class="hmCell l0"></span><span class="hmCell l1"></span><span class="hmCell l2"></span><span class="hmCell l3"></span><span class="hmCell l4"></span> more · <span class="hmCell lC"></span> agents only</span>
       </div>
     </div>`;
 }

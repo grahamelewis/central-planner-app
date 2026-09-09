@@ -10,12 +10,14 @@
 // ui harness intercepts it in the browser, same as /launch and /message).
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'node:crypto';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { PROJECTS } from './config.js';
 import { broadcast } from './events.js';
-import { logTokens } from './ledger.js';
+import { logTokenBatch } from './ledger.js';
 import { getPdfWatches } from './watchers.js';
 import { getRuns } from './runner.js';
+import { collectClaudeWorker, createWorkerUsageWriter } from './backgroundUsage.js';
 
 // Sonnet 5: LaTeX repairs are mechanical (read the log, anchor a minimal
 // find→replace) — Sonnet does them as well as Opus at a fraction of the cost
@@ -169,6 +171,7 @@ export function startTexfix(project, taskId) {
   } catch { /* prompt says log-only */ }
 
   const fix = {
+    usageId: `texfix:${randomUUID()}`,
     state: 'running',
     startedAt: new Date().toISOString(),
     model: MODEL,
@@ -185,9 +188,12 @@ export function startTexfix(project, taskId) {
     let finalText = '';
     let resultSubtype = null;
     let timedOut = false;
-    let usageIn = 0;
-    let usageOut = 0;
-    let costUsd = 0;
+    let accounting = { rows: [], costUsd: null, completeness: 'unknown', scope: 'observed-messages' };
+    let costUsd = null;
+    let dispatched = false;
+    const writeUsage = createWorkerUsageWriter(logTokenBatch, project, taskId || 'texfix', {
+      usageId: fix.usageId, action: 'texfix', model: MODEL,
+    });
     try {
       const q = query({
         prompt: buildPrompt(root, ctx.tex, ctx.problems, baseContent),
@@ -201,35 +207,21 @@ export function startTexfix(project, taskId) {
           disallowedTools: ['Edit', 'MultiEdit', 'Write', 'Bash', 'NotebookEdit', 'WebSearch', 'WebFetch', 'Task'],
         },
       });
-      const timer = setTimeout(() => {
-        timedOut = true;
-        q.interrupt().catch((err) => logErr(`${project}: interrupt failed:`, err?.message || err));
-      }, TIMEOUT_MS);
-      try {
-        for await (const msg of q) {
-          if (msg?.type === 'result') {
-            resultSubtype = msg.subtype || 'success';
-            finalText = msg.result || '';
-            usageIn = msg.usage?.input_tokens || 0;
-            usageOut = msg.usage?.output_tokens || 0;
-            costUsd = Number(msg.total_cost_usd) || 0;
-          }
-        }
-      } finally {
-        clearTimeout(timer);
-      }
-
-      try { logTokens(project, taskId || 'texfix', usageIn, usageOut, costUsd, MODEL); } catch (err) {
-        logErr('logTokens failed:', err.message);
-      }
-      if (timedOut || (resultSubtype && resultSubtype !== 'success')) {
+      dispatched = true;
+      const collected = await collectClaudeWorker(q, { model: MODEL, timeoutMs: TIMEOUT_MS, onUsage: writeUsage });
+      accounting = collected.accounting;
+      costUsd = accounting.costUsd;
+      timedOut = collected.timedOut;
+      resultSubtype = collected.result?.subtype || null;
+      finalText = collected.result?.result || '';
+      if (collected.failure) throw collected.failure;
+      if (timedOut || !collected.result || collected.result.is_error || resultSubtype !== 'success') {
         // an interrupted/errored session is NOT a quiet "no suggestions" —
         // surface why (timeout, max turns, execution error) so the user can retry
         const why = timedOut ? `timed out after ${TIMEOUT_MS / 60000} minutes`
-          : `session ended early (${resultSubtype.replace(/^error_/, '').replace(/_/g, ' ')})`;
+          : `session ended early (${(resultSubtype || 'missing result').replace(/^error_/, '').replace(/_/g, ' ')})`;
         fixes.set(project, { ...fix, state: 'error', ms: Date.now() - t0, costUsd, error: why });
         logErr(`${project}: ${why}`);
-        broadcastFix(project);
         return;
       }
       const suggestions = parseSuggestions(finalText, { root, baseContent, mainRel });
@@ -241,12 +233,21 @@ export function startTexfix(project, taskId) {
         suggestions,
         note: suggestions.length ? '' : finalText.trim().slice(0, 300),
       });
-      log(`${project}: ${suggestions.length} suggestion(s) in ${((Date.now() - t0) / 1000).toFixed(1)}s, $${costUsd.toFixed(4)}`);
+      log(`${project}: ${suggestions.length} suggestion(s) in ${((Date.now() - t0) / 1000).toFixed(1)}s, cost ${costUsd == null ? 'unknown' : '$' + costUsd.toFixed(4)}`);
     } catch (err) {
       logErr(`${project}: failed —`, err.message);
-      fixes.set(project, { ...fix, state: 'error', ms: Date.now() - t0, error: err.message });
+      fixes.set(project, { ...fix, state: 'error', ms: Date.now() - t0, costUsd, error: err.message });
+    } finally {
+      try { if (dispatched) writeUsage(accounting); }
+      catch (err) {
+        logErr('logTokens failed:', err.message);
+        const current = fixes.get(project);
+        if (current?.usageId === fix.usageId) current.ledgerWarning = 'Usage could not be saved to the shared ledger; expenditure accounting is incomplete.';
+      }
+      const current = fixes.get(project);
+      if (current?.usageId === fix.usageId) current.usageCompleteness = accounting.completeness;
+      broadcastFix(project);
     }
-    broadcastFix(project);
   })();
 
   return { ok: true };

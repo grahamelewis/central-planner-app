@@ -70,7 +70,11 @@ before(async () => {
   await sleep(300);
   await wsPush('session:stream', { project: 'alpha', id,
     chunk: `\n— answer —\nHere is the appendix draft:\n\n${TEXFENCE}\n\nand the solver:\n\n${JLFENCE}\n\nplus a bare fence:\n\n${BARE_MATHY}\n\n— turn done · 1.0s · 1k in / 1k out —\n` });
-  await sleep(600);
+  // The reveal pump may still be showing raw text at 600ms. Wait for the
+  // streamed answer to settle into its actual fenced DOM, not a machine-speed
+  // dependent delay (otherwise the formatted-view tests never run at all).
+  await page.waitForFunction(() => document.querySelectorAll('#v-alpha #consoleBox .fenceBox').length === 2,
+    null, { timeout: 10000 });
 });
 after(async () => { if (ui) await ui.stop(); });
 

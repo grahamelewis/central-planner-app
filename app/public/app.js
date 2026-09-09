@@ -8,7 +8,7 @@ import {
   enc, esc, SHOW_HOURS, hrs, fmtTok, toast, texComplete,
 } from './util.js';
 import {
-  state, ui, pdfPanes, tailBufs, agentsLive, editsLive, jobsLive,
+  state, ui, pdfPanes, tailBufs, transcripts, agentsLive, editsLive, jobsLive,
   jobTimers, drafts, runBufs, runSegs, runOff, htmlEdits,
   snapsCache, pendingPerms, composerDrafts, queuedMsgs,
   turnTexTouched, pendingComplete, consoleView,
@@ -21,7 +21,8 @@ import {
 } from './files.js';
 import { pumps, pumpConsole } from './console.js';
 import { noteRunStatus, noteRunActivity, seedRunActivities, syncRunActivities } from './runActivity.js';
-import { syncRunJobCard, scheduleJobFade, absorbJob } from './jobs.js';
+import { syncRunJobCard, scheduleJobFade, absorbJob, jobsEnded, shouldAcceptJobSnapshot } from './jobs.js';
+import { appendConsoleText, bindConsoleTurn, resetConsoleOwnership } from './consoleOwnership.js';
 import {
   renderTexProblems, noteTurnTex, queueAutoTexRuns, pumpAutoRun,
   updateTexRunCard, syncTexRunPane,
@@ -100,6 +101,12 @@ export function handleEvent(type, p) {
       if (!p || !p.task) break;
       const arr = state.tasks[p.project] || (state.tasks[p.project] = []);
       const i = arr.findIndex(t => t && t.id === p.task.id);
+      if (i >= 0 && arr[i]?.created !== p.task.created) {
+        const key = `${p.project}/${p.task.id}`;
+        delete tailBufs[key];
+        delete transcripts[key];
+        resetConsoleOwnership(key);
+      }
       if (p.task.status !== 'running' || arr[i]?.status !== 'running') {
         noteRunStatus({ project: p.project, id: p.task.id, status: 'reset' });
       }
@@ -119,15 +126,7 @@ export function handleEvent(type, p) {
       if (!p) break;
       const k = `${p.project}/${p.id}`;
       const chunk = String(p.chunk ?? '');
-      {
-        let b = (tailBufs[k] || '') + chunk;
-        if (b.length > 200000) {
-          b = b.slice(-200000);
-          const nl = b.indexOf('\n'); // cut at a line boundary, not mid-marker
-          if (nl > 0) b = b.slice(nl + 1);
-        }
-        tailBufs[k] = b;
-      }
+      tailBufs[k] = appendConsoleText(k, tailBufs[k] || '', chunk, p);
       if (!pumps[k]) pumps[k] = requestAnimationFrame(() => pumpConsole(p.project, k));
       voiceOnStream(p.project, p.id); // narrate-progress mode speaks completed sentences
       break;
@@ -228,8 +227,12 @@ export function handleEvent(type, p) {
       // client-side sample history (sparklines, phases, output tail) across.
       if (!p || !p.job || !p.job.key) break;
       const j = p.job;
+      const owner = (state.tasks[j.project] || []).find(t => t?.id === j.taskId);
+      if (j.source === 'session' && j.taskCreated && owner?.created !== j.taskCreated) break;
+      const previous = jobsLive[j.key] || jobsEnded[j.key];
+      if (!shouldAcceptJobSnapshot(previous, j)) break;
       j._recvAt = performance.now();
-      jobsLive[j.key] = absorbJob(jobsLive[j.key], j);
+      jobsLive[j.key] = absorbJob(previous, j);
       if (j.state !== 'running') {
         refreshFeed(j.project); // a finished run lands in the activity feed
         scheduleJobFade(j);
@@ -244,6 +247,7 @@ export function handleEvent(type, p) {
     }
     case 'session:status': {
       if (!p) break;
+      bindConsoleTurn(`${p.project}/${p.id}`, p.requestId, p.turnId);
       const recalling = noteRecallStatus(p);
       if (p.status) noteRunStatus(p);
       if (!recalling && perOf(p.project).interrupting === p.id) perOf(p.project).interrupting = null;
@@ -255,6 +259,7 @@ export function handleEvent(type, p) {
         // jobs are exempt — they outlive the turn by design.
         for (const j of Object.values(jobsLive)) {
           if (j.source === 'session' && j.project === p.project && j.taskId === p.id
+            && (!j.appTurnId || j.appTurnId === p.turnId)
             && j.state === 'running' && !j.detached) {
             j.state = 'stopped';
             scheduleJobFade(j);
@@ -424,6 +429,10 @@ export function handleEvent(type, p) {
     }
     case 'task:delete': {
       if (!p || !p.project) break;
+      const key = `${p.project}/${p.id}`;
+      delete tailBufs[key];
+      delete transcripts[key];
+      resetConsoleOwnership(key);
       const arr = state.tasks[p.project];
       if (arr) {
         const i = arr.findIndex(t => t && t.id === p.id);
@@ -586,6 +595,14 @@ function applyState(p) {
   }
   state.categories = p.categories || {};
   state.abstracts = p.abstracts || {};
+  for (const [project, tasks] of Object.entries(state.tasks || {})) for (const task of tasks) {
+    if (task?.created !== p.tasks?.[project]?.find(t => t?.id === task.id)?.created) {
+      const key = `${project}/${task.id}`;
+      delete tailBufs[key];
+      delete transcripts[key];
+      resetConsoleOwnership(key);
+    }
+  }
   state.tasks = p.tasks || {};
   state.artifacts = Array.isArray(p.artifacts) ? p.artifacts : [];
   state.pdf = p.pdf || {};
@@ -642,9 +659,17 @@ function applyState(p) {
   // job cards: the snapshot is authoritative — a reload mid-run re-seeds the
   // live cards, and jobs that ended while we were away disappear
   const previousJobs = { ...jobsLive };
+  state.jobHistory = p.jobHistory || {};
+  // Snapshots are authoritative for retained terminal history, too. Only
+  // records with immutable ownership can be anchored in a conversation.
+  for (const key of Object.keys(jobsEnded)) delete jobsEnded[key];
+  for (const rows of Object.values(state.jobHistory)) for (const j of rows) {
+    if (j.key && j.jobRunId && j.state !== 'running') jobsEnded[j.key] = j;
+  }
   for (const k of Object.keys(jobsLive)) delete jobsLive[k];
   for (const j of (Array.isArray(p.jobs) ? p.jobs : [])) {
     if (!j || !j.key) continue;
+    if (!shouldAcceptJobSnapshot(jobsEnded[j.key] || previousJobs[j.key], j)) continue;
     j._recvAt = performance.now();
     jobsLive[j.key] = absorbJob(previousJobs[j.key], j); // preserve history only for the same invocation
     // a just-ended job in the snapshot still needs its fade-away timer

@@ -30,6 +30,32 @@ before(async () => {
 });
 after(async () => { await ui?.stop(); });
 
+test('memory accounting distinguishes unknown observations from zero and shows exact recorded totals', opts, async () => {
+  const { page, sb } = ui;
+  const endpoint = '**/api/tasks/alpha/alp-001/memory';
+  await page.route(endpoint, async route => {
+    const response = await route.fetch();
+    const data = await response.json();
+    data.totals.inputTokens = 1268709;
+    data.totals.incompleteJobs = 1;
+    data.jobs[0].usage = { inputTokens: null, outputTokens: null, completeness: 'unknown' };
+    data.jobs[0].ledgerWarning = 'Usage saved here, but the shared ledger could not be updated.';
+    await route.fulfill({ response, json: data });
+  });
+  try {
+    await page.goto(`${sb.base}/?memory-accounting-test#alpha`, { waitUntil: 'domcontentloaded' });
+    await page.locator('#taskMemoryBtn').click();
+    await page.locator('.memoryStats').waitFor();
+    assert.equal(await page.locator('.memoryStats b').first().innerText(), '1,268,709 recorded');
+    const text = await page.locator('#taskMemoryDialog').innerText();
+    assert.match(text, /incomplete or historically unverified/);
+    await page.locator('.memoryJobs summary').click();
+    assert.match(await page.locator('.memoryJobs').innerText(), /unknown in \/ unknown out/);
+    assert.match(await page.locator('.memoryJobs').innerText(), /shared ledger could not be updated/);
+    await page.keyboard.press('Escape');
+  } finally { await page.unroute(endpoint); }
+});
+
 test('settings model selection persists independently; credential status and pilot boundaries are visible', opts, async () => {
   const { page, sb } = ui;
   await page.goto(`${sb.base}/#settings`, { waitUntil: 'domcontentloaded' });

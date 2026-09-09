@@ -250,12 +250,17 @@ test('the session feed keeps a one-line row per ended job (✓ / ✗ / ⊘) and 
   const key = await page.evaluate(() => document.querySelector('#v-alpha #consoleBox')?.dataset.key);
   assert.ok(key, 'a task console is showing');
   const taskId = key.split('/')[1];
+  const taskCreated = await page.evaluate(async id => (await import('/store.js')).state.tasks.alpha.find(t => t.id === id).created, taskId);
+  const appTurnId = 'feed-owned-turn';
+  await ui.wsPush('session:stream', { project: 'alpha', id: taskId, turnId: appTurnId,
+    chunk: '\n▸ you ─────\nRun the owned jobs.\n— answer —\nJob results.\n' });
   const stopPosts = [];
   await page.route('**/api/jobs/**', (r) => { stopPosts.push(JSON.parse(r.request().postData() || '{}')); r.fulfill({ json: { ok: true } }); });
   const iso = (ago) => new Date(Date.now() - ago).toISOString();
   const startedAt = iso(60000);
   const job = (k, over) => ({
     key: `sess:alpha/${taskId}/${k}`, source: 'session', project: 'alpha', taskId, lang: 'julia', state: 'running', stopping: false,
+    jobRunId: `feed-${k}`, taskCreated, appTurnId,
     startedAt, elapsedMs: 60000, pid: 100, cpu: 100, mem: 1e8, progress: null, quietMs: null, exitCode: null, ms: null,
     sampledAt: iso(500), pollMs: 2000, stale: false, cores: 1.0, coresBasis: 'cputime', hostCores: 8, cpuTimeMs: 60000,
     memBytes: 1e8, memKind: 'footprint', memPeakBytes: 2e8, procs: 1, threads: 2,
@@ -283,7 +288,7 @@ test('the session feed keeps a one-line row per ended job (✓ / ✗ / ⊘) and 
   assert.ok(by('live').stop, 'the detached row keeps ⊘ stop');
   await page.click('#consoleBox .csJobFeed .jobFeedRow.live .jfAct.stop');
   await sleep(150);
-  assert.deepEqual(stopPosts, [{ key: `sess:alpha/${taskId}/det`, startedAt }], '⊘ stop fences the displayed invocation');
+  assert.deepEqual(stopPosts, [{ key: `sess:alpha/${taskId}/det`, startedAt, jobRunId: 'feed-det' }], '⊘ stop fences the displayed invocation');
 });
 
 test('afNum compacts counts to a ≤4-char body so no value can overflow its column', () => {

@@ -11,7 +11,7 @@ import { PROJECTS, ROOT } from './config.js';
 import { getTask, updateTask, listTasks, getCategories, getAbstractInfo, DEFAULT_MODEL, DEFAULT_PROVIDER } from './taskStore.js';
 import { coerceEffort } from './models.js';
 import { projectAppendix, staleAbstractNote } from './decisions.js';
-import { logTokens, weekSummary } from './ledger.js';
+import { logTokenBatch, weekSummary, tokenEntries } from './ledger.js';
 import { recordUsage } from './usage.js';
 import { broadcast as broadcastEvent } from './events.js';
 import { createTracker } from './snapshots.js';
@@ -26,6 +26,7 @@ import { getCodexClient, refreshCodex } from './codexAppServer.js';
 import { createActivityTracker } from './sessionActivity.js';
 import { createTurnRecall, publicTurn } from './turnRecall.js';
 import { captureClaudeBoundary, captureCodexBoundary, restoreTurnHistory } from './turnHistory.js';
+import { createClaudeUsageTracker, createCodexUsageTracker, readCodexUsageBaseline, sessionUsageCheckpoint } from './sessionUsage.js';
 
 // tool calls whose input names a file Claude is about to modify
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
@@ -164,6 +165,68 @@ function providerSessionsWith(task, provider, session) {
   else rows.push(session);
   all[provider] = rows.filter(Boolean).slice(-20);
   return all;
+}
+
+function recordedSessionUsage(project, id, provider, task, previous) {
+  return sessionUsageCheckpoint(previous, tokenEntries({ project, taskId: id, provider,
+    action: 'session', taskCreated: task?.created || null }).filter(row => row.usageId));
+}
+
+/** Read-only state decoration: restart recovery is visible before another
+ * prompt is sent, without modifying old history or resurrecting old threads. */
+export function withRecordedSessionUsage(project, task) {
+  if (!task?.session?.usageBase) return task;
+  const provider = task.session.provider || 'claude';
+  const usage = recordedSessionUsage(project, task.id, provider, task, task.session);
+  return { ...task, session: { ...task.session,
+    ...usage, ...(task.session.usageWarning ? { usageHasIncomplete: true,
+      usageCompleteness: usage.usageCompleteness === 'legacy-unverified' ? 'legacy-unverified' : 'partial' } : {}) } };
+}
+
+// Save the legacy baseline BEFORE writing this turn's first observation. On a
+// restart the identified ledger rows are added back even if the last turn never
+// reached its final task-store update. Old totals are preserved but not certified.
+function prepareSessionUsage(project, id, provider) {
+  const task = getTask(project, id);
+  const retained = task?.providerSessions?.[provider];
+  const active = task?.session && (task.session.provider || 'claude') === provider ? task.session : null;
+  const previous = active || (Array.isArray(retained) ? retained.at(-1) : null);
+  // A provider switch deliberately starts a fresh thread. Retain its spending
+  // baseline, not the archived SDK/thread identity (which would resume it).
+  const session = { ...active, provider, turns: previous?.turns || 0,
+    ...recordedSessionUsage(project, id, provider, task, previous) };
+  updateTask(project, id, { session, providerSessions: providerSessionsWith(task, provider, session) });
+  return session;
+}
+
+function createSessionUsageWriter(project, id, provider, appTurnId, taskCreated) {
+  const oldModels = new Set();
+  return (snapshot, extra = {}) => {
+    const rows = snapshot.rows ? snapshot.rows.map(row => ({ ...row })) : [{ ...snapshot, model: extra.model || null }];
+    if (!rows.length) rows.push({ tokensIn: 0, tokensOut: 0, costUsd: null, model: null });
+    const currentModels = new Set(rows.map(row => row.model || null));
+    // Authoritative whole-query rows supersede partial stream rows, including
+    // a previous unknown-model placeholder. Append zero revisions, never erase.
+    for (const model of oldModels) if (!currentModels.has(model)) rows.push({ model, tokensIn: 0, tokensOut: 0, costUsd: null, superseded: true });
+    const records = rows.map(row => {
+      const model = row.model || null;
+      return { project, taskId: id, tokensIn: row.tokensIn, tokensOut: row.tokensOut, costUsd: row.costUsd, model, details: {
+        ...extra, usageId: `${provider}:${appTurnId}:${encodeURIComponent(model || '(unknown)')}`,
+        provider, action: 'session', appTurnId, taskCreated,
+        ...(row.superseded ? { superseded: true } : {}),
+        completeness: snapshot.completeness, scope: snapshot.scope,
+        costSource: provider === 'codex' ? 'subscription' : row.costUsd == null ? 'unknown' : 'provider-estimate',
+        uncachedInputTokens: row.uncachedInputTokens ?? null,
+        cachedInputTokens: row.cachedInputTokens ?? null,
+        cacheWriteInputTokens: row.cacheWriteInputTokens ?? null,
+        reasoningOutputTokens: row.reasoningOutputTokens ?? null,
+      } };
+    });
+    // fsync may fail AFTER the bytes reached disk. Remember attempted IDs too,
+    // so a retry can retire their possibly-durable provisional model rows.
+    for (const row of rows) oldModels.add(row.model || null);
+    logTokenBatch(records); // one append-only JSONL transaction for every model
+  };
 }
 
 // the kaimon idle reaper must never kill a warm REPL out from under a live
@@ -835,6 +898,8 @@ async function runClaudeTurn(project, id, promptText) {
   const appTurn = turnLifecycle.get(key);
   const broadcast = (type, payload) => broadcastForTurn(type, payload, appTurn);
   const ts = new Date().toISOString();
+  const jobOwner = { project, taskId: id, appTurnId: appTurn?.turnId || null,
+    taskCreated: getTask(project, id)?.created || null };
 
   try { ensureStateOwner(key, getTask(project, id)); } catch { /* validated later */ }
 
@@ -859,8 +924,12 @@ async function runClaudeTurn(project, id, promptText) {
   let usageOut = 0;
   let modelRows = null; // whole-tree per-model usage from result.modelUsage
   let costUsd = 0;
-  let streamIn = 0;  // running fallback from per-message usage, in case the
-  let streamOut = 0; // stream dies before the result message arrives
+  const usageTracker = createClaudeUsageTracker({ defaultModel: getTask(project, id)?.model || DEFAULT_MODEL });
+  const writeUsage = createSessionUsageWriter(project, id, 'claude', appTurn?.turnId || ts, getTask(project, id)?.created || null);
+  const task = getTask(project, id);
+  const reasoningEffort = coerceEffort('claude', task.reasoningEffort);
+  let usageWriteError = null;
+  let usageMarkerWritten = false;
   let finalText = '';
   let sdkSessionId = null;
   let resultError = null;
@@ -910,7 +979,6 @@ async function runClaudeTurn(project, id, promptText) {
     const extDirs = externalDirsFor(project, Array.isArray(ctx.files) ? ctx.files : []);
     if (extDirs.length) log(`granting ${extDirs.length} external dir(s) for ${key}: ${extDirs.join(', ')}`);
 
-    const reasoningEffort = coerceEffort('claude', task.reasoningEffort);
     const options = {
       cwd: PROJECTS[project].root,
       resume: (task.session && task.session.sdkSessionId) || undefined,
@@ -1011,6 +1079,9 @@ async function runClaudeTurn(project, id, promptText) {
     // WebSearch/WebFetch are never disallowed (web is always on).
     options.disallowedTools = ['AskUserQuestion'];
 
+    prepareSessionUsage(project, id, 'claude');
+    writeUsage(usageTracker.snapshot()); // fail closed before starting paid work
+    usageMarkerWritten = true;
     const q = query({ prompt: promptText, options });
     activeTurns.set(key, q);
     if (appTurn) {
@@ -1058,6 +1129,14 @@ async function runClaudeTurn(project, id, promptText) {
 
     for await (const msg of q) {
       if (!msg || typeof msg.type !== 'string') continue;
+      if (msg.type === 'assistant' || msg.type === 'result' || (msg.type === 'stream_event'
+        && ['message_start', 'message_delta', 'message_stop'].includes(msg.event?.type))) {
+        const observed = usageTracker.observe(msg);
+        usageIn = observed.tokensIn; usageOut = observed.tokensOut;
+        costUsd = observed.costUsd || 0;
+        try { writeUsage(observed); usageWriteError = null; }
+        catch (err) { usageWriteError = err.message; logErr('Claude usage persistence failed:', err.message); }
+      }
       // the first assistant token means the session is live and authenticated
       if (msg.type === 'assistant') pullUsage();
 
@@ -1080,7 +1159,7 @@ async function runClaudeTurn(project, id, promptText) {
       } else if (msg.type === 'tool_progress') {
         // heartbeat for a long-running tool — re-anchors the job card's clock
         // to actual execution time (approval waits don't count as running)
-        sessionJobProgress(msg.tool_use_id, Number(msg.elapsed_time_seconds));
+        sessionJobProgress(msg.tool_use_id, Number(msg.elapsed_time_seconds), jobOwner);
       } else if (msg.type === 'stream_event') {
         const ev = msg.event;
         if (!ev || msg.parent_tool_use_id != null) continue; // subagent inner streams: shown via tool/result lines
@@ -1098,11 +1177,6 @@ async function runClaudeTurn(project, id, promptText) {
           }
         }
       } else if (msg.type === 'assistant') {
-        const mu = msg.message && msg.message.usage;
-        if (mu) {
-          streamIn += fullInputTokens(mu);
-          streamOut += Number(mu.output_tokens) || 0;
-        }
         const sub = msg.parent_tool_use_id != null ? agentTracker.mark(msg.parent_tool_use_id) : '';
         const blocks = (msg.message && msg.message.content) || [];
         for (const block of Array.isArray(blocks) ? blocks : []) {
@@ -1131,6 +1205,7 @@ async function runClaudeTurn(project, id, promptText) {
             // process (or the turn). Anything else is a no-op inside.
             if (block.name === 'Bash' && block.id && block.input) {
               sessionJobStart(project, id, block.id, String(block.input.command || ''), {
+                ...jobOwner,
                 bg: !!block.input.run_in_background,
                 // inline evals (`julia -e '…'`) have no filename — the tool
                 // call's own description becomes the card's title
@@ -1148,7 +1223,7 @@ async function runClaudeTurn(project, id, promptText) {
           if (block && block.type === 'tool_result') {
             if (!msg.parent_tool_use_id) activity.end(block.tool_use_id);
             // the command behind a job card (if any) is over
-            if (block.tool_use_id) sessionJobEnd(block.tool_use_id, { error: !!block.is_error });
+            if (block.tool_use_id) sessionJobEnd(block.tool_use_id, { ...jobOwner, error: !!block.is_error });
             // an edit tool succeeded — the file just changed on disk; open
             // editors reload live instead of waiting for the turn to end
             if (block.tool_use_id && editTargets.has(block.tool_use_id)) {
@@ -1193,6 +1268,11 @@ async function runClaudeTurn(project, id, promptText) {
           usageIn = modelRows.reduce((n, r) => n + r.tokensIn, 0);
           usageOut = modelRows.reduce((n, r) => n + r.tokensOut, 0);
         }
+        // The shared tracker also validates malformed/zero final reports and
+        // preserves observed lower bounds rather than replacing them with 0.
+        const observed = usageTracker.snapshot();
+        usageIn = observed.tokensIn; usageOut = observed.tokensOut;
+        costUsd = observed.costUsd || 0;
         if (msg.subtype === 'success') {
           finalText = typeof msg.result === 'string' ? msg.result : '';
         } else {
@@ -1224,7 +1304,7 @@ async function runClaudeTurn(project, id, promptText) {
     if (agentTracker) try { orphanNote = agentTracker.clear() || ''; } catch { /* display only */ }
     // job cards die with the turn too: an interrupt SIGTERMs the tool's
     // process group, so any still-running script is gone
-    try { endSessionJobsFor(project, id); } catch { /* display only */ }
+    try { endSessionJobsFor(project, id, 'stopped', jobOwner); } catch { /* display only */ }
     // likewise the ✎-aggregate: the recorded change-set takes over from the
     // live counts. Only the registry copy is cleared here — clients drop
     // their live copy on the session:status broadcast, which lands AFTER the
@@ -1248,11 +1328,20 @@ async function runClaudeTurn(project, id, promptText) {
     }
   }
 
-  // stream died before the result message → the partial turn was still billed;
-  // fall back to the per-message usage we accumulated along the way
-  if (!usageIn && !usageOut && (streamIn || streamOut)) {
-    usageIn = streamIn;
-    usageOut = streamOut;
+  // Input is deduplicated by provider message ID; provisional output remains
+  // an explicitly partial lower bound if the SDK never delivered its result.
+  const finalUsage = usageTracker.snapshot();
+  usageIn = finalUsage.tokensIn; usageOut = finalUsage.tokensOut;
+  costUsd = finalUsage.costUsd || 0;
+  if (turnStarted) {
+    try { writeUsage(finalUsage); usageWriteError = null; }
+    catch (err) { usageWriteError = err.message; logErr('Claude final usage persistence failed:', err.message); }
+  } else if (usageMarkerWritten) {
+    // A synchronous SDK constructor failure is verified not dispatched, not
+    // unknown expenditure. Retire only this turn's provisional marker.
+    try { writeUsage({ rows: [{ model: null, tokensIn: 0, tokensOut: 0, costUsd: null, superseded: true }],
+      completeness: 'complete', scope: 'not-dispatched' }); }
+    catch (err) { logErr('Claude unused usage marker could not be retired:', err.message); }
   }
 
   // ---- after-turn bookkeeping (never throw out of here) ----
@@ -1288,27 +1377,15 @@ async function runClaudeTurn(project, id, promptText) {
       sdkSessionId: sdkSessionId || (prev && prev.sdkSessionId) || null,
       startedAt: (prev && prev.startedAt) || ts,
       lastTurnAt: now,
-      tokensIn: ((prev && prev.tokensIn) || 0) + usageIn,
-      tokensOut: ((prev && prev.tokensOut) || 0) + usageOut,
-      costUsd: ((prev && prev.costUsd) || 0) + costUsd,
+      ...recordedSessionUsage(project, id, 'claude', task, prev),
+      usageScope: finalUsage.scope,
+      lastTurnUsage: finalUsage,
+      ...(usageWriteError ? { usageHasIncomplete: true, usageWarning: `Usage persistence failed: ${usageWriteError}` } : {}),
       turns: ((prev && prev.turns) || 0) + 1,
     };
 
-    if (usageIn || usageOut || costUsd) {
-      // the model is recorded so the usage meter can split the per-model
-      // weekly window out of the all-models one
-      try {
-        if (modelRows) {
-          // one ledger row per model that actually ran — subagents and
-          // workflow fleets included, honestly attributed
-          for (const r of modelRows) logTokens(project, id, r.tokensIn, r.tokensOut, r.costUsd, r.model);
-        } else {
-          logTokens(project, id, usageIn, usageOut, costUsd, (task && task.model) || DEFAULT_MODEL);
-        }
-      } catch (err) {
-        logErr('logTokens failed:', err.message);
-      }
-    }
+    // Usage snapshots were already written durably during the query. Do not
+    // append them again here as an unidentifiable second billable turn.
 
     // prefer the result's final text for the transcript entry — plus any
     // ⚠ lost-agent lines from the finally-block clear, which would otherwise
@@ -1431,6 +1508,8 @@ async function runCodexTurn(project, id, promptText) {
   const appTurn = turnLifecycle.get(key);
   const broadcast = (type, payload) => broadcastForTurn(type, payload, appTurn);
   const ts = new Date().toISOString();
+  const jobOwner = { project, taskId: id, appTurnId: appTurn?.turnId || null,
+    taskCreated: getTask(project, id)?.created || null };
   try { ensureStateOwner(key, getTask(project, id)); } catch { /* validated below */ }
 
   const transcript = transcriptFor(key);
@@ -1467,6 +1546,51 @@ async function runCodexTurn(project, id, promptText) {
   const emittedTools = new Set();
   const agentPhases = new Map(); // itemId → commentary | final_answer | null
   let textStreamKey = null;
+  let usageTracker = null;
+  let usageModel = null;
+  const queuedUsage = [];
+  const queuedCompletions = [];
+  let dispatched = false;
+  let usageWriteError = null;
+  const writeUsage = createSessionUsageWriter(project, id, 'codex', appTurn?.turnId || ts, getTask(project, id)?.created || null);
+  const persistUsage = (strict = false) => {
+    if (!usageTracker) return;
+    const snapshot = usageTracker.snapshot();
+    usageIn = snapshot.tokensIn; usageOut = snapshot.tokensOut;
+    try { writeUsage(snapshot, { model: usageModel, threadId, turnId }); usageWriteError = null; }
+    catch (err) {
+      usageWriteError = err.message;
+      if (strict) throw err;
+      logErr('Codex usage persistence failed:', err.message);
+    }
+  };
+  const observeUsage = (p) => {
+    if (!turnId) { queuedUsage.push(p); return; }
+    if (p.turnId !== turnId) return; // no unattributed or old-turn totals
+    usageTracker.observe(p.tokenUsage);
+    persistUsage();
+  };
+  const acceptCompleted = (p) => {
+    if (!turnId) { queuedCompletions.push(p); return; }
+    if ((p.turnId || p.turn?.id) !== turnId) return;
+    completedTurn = p.turn || null;
+    completionResolve(completedTurn);
+  };
+  const acceptStarted = (providerTurnId) => {
+    if (!dispatched || !providerTurnId || (turnId && turnId !== providerTurnId)) return;
+    turnId = providerTurnId;
+    if (!turnStarted) {
+      turnStarted = true;
+      const handle = { interrupt: () => client.request('turn/interrupt', { threadId, turnId }) };
+      activeTurns.set(key, handle);
+      if (appTurn) {
+        appTurn.providerState.turnId = turnId;
+        turnLifecycle.attach(key, handle, appTurn).catch(err => logErr('latched Codex interrupt failed:', err.message));
+      }
+    }
+    for (const p of queuedUsage.splice(0)) observeUsage(p);
+    for (const p of queuedCompletions.splice(0)) acceptCompleted(p);
+  };
 
   const emit = (chunk) => {
     pending.text += chunk;
@@ -1477,7 +1601,9 @@ async function runCodexTurn(project, id, promptText) {
     const p = message && message.params || {};
     if (!threadId || p.threadId !== threadId) return;
     if (turnId && p.turnId && p.turnId !== turnId) return;
-    if (message.method === 'item/agentMessage/delta' && typeof p.delta === 'string') {
+    if (message.method === 'turn/started') {
+      acceptStarted(p.turn?.id || p.turnId);
+    } else if (message.method === 'item/agentMessage/delta' && typeof p.delta === 'string') {
       activity.phase(true);
       const framed = codexTextFrame(textStreamKey, 'agent', p.itemId, agentPhases.get(p.itemId));
       textStreamKey = framed.key;
@@ -1491,20 +1617,22 @@ async function runCodexTurn(project, id, promptText) {
       emit(p.delta);
     } else if (message.method === 'item/started' && p.item) {
       const item = p.item;
-      if (['commandExecution', 'fileChange', 'mcpToolCall', 'collabAgentToolCall', 'webSearch'].includes(item.type)) {
+      if (['commandExecution', 'fileChange', 'mcpToolCall', 'collabAgentToolCall', 'collabToolCall', 'webSearch'].includes(item.type)) {
         activity.start(item.id, item.type === 'webSearch' ? 'WebSearch' : item.type, { command: item.command });
       }
       if (item.type === 'agentMessage') {
         agentPhases.set(item.id, item.phase || null);
       } else if (item.type === 'commandExecution' && !emittedTools.has(item.id)) {
         emittedTools.add(item.id);
-        sessionJobStart(project, id, item.id, String(item.command || ''), { label: '' });
+        sessionJobStart(project, id, item.id, String(item.command || ''), { ...jobOwner, label: '' });
         emit(`\n[tool: Bash] ${oneLine(item.command, 400)}\n`);
       } else if (item.type === 'mcpToolCall' && !emittedTools.has(item.id)) {
         emittedTools.add(item.id);
         emit(`\n[tool: ${item.server || 'MCP'}/${item.tool || 'call'}]\n`);
-      } else if (item.type === 'collabAgentToolCall' && !emittedTools.has(item.id)) {
+      } else if (['collabAgentToolCall', 'collabToolCall'].includes(item.type) && !emittedTools.has(item.id)) {
         emittedTools.add(item.id);
+        usageTracker?.markPartial('child-thread-usage-not-included');
+        persistUsage();
         emit(`\n[tool: Agent] ${oneLine(item.prompt || item.tool, 320)}\n`);
       }
     } else if (message.method === 'item/fileChange/patchUpdated' && Array.isArray(p.changes)) {
@@ -1523,7 +1651,7 @@ async function runCodexTurn(project, id, promptText) {
       if (item.type === 'agentMessage' && typeof item.text === 'string') {
         finalText = item.text;
       } else if (item.type === 'commandExecution') {
-        sessionJobEnd(item.id, { error: item.status === 'failed' || (item.exitCode != null && item.exitCode !== 0) });
+        sessionJobEnd(item.id, { ...jobOwner, error: item.status === 'failed' || (item.exitCode != null && item.exitCode !== 0) });
         const summary = item.exitCode == null ? item.status : `exit ${item.exitCode}`;
         emit(`[${item.status === 'failed' ? '✗ error' : 'result'}] ${oneLine(summary, 160)}\n`);
       } else if (item.type === 'fileChange') {
@@ -1541,17 +1669,18 @@ async function runCodexTurn(project, id, promptText) {
         }
         emit(`[result] ${item.changes?.length || paths.size || 0} file change${(item.changes?.length || paths.size) === 1 ? '' : 's'} applied\n`);
       }
-    } else if (message.method === 'thread/tokenUsage/updated' && p.tokenUsage?.last) {
-      usageIn = Number(p.tokenUsage.last.inputTokens) || 0;
-      usageOut = Number(p.tokenUsage.last.outputTokens) || 0;
+    } else if (message.method === 'thread/tokenUsage/updated') {
+      observeUsage(p);
     } else if (message.method === 'model/rerouted') {
+      usageModel = null; // cumulative thread totals cannot be split by route
       actualModel = p.toModel || p.model || actualModel;
+      usageTracker?.markPartial('model-attribution-unavailable-after-reroute');
+      persistUsage();
       emit(`\n⟐ model rerouted to ${actualModel}\n`);
     } else if (message.method === 'error' && p.willRetry === false) {
       resultError = p.error?.message || resultError;
     } else if (message.method === 'turn/completed') {
-      completedTurn = p.turn || null;
-      completionResolve(completedTurn);
+      acceptCompleted(p);
     }
   };
 
@@ -1615,6 +1744,11 @@ async function runCodexTurn(project, id, promptText) {
     }
     threadId = thread?.id;
     if (!threadId) throw new Error('Codex did not return a thread id');
+    usageModel = actualModel;
+    usageTracker = createCodexUsageTracker({
+      baseline: readCodexUsageBaseline(thread.path, threadId),
+      fresh: !(task.session?.provider === 'codex' && task.session.threadId),
+    });
     if (appTurn) appTurn.providerState.threadId = threadId;
     if (appTurn?.recallUntil) {
       try { appTurn.providerState.codexBoundary = await captureCodexBoundary(threadId, client); }
@@ -1627,6 +1761,7 @@ async function runCodexTurn(project, id, promptText) {
 
     // Persist the new thread before starting its first turn. A server restart
     // during the turn can then resume it instead of orphaning private history.
+    prepareSessionUsage(project, id, 'codex');
     const before = getTask(project, id);
     const prev = before?.session?.provider === 'codex' ? before.session : null;
     const provisional = {
@@ -1638,6 +1773,9 @@ async function runCodexTurn(project, id, promptText) {
       tokensOut: prev?.tokensOut || 0,
       costUsd: prev?.costUsd || 0,
       turns: prev?.turns || 0,
+      usageBase: prev?.usageBase,
+      usageCompleteness: prev?.usageCompleteness,
+      usageLegacyTokens: prev?.usageLegacyTokens || 0,
     };
     updateTask(project, id, {
       ...(actualModel ? { model: actualModel } : {}),
@@ -1652,7 +1790,9 @@ async function runCodexTurn(project, id, promptText) {
     client.on('exit', onExit);
     emit(`⟐ Codex · ${actualModel || 'default model'} · effort ${task.reasoningEffort || 'high'}\n`);
 
+    persistUsage(true); // fail closed before starting billable work
     if (appTurn) appTurn.providerState.dispatched = true;
+    dispatched = true;
     const startedTurn = await client.request('turn/start', {
       threadId,
       input: [{ type: 'text', text: promptText, text_elements: [] }],
@@ -1663,19 +1803,12 @@ async function runCodexTurn(project, id, promptText) {
       approvalPolicy: exec.approvalPolicy,
       approvalsReviewer: exec.approvalsReviewer,
     });
-    turnId = startedTurn?.turn?.id;
-    if (!turnId) throw new Error('Codex did not return a turn id');
-    turnStarted = true;
-    const handle = {
-      interrupt: () => client.request('turn/interrupt', { threadId, turnId }),
-    };
-    activeTurns.set(key, handle);
-    if (appTurn) {
-      appTurn.providerState.turnId = turnId;
-      turnLifecycle.attach(key, handle, appTurn).catch(err => logErr('latched Codex interrupt failed:', err.message));
-    }
+    if (!startedTurn?.turn?.id || (turnId && turnId !== startedTurn.turn.id)) throw new Error('Codex did not return the expected turn id');
+    acceptStarted(startedTurn.turn.id);
     await completion;
     resultError = resultError || codexTurnError(completedTurn);
+    usageTracker.finish({ completed: !resultError });
+    persistUsage();
     if (!finalText && Array.isArray(completedTurn?.items)) {
       const last = [...completedTurn.items].reverse().find((i) => i?.type === 'agentMessage' && i.text);
       finalText = last?.text || '';
@@ -1688,6 +1821,10 @@ async function runCodexTurn(project, id, promptText) {
   } catch (err) {
     resultError = resultError || (err && err.message ? err.message : String(err));
     logErr(`Codex turn error for ${key}:`, resultError);
+    if (usageTracker && dispatched) {
+      usageTracker.markPartial('turn-failed-or-interrupted');
+      try { persistUsage(); } catch (usageErr) { logErr('Codex usage persistence failed:', usageErr.message); }
+    }
   } finally {
     activity.clear();
     entry.turnStartedAt = null;
@@ -1695,7 +1832,7 @@ async function runCodexTurn(project, id, promptText) {
     client.off('serverRequest', onServerRequest);
     client.off('exit', onExit);
     interruptedDuringPrep.delete(key);
-    try { endSessionJobsFor(project, id); } catch { /* display only */ }
+    try { endSessionJobsFor(project, id, 'stopped', jobOwner); } catch { /* display only */ }
     try { const r = registry.get(key); if (r) r.edits = null; } catch { /* display only */ }
     for (const [pkey, approval] of [...pendingPermissions.entries()]) {
       if (!pkey.startsWith(`${key}#`)) continue;
@@ -1727,15 +1864,12 @@ async function runCodexTurn(project, id, promptText) {
       reasoningEffort: task?.reasoningEffort || prev?.reasoningEffort || 'high',
       startedAt: prev?.startedAt || ts,
       lastTurnAt: now,
-      tokensIn: (prev?.tokensIn || 0) + usageIn,
-      tokensOut: (prev?.tokensOut || 0) + usageOut,
-      costUsd: prev?.costUsd || 0,
+      ...recordedSessionUsage(project, id, 'codex', task, prev),
+      usageScope: 'thread-only',
+      lastTurnUsage: usageTracker?.snapshot(),
+      ...(usageWriteError ? { usageHasIncomplete: true, usageWarning: `Usage persistence failed: ${usageWriteError}` } : {}),
       turns: (prev?.turns || 0) + 1,
     };
-    if (usageIn || usageOut) {
-      try { logTokens(project, id, usageIn, usageOut, 0, session.model || 'codex'); }
-      catch (err) { logErr('Codex logTokens failed:', err.message); }
-    }
     if (finalText) pending.text = finalText;
     persistTranscript(key, task);
     let handoff = null;
