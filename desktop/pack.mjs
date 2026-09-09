@@ -8,19 +8,17 @@
 // executable, invalidating Electron's upstream ad-hoc seal, so without it the
 // day-2 `codesign --verify --deep --strict` gate fails.
 
-import { packager } from '@electron/packager';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installationDataRoot } from './serverlink.js';
 
 const DESKTOP = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.join(DESKTOP, 'dist');
 // Packager writes here first; same volume as dist/ so renameSync never crosses devices.
 const PACK_TMP = path.join(DIST, '.pack');
-// --stage prepares a signed replacement without touching the running bundle.
-const STAGE = process.argv.includes('--stage');
 const APP_NAME = 'Central Planner';
 const BUNDLE_ID = 'com.centralplanner.desktop';
 
@@ -28,6 +26,36 @@ const BUNDLE_ID = 'com.centralplanner.desktop';
 // test/, dist/, BLUEPRINT*, this script, icon sources, contract docs — and any
 // stray file that doesn't exist yet — stay out by construction.
 const SHIP = new Set(['/package.json', '/main.js', '/serverlink.js', '/connecting.html']);
+
+// A production fallback must point at the installation, not its source tree:
+// losing the persisted desktop preference must not revive development code.
+export function resolvePackOptions(args, { desktopRoot = DESKTOP } = {}) {
+  let stage = false, serverRoot = null;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--stage' && !stage) { stage = true; continue; }
+    if (arg === '--server-root' && serverRoot === null && args[i + 1] && !args[i + 1].startsWith('--')) {
+      serverRoot = args[++i]; continue;
+    }
+    throw new Error('Usage: node pack.mjs [--stage] [--server-root /absolute/installation]');
+  }
+  if (serverRoot === null) return { stage, serverRoot: path.resolve(desktopRoot, '..') };
+  if (!path.isAbsolute(serverRoot)) throw new Error('--server-root must be an absolute production installation path');
+  const ordinary = (file, directory = false) => {
+    const stat = fs.lstatSync(file);
+    if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile())) throw new Error(`Invalid production installation path: ${file}`);
+  };
+  ordinary(serverRoot, true);
+  serverRoot = fs.realpathSync(serverRoot);
+  if (!installationDataRoot(serverRoot)) throw new Error('--server-root must identify a configured production installation, not a source checkout');
+  ordinary(path.join(serverRoot, 'app'), true);
+  ordinary(path.join(serverRoot, 'app', 'server.js'));
+  ordinary(path.join(serverRoot, 'app', 'package.json'));
+  const active = JSON.parse(fs.readFileSync(path.join(serverRoot, 'deployment.json'), 'utf8')).active;
+  for (const rel of ['releases', `releases/${active}`, `releases/${active}/app`]) ordinary(path.join(serverRoot, rel), true);
+  for (const rel of [`releases/${active}/release.json`, `releases/${active}/app/server.js`, `releases/${active}/app/package.json`]) ordinary(path.join(serverRoot, rel));
+  return { stage, serverRoot };
+}
 
 // icon_<pt>x<pt>[@2x].png entries for the .iconset: [points, scale].
 const ICONSET = [
@@ -85,8 +113,9 @@ function ensureIcon() {
   }
 }
 
-async function pack(iconPath) {
-  const repoRoot = path.resolve(DESKTOP, '..');
+async function pack(iconPath, repoRoot) {
+  // Unit tests and option validation need no Electron download or real pack.
+  const { packager } = await import('@electron/packager');
   const outDirs = await packager({
     dir: DESKTOP,
     out: PACK_TMP,
@@ -111,8 +140,8 @@ async function pack(iconPath) {
 }
 
 // Flatten packager's <out>/<name>-darwin-<arch>/ layout to dist/<name>.app.
-function flatten(appInTmp) {
-  const destination = STAGE ? fs.mkdtempSync(path.join(DIST, 'update-')) : DIST;
+function flatten(appInTmp, stage) {
+  const destination = stage ? fs.mkdtempSync(path.join(DIST, 'update-')) : DIST;
   const target = path.join(destination, `${APP_NAME}.app`);
   try {
     fs.rmSync(target, { recursive: true, force: true });
@@ -139,17 +168,19 @@ function verify(appPath) {
 }
 
 async function main() {
+  const options = resolvePackOptions(process.argv.slice(2));
   if (process.platform !== 'darwin') {
     console.error('pack: darwin only — the Phase-1 blueprint targets macOS');
     process.exit(1);
   }
   const icon = ensureIcon();
-  const appPath = flatten(await pack(icon));
+  const appPath = flatten(await pack(icon, options.serverRoot), options.stage);
   adhocSign(appPath);
   verify(appPath);
   console.log(`pack: ${appPath}`);
+  console.log(`pack: server fallback ${options.serverRoot}`);
   console.log('pack: ad-hoc signed; codesign --verify --deep --strict passed');
   console.log(icon ? `pack: icon ${path.basename(icon)}` : 'pack: default Electron icon (no icon.icns)');
 }
 
-await main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

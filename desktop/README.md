@@ -41,6 +41,19 @@ bundle. Development checkouts remain supported. Installation-aware port
 resolution reads the preserved data root before probing. See
 [the distribution and migration guide](../app/docs/distribution-boundary.md).
 
+Build a production shell with an explicit runtime fallback:
+
+```sh
+npm run pack -- --stage --server-root "/absolute/path/to/production-runtime"
+```
+
+The installation must already have valid ownership metadata, a selected release,
+an existing data root, and its launcher. The fallback then remains production-only
+even if desktop preferences are lost. Without this flag, development packaging
+retains its checkout hint. The flag does not change current desktop preferences
+or restart an app. If packing from a temporary source copy, always supply this
+flag; icon generation may update that build copy's icon files.
+
 ## Tailnet access
 
 The top-bar **Tailnet** control manages one private Tailscale Serve mapping for
